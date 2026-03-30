@@ -6,16 +6,14 @@ import type { OrderItem } from '../lib/types';
 
 interface Props {
   items: OrderItem[];
-  clientName: string;
   total: number;
   onViewOrder: () => void;
 }
 
-export default function CartSummary({ items, clientName, total, onViewOrder }: Props): React.JSX.Element {
+export default function CartSummary({ items, total, onViewOrder }: Props): React.JSX.Element {
   const itemCount = items.reduce((acc, i) => acc + i.qty, 0);
   const hasItems  = itemCount > 0;
-  const hasName   = clientName.trim().length > 0;
-  const canProceed = hasItems && hasName;
+  const canProceed = hasItems;
 
   return (
     <Surface style={styles.surface} elevation={8}>
@@ -47,9 +45,6 @@ export default function CartSummary({ items, clientName, total, onViewOrder }: P
         </Button>
       </View>
 
-      {hasItems && !hasName && (
-        <Text style={styles.hint}>Introduce el nombre del cliente para continuar</Text>
-      )}
     </Surface>
   );
 }

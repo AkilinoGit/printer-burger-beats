@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Modal, ScrollView, StyleSheet, View } from 'react-native';
-import { Button, Chip, Divider, Surface, Text } from 'react-native-paper';
+import { Modal, ScrollView, StyleSheet, TouchableWithoutFeedback, View } from 'react-native';
+import { Button, Chip, Divider, Surface, Text, TouchableRipple } from 'react-native-paper';
 import type { Product } from '../lib/types';
 
 interface Props {
@@ -43,84 +43,89 @@ export default function ModifierSheet({ product, visible, onConfirm, onDismiss }
       animationType="slide"
       onRequestClose={onDismiss}
     >
-      {/* Dimmed backdrop */}
-      <View style={styles.backdrop}>
-        <Surface style={styles.sheet} elevation={4}>
-          {/* Header */}
+      {/* Tap outside to dismiss */}
+      <TouchableWithoutFeedback onPress={onDismiss}>
+        <View style={styles.backdrop} />
+      </TouchableWithoutFeedback>
+
+      <Surface style={styles.sheet} elevation={4}>
+        {/* Handle — tap to dismiss */}
+        <TouchableRipple onPress={onDismiss} style={styles.handleArea} borderless>
           <View style={styles.handle} />
-          <Text style={styles.title}>{product.name}</Text>
-          <Text style={styles.subtitle}>Selecciona las variantes</Text>
-          <Divider style={styles.divider} />
+        </TouchableRipple>
 
-          <ScrollView contentContainerStyle={styles.chipScroll}>
-            {removes.length > 0 && (
-              <>
-                <Text style={styles.groupLabel}>QUITAR</Text>
-                <View style={styles.chipRow}>
-                  {removes.map((m) => (
-                    <Chip
-                      key={m.id}
-                      mode={selected.has(m.id) ? 'flat' : 'outlined'}
-                      selected={selected.has(m.id)}
-                      onPress={() => toggle(m.id)}
-                      style={styles.chip}
-                      selectedColor="#E53935"
-                      showSelectedCheck={false}
-                    >
-                      {m.label}
-                    </Chip>
-                  ))}
-                </View>
-              </>
-            )}
+        <Text style={styles.title}>{product.name}</Text>
+        <Text style={styles.subtitle}>Selecciona las variantes</Text>
+        <Divider style={styles.divider} />
 
-            {adds.length > 0 && (
-              <>
-                <Text style={[styles.groupLabel, { marginTop: 16 }]}>AÑADIR</Text>
-                <View style={styles.chipRow}>
-                  {adds.map((m) => (
-                    <Chip
-                      key={m.id}
-                      mode={selected.has(m.id) ? 'flat' : 'outlined'}
-                      selected={selected.has(m.id)}
-                      onPress={() => toggle(m.id)}
-                      style={styles.chip}
-                      selectedColor="#43A047"
-                      showSelectedCheck={false}
-                    >
-                      {m.label}
-                    </Chip>
-                  ))}
-                </View>
-              </>
-            )}
-          </ScrollView>
+        <ScrollView contentContainerStyle={styles.chipScroll}>
+          {removes.length > 0 && (
+            <>
+              <Text style={styles.groupLabel}>QUITAR</Text>
+              <View style={styles.chipRow}>
+                {removes.map((m) => (
+                  <Chip
+                    key={m.id}
+                    mode={selected.has(m.id) ? 'flat' : 'outlined'}
+                    selected={selected.has(m.id)}
+                    onPress={() => toggle(m.id)}
+                    style={styles.chip}
+                    selectedColor="#E53935"
+                    showSelectedCheck={false}
+                  >
+                    {m.label}
+                  </Chip>
+                ))}
+              </View>
+            </>
+          )}
 
-          <Divider style={styles.divider} />
+          {adds.length > 0 && (
+            <>
+              <Text style={[styles.groupLabel, { marginTop: 16 }]}>AÑADIR</Text>
+              <View style={styles.chipRow}>
+                {adds.map((m) => (
+                  <Chip
+                    key={m.id}
+                    mode={selected.has(m.id) ? 'flat' : 'outlined'}
+                    selected={selected.has(m.id)}
+                    onPress={() => toggle(m.id)}
+                    style={styles.chip}
+                    selectedColor="#43A047"
+                    showSelectedCheck={false}
+                  >
+                    {m.label}
+                  </Chip>
+                ))}
+              </View>
+            </>
+          )}
+        </ScrollView>
 
-          <View style={styles.actions}>
-            <Button
-              mode="outlined"
-              onPress={onDismiss}
-              style={styles.btnCancel}
-              contentStyle={styles.btnContent}
-              labelStyle={styles.btnLabel}
-            >
-              Cancelar
-            </Button>
-            <Button
-              mode="contained"
-              onPress={handleConfirm}
-              style={styles.btnConfirm}
-              contentStyle={styles.btnContent}
-              labelStyle={styles.btnLabel}
-              buttonColor="#E53935"
-            >
-              Añadir al pedido
-            </Button>
-          </View>
-        </Surface>
-      </View>
+        <Divider style={styles.divider} />
+
+        <View style={styles.actions}>
+          <Button
+            mode="outlined"
+            onPress={onDismiss}
+            style={styles.btnCancel}
+            contentStyle={styles.btnContent}
+            labelStyle={styles.btnLabel}
+          >
+            Cancelar
+          </Button>
+          <Button
+            mode="contained"
+            onPress={handleConfirm}
+            style={styles.btnConfirm}
+            contentStyle={styles.btnContent}
+            labelStyle={styles.btnLabel}
+            buttonColor="#E53935"
+          >
+            Añadir al pedido
+          </Button>
+        </View>
+      </Surface>
     </Modal>
   );
 }
@@ -129,23 +134,24 @@ const styles = StyleSheet.create({
   backdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.45)',
-    justifyContent: 'flex-end',
   },
   sheet: {
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     paddingBottom: 32,
     paddingHorizontal: 20,
-    paddingTop: 12,
+    paddingTop: 4,
     backgroundColor: '#fff',
+  },
+  handleArea: {
+    alignItems: 'center',
+    paddingVertical: 12,
   },
   handle: {
     width: 40,
     height: 4,
     borderRadius: 2,
     backgroundColor: '#ccc',
-    alignSelf: 'center',
-    marginBottom: 16,
   },
   title: {
     fontSize: 22,

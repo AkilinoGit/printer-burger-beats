@@ -7,6 +7,7 @@ import type { Product } from '../lib/types';
 interface Props {
   products: Product[];
   onSelect: (product: Product) => void;
+  onLongPress: (product: Product) => void;
 }
 
 type Category = Product['category'];
@@ -25,7 +26,7 @@ const CATEGORY_COLOR: Record<Category, string> = {
   custom: '#43A047',
 };
 
-export default function ProductGrid({ products, onSelect }: Props): React.JSX.Element {
+export default function ProductGrid({ products, onSelect, onLongPress }: Props): React.JSX.Element {
   const byCategory = CATEGORY_ORDER.reduce<Record<Category, Product[]>>(
     (acc, cat) => {
       acc[cat] = products.filter((p) => p.category === cat && p.isActive);
@@ -51,6 +52,7 @@ export default function ProductGrid({ products, onSelect }: Props): React.JSX.El
                   product={product}
                   accentColor={CATEGORY_COLOR[cat]}
                   onPress={() => onSelect(product)}
+                  onLongPress={() => onLongPress(product)}
                 />
               ))}
             </View>
@@ -67,13 +69,15 @@ interface TileProps {
   product: Product;
   accentColor: string;
   onPress: () => void;
+  onLongPress: () => void;
 }
 
-function ProductTile({ product, accentColor, onPress }: TileProps): React.JSX.Element {
+function ProductTile({ product, accentColor, onPress, onLongPress }: TileProps): React.JSX.Element {
   return (
     <Surface style={styles.tile} elevation={2}>
       <TouchableRipple
         onPress={onPress}
+        onLongPress={onLongPress}
         style={styles.tileRipple}
         borderless
         rippleColor={accentColor + '33'}

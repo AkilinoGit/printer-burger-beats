@@ -65,6 +65,29 @@ export default function TicketScreen(): React.JSX.Element {
   const hasSession  = activeSession !== null;
   const isBusy      = actionState !== 'idle';
 
+  // Ticket temporal para vista previa — incluye pedidos anteriores + carrito actual
+  const previewTicket: import('../../lib/types').Ticket | null = hasItems ? {
+    id: activeTicket?.id ?? 'preview',
+    sessionId: activeSession?.id ?? '',
+    ticketNumber: activeTicket?.ticketNumber ?? 1,
+    printedAt: null,
+    syncStatus: 'pending',
+    createdAt: new Date().toISOString(),
+    orders: [
+      ...(activeTicket?.orders ?? []),
+      {
+        id: 'preview-order',
+        ticketId: activeTicket?.id ?? 'preview',
+        clientName,
+        items: cartItems,
+        amountPaid: null,
+        change: null,
+        total: cartTotal,
+        createdAt: new Date().toISOString(),
+      },
+    ],
+  } : activeTicket;
+
   // ── helpers ───────────────────────────────────────────────────────────────
 
   /**
@@ -92,7 +115,7 @@ export default function TicketScreen(): React.JSX.Element {
     overrideChange?: number,
   ): Promise<Order> {
     const order = addOrder({
-      clientName,
+      clientName: clientName.trim() || 'COMENSAL',
       items: cartItems,
       total: cartTotal,
       amountPaid: overrideAmountPaid ?? paidAmount ?? undefined,
@@ -270,14 +293,16 @@ export default function TicketScreen(): React.JSX.Element {
         )}
       </ScrollView>
 
-      {/* vista previa — secondary, non-intrusive trigger */}
-      <View style={styles.previewRow}>
-        <TicketPreview
-          ticket={activeTicket}
-          isTest={testMode}
-          modifierLabels={MODIFIER_LABELS}
-        />
-      </View>
+      {/* vista previa — solo visible en modo prueba */}
+      {testMode && (
+        <View style={styles.previewRow}>
+          <TicketPreview
+            ticket={previewTicket}
+            isTest={testMode}
+            modifierLabels={MODIFIER_LABELS}
+          />
+        </View>
+      )}
 
       {/* Action buttons */}
       <Surface style={styles.actions} elevation={8}>
@@ -328,7 +353,7 @@ export default function TicketScreen(): React.JSX.Element {
             >
               {actionState === 'printing'
                 ? <ActivityIndicator color="#fff" size={20} />
-                : 'Imprimir'}
+                : testMode ? 'Imprimir prueba' : 'Imprimir'}
             </Button>
           </View>
 

@@ -7,7 +7,6 @@ import CartSummary from '../../components/CartSummary';
 import ModifierSheet from '../../components/ModifierSheet';
 import ProductGrid from '../../components/ProductGrid';
 
-import { generateId } from '../../lib/utils';
 import type { Product } from '../../lib/types';
 import { useCartStore } from '../../stores/useCartStore';
 import { useSessionStore } from '../../stores/useSessionStore';
@@ -40,22 +39,20 @@ export default function HomeScreen(): React.JSX.Element {
   // ── handlers ──────────────────────────────────────────────────────────────
   function handleProductPress(product: Product): void {
     if (product.isCustom) {
-      // OTROS — open free-price dialog
       setOtrosLabel('');
       setOtrosPrice('');
       setOtrosPriceError('');
       setOtrosVisible(true);
       return;
     }
-
-    if (product.modifiers.length > 0) {
-      // Burger with modifiers — open sheet
-      setSheetProduct(product);
-      return;
-    }
-
-    // All other products — add directly
+    // Press always adds directly, regardless of modifiers
     addProduct(product, []);
+  }
+
+  function handleProductLongPress(product: Product): void {
+    if (product.modifiers.length > 0) {
+      setSheetProduct(product);
+    }
   }
 
   function handleModifierConfirm(selectedModifiers: string[]): void {
@@ -66,10 +63,8 @@ export default function HomeScreen(): React.JSX.Element {
   }
 
   function handleOtrosConfirm(): void {
-    const label = otrosLabel.trim();
+    const label = otrosLabel.trim() || 'OTROS';
     const price = parseFloat(otrosPrice.replace(',', '.'));
-
-    if (!label) return; // TextInput validates inline
 
     if (isNaN(price) || price <= 0) {
       setOtrosPriceError('Introduce un precio válido');
@@ -115,7 +110,7 @@ export default function HomeScreen(): React.JSX.Element {
       {/* Client name input */}
       <View style={styles.nameRow}>
         <TextInput
-          label="Nombre del cliente *"
+          label="Nombre del cliente"
           value={clientName}
           onChangeText={setClientName}
           mode="outlined"
@@ -124,6 +119,7 @@ export default function HomeScreen(): React.JSX.Element {
           autoCapitalize="words"
           returnKeyType="done"
           dense
+          placeholder="COMENSAL"
           right={
             clientName.length > 0
               ? <TextInput.Icon icon="close-circle" onPress={() => setClientName('')} />
@@ -144,13 +140,12 @@ export default function HomeScreen(): React.JSX.Element {
 
       {/* Product grid */}
       <View style={styles.gridWrapper}>
-        <ProductGrid products={products} onSelect={handleProductPress} />
+        <ProductGrid products={products} onSelect={handleProductPress} onLongPress={handleProductLongPress} />
       </View>
 
       {/* Cart summary (sticky bottom) */}
       <CartSummary
         items={items}
-        clientName={clientName}
         total={total}
         onViewOrder={handleViewOrder}
       />
@@ -169,12 +164,13 @@ export default function HomeScreen(): React.JSX.Element {
           <Dialog.Title>Añadir producto</Dialog.Title>
           <Dialog.Content style={styles.otrosContent}>
             <TextInput
-              label="Concepto *"
+              label="Concepto"
               value={otrosLabel}
               onChangeText={setOtrosLabel}
               mode="outlined"
               autoCapitalize="sentences"
               returnKeyType="next"
+              placeholder="OTROS"
               style={styles.otrosInput}
             />
             <TextInput
@@ -199,7 +195,7 @@ export default function HomeScreen(): React.JSX.Element {
             <Button
               mode="contained"
               onPress={handleOtrosConfirm}
-              disabled={!otrosLabel.trim() || !otrosPrice.trim()}
+              disabled={!otrosPrice.trim()}
               buttonColor="#43A047"
             >
               Añadir
