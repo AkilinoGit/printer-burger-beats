@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(rm -rf node_modules)",
+      "Bash(rm -f package-lock.json)",
+      "Bash(cmd /c \"rmdir /s /q \"\"c:\\\\Users\\\\akila\\\\Desktop\\\\PRINTER BURGER BEATS\\\\tpv-hamburgueria\\\\node_modules\"\"\")",
+      "Bash(del \"c:\\\\Users\\\\akila\\\\Desktop\\\\PRINTER BURGER BEATS\\\\tpv-hamburgueria\\\\package-lock.json\")",
+      "Bash(cmd /c \"rmdir /s /q \"\"c:\\\\Users\\\\akila\\\\Desktop\\\\PRINTER BURGER BEATS\\\\tpv-hamburgueria\\\\node_modules\"\" 2>&1 && echo SUCCESS || echo FAILED\")",
+      "Bash(cmd /c \"tasklist | findstr /i \"\"node expo metro\"\"\")",
+      "Bash(cmd /c \"tasklist /FI \"\"IMAGENAME eq node.exe\"\" 2>&1\")",
+      "Bash(cmd /c \"tasklist /FI \"\"IMAGENAME eq expo.exe\"\" 2>&1\")",
+      "Bash(powershell -Command \"Remove-Item -Path ''c:\\\\Users\\\\akila\\\\Desktop\\\\PRINTER BURGER BEATS\\\\tpv-hamburgueria\\\\node_modules'' -Recurse -Force -ErrorAction SilentlyContinue; Remove-Item -Path ''c:\\\\Users\\\\akila\\\\Desktop\\\\PRINTER BURGER BEATS\\\\tpv-hamburgueria\\\\package-lock.json'' -Force -ErrorAction SilentlyContinue; Write-Host ''Done''\")",
+      "Bash(npm install:*)",
+      "Bash(npx expo:*)",
+      "Bash(cmd /c \"for /f \"\"tokens=5\"\" %a in \\(''netstat -ano ^| findstr :8081''\\) do taskkill /F /PID %a\")",
+      "Bash(cmd /c \"for /f \"\"tokens=5\"\" %a in \\(''netstat -ano ^| findstr :8081 ^| findstr LISTENING''\\) do taskkill /F /PID %a 2>nul\")"
+    ]
+  }
+}
