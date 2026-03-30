@@ -4,6 +4,7 @@ import { ActivityIndicator, Banner, Button, Chip, Divider, Surface, Text } from 
 import { useRouter } from 'expo-router';
 
 import PaymentModal from '../../components/PaymentModal';
+import TicketPreview from '../../components/TicketPreview';
 
 import { formatPrice } from '../../lib/utils';
 import { INITIAL_MODIFIERS } from '../../lib/constants';
@@ -269,6 +270,15 @@ export default function TicketScreen(): React.JSX.Element {
         )}
       </ScrollView>
 
+      {/* vista previa — secondary, non-intrusive trigger */}
+      <View style={styles.previewRow}>
+        <TicketPreview
+          ticket={activeTicket}
+          isTest={testMode}
+          modifierLabels={MODIFIER_LABELS}
+        />
+      </View>
+
       {/* Action buttons */}
       <Surface style={styles.actions} elevation={8}>
         <Divider />
@@ -509,6 +519,14 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#333',
     paddingVertical: 2,
+  },
+
+  // vista previa trigger row
+  previewRow: {
+    paddingHorizontal: 16,
+    paddingBottom: 2,
+    alignItems: 'flex-end',
+    backgroundColor: '#f5f5f5',
   },
 
   // action bar
