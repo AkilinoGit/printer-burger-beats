@@ -1,25 +1,105 @@
 import { create } from 'zustand';
-import type { Ticket, Order } from '../lib/types';
+import { generateId } from '../lib/utils';
+import type { Order, OrderItem, Ticket } from '../lib/types';
 
 interface TicketState {
+  // --- data ---
   activeTicket: Ticket | null;
-  setActiveTicket: (ticket: Ticket) => void;
-  addOrderToTicket: (order: Order) => void;
+
+  /**
+   * Open a brand-new ticket (called before the first Order of a sale).
+   * Returns the created Ticket so the caller can persist it in SQLite.
+   */
+  openTicket: (sessionId: string, ticketNumber: number) => Ticket;
+
+  /**
+   * Build an Order from cart data and append it to the active ticket.
+   * Returns the Order so the caller can persist it in SQLite.
+   * Stamps each OrderItem with the real orderId.
+   */
+  addOrder: (params: {
+    clientName: string;
+    items: Omit<OrderItem, 'orderId'>[];
+    total: number;
+    amountPaid?: number;
+    change?: number;
+  }) => Order;
+
+  /**
+   * Mark the active ticket as printed (sets printedAt).
+   * Does NOT clear the ticket — caller clears after successful BT print.
+   */
+  markPrinted: () => void;
+
+  /** Dispose of the active ticket after it has been fully saved & printed. */
   clearActiveTicket: () => void;
+
+  // --- selectors ---
+  /** Total across all orders in the active ticket. */
+  ticketTotal: () => number;
 }
 
-export const useTicketStore = create<TicketState>((set) => ({
+export const useTicketStore = create<TicketState>((set, get) => ({
   activeTicket: null,
-  setActiveTicket: (ticket) => set({ activeTicket: ticket }),
-  addOrderToTicket: (order) =>
-    set((s) => {
-      if (!s.activeTicket) return s;
-      return {
-        activeTicket: {
-          ...s.activeTicket,
-          orders: [...s.activeTicket.orders, order],
-        },
-      };
-    }),
+
+  openTicket: (sessionId, ticketNumber) => {
+    const ticket: Ticket = {
+      id: generateId(),
+      sessionId,
+      ticketNumber,
+      orders: [],
+      printedAt: null,
+      syncStatus: 'pending',
+      createdAt: new Date().toISOString(),
+    };
+    set({ activeTicket: ticket });
+    return ticket;
+  },
+
+  addOrder: ({ clientName, items, total, amountPaid, change }) => {
+    const ticket = get().activeTicket;
+    if (!ticket) {
+      throw new Error('addOrder called with no active ticket');
+    }
+
+    const orderId = generateId();
+
+    const stampedItems: OrderItem[] = items.map((i) => ({ ...i, orderId }));
+
+    const order: Order = {
+      id: orderId,
+      ticketId: ticket.id,
+      clientName,
+      items: stampedItems,
+      amountPaid: amountPaid ?? null,
+      change: change ?? null,
+      total,
+      createdAt: new Date().toISOString(),
+    };
+
+    set({
+      activeTicket: {
+        ...ticket,
+        orders: [...ticket.orders, order],
+      },
+    });
+
+    return order;
+  },
+
+  markPrinted: () => {
+    const ticket = get().activeTicket;
+    if (!ticket) return;
+    set({
+      activeTicket: { ...ticket, printedAt: new Date().toISOString() },
+    });
+  },
+
   clearActiveTicket: () => set({ activeTicket: null }),
+
+  ticketTotal: () => {
+    const orders = get().activeTicket?.orders ?? [];
+    const sum = orders.reduce((acc, o) => acc + o.total, 0);
+    return Math.round(sum * 100) / 100;
+  },
 }));
