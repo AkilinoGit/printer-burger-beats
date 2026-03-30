@@ -21,28 +21,42 @@ const DB_NAME = 'tpv.db';
 const SCHEMA_VERSION = 1;
 
 let _db: SQLite.SQLiteDatabase | null = null;
+let _initPromise: Promise<void> | null = null;
 
-async function getDb(): Promise<SQLite.SQLiteDatabase> {
+async function openDb(): Promise<SQLite.SQLiteDatabase> {
   if (_db) return _db;
   _db = await SQLite.openDatabaseAsync(DB_NAME);
   return _db;
+}
+
+async function getDb(): Promise<SQLite.SQLiteDatabase> {
+  if (_initPromise) await _initPromise;
+  return openDb();
 }
 
 // ---------------------------------------------------------------------------
 // Init & migrations
 // ---------------------------------------------------------------------------
 
+/**
+ * Initializes the database. Safe to call multiple times — runs only once.
+ * Always await this before any CRUD operation.
+ */
 export async function initDb(): Promise<void> {
-  const db = await getDb();
+  if (_initPromise) return _initPromise;
+  _initPromise = (async () => {
+    const db = await openDb();
 
-  // user_version pragma drives migrations
-  const row = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
-  const currentVersion = row?.user_version ?? 0;
+    // user_version pragma drives migrations
+    const row = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
+    const currentVersion = row?.user_version ?? 0;
 
-  if (currentVersion < 1) {
-    await migrate_v1(db);
-    await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
-  }
+    if (currentVersion < 1) {
+      await migrate_v1(db);
+      await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+    }
+  })();
+  return _initPromise;
 }
 
 async function migrate_v1(db: SQLite.SQLiteDatabase): Promise<void> {
