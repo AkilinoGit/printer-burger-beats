@@ -829,6 +829,57 @@ export async function saveOrderWithItems(order: Order): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// TICKET EDIT (replace all orders + items in one transaction)
+// ---------------------------------------------------------------------------
+
+/**
+ * Replaces all orders and order_items for a ticket with the provided data.
+ * Updates edited_at, edit_count, and syncStatus atomically.
+ *
+ * syncStatus rules:
+ *   'synced'  → 'pending_update'
+ *   anything else → unchanged (stays 'pending' or 'error')
+ */
+export async function updateTicketWithOrders(ticket: Ticket): Promise<void> {
+  const db = await getDb();
+  const now = new Date().toISOString();
+  const newSyncStatus: SyncStatus =
+    ticket.syncStatus === 'synced' ? 'pending_update' : ticket.syncStatus;
+
+  await db.withExclusiveTransactionAsync(async (txn) => {
+    // 1. Delete existing order_items and orders for this ticket
+    const existingOrders = await txn.getAllAsync<{ id: string }>(
+      'SELECT id FROM orders WHERE ticket_id = ?',
+      [ticket.id],
+    );
+    for (const { id } of existingOrders) {
+      await txn.runAsync('DELETE FROM order_items WHERE order_id = ?', [id]);
+    }
+    await txn.runAsync('DELETE FROM orders WHERE ticket_id = ?', [ticket.id]);
+
+    // 2. Re-insert orders and their items
+    for (const order of ticket.orders) {
+      await txn.runAsync(
+        'INSERT INTO orders (id, ticket_id, client_name, amount_paid, change, total, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [order.id, ticket.id, order.clientName, order.amountPaid, order.change, order.total, order.createdAt],
+      );
+      for (const item of order.items) {
+        await txn.runAsync(
+          'INSERT INTO order_items (id, order_id, product_id, product_name, qty, unit_price, modifier_price_add, selected_modifiers, custom_label) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [item.id, item.orderId, item.productId, item.productName, item.qty, item.unitPrice, item.modifierPriceAdd, JSON.stringify(item.selectedModifiers), item.customLabel],
+        );
+      }
+    }
+
+    // 3. Update ticket metadata
+    await txn.runAsync(
+      'UPDATE tickets SET edited_at = ?, edit_count = edit_count + 1, sync_status = ? WHERE id = ?',
+      [now, newSyncStatus, ticket.id],
+    );
+  });
+}
+
+// ---------------------------------------------------------------------------
 // SYNC QUEUE
 // ---------------------------------------------------------------------------
 
