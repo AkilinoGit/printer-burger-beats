@@ -49,6 +49,7 @@ export default function RootLayout(): React.JSX.Element {
       <Stack>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="ticket/[id]" options={{ title: 'Ticket' }} />
+        <Stack.Screen name="session/[id]" options={{ title: 'Sesión' }} />
       </Stack>
     </PaperProvider>
   );

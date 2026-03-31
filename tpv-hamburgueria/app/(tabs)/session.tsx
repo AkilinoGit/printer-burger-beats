@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
+  FlatList,
   ScrollView,
   StyleSheet,
   View,
@@ -9,225 +10,373 @@ import {
   Button,
   Dialog,
   Divider,
+  Menu,
   Portal,
   SegmentedButtons,
   Surface,
   Text,
-  TextInput,
+  TouchableRipple,
 } from 'react-native-paper';
+import { useRouter } from 'expo-router';
 
 import { useSessionStore } from '../../stores/useSessionStore';
 import {
-  closeSession,
+  getActiveSession,
   getLocations,
-  getOpenSession,
-  getProducts,
+  getSessions,
+  getTicketsBySession,
   insertSession,
-  updateSessionPriceOverrides,
 } from '../../services/db';
 import { formatPrice } from '../../lib/utils';
-import type { Location, Product } from '../../lib/types';
+import type { Location, Session, Ticket } from '../../lib/types';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function parsePrice(raw: string): number | null {
-  const n = parseFloat(raw.replace(',', '.'));
-  return isNaN(n) || n < 0 ? null : Math.round(n * 100) / 100;
+function formatDate(iso: string | null): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleDateString('es-ES', {
+    weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric',
+  });
+}
+
+function formatTime(iso: string | null): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+}
+
+function sessionTotal(tickets: Ticket[]): number {
+  return tickets.reduce((sum, t) => {
+    return sum + t.orders.reduce((s, o) => s + o.total, 0);
+  }, 0);
 }
 
 // ---------------------------------------------------------------------------
-// Price-override row component
+// SessionCard — used in history list
 // ---------------------------------------------------------------------------
 
-interface PriceRowProps {
-  product: Product;
-  effectivePrice: number;
-  hasOverride: boolean;
-  onEdit: (product: Product) => void;
-  onReset: (productId: string) => void;
+interface SessionCardProps {
+  session: Session;
+  locationName: string;
+  onPress: () => void;
 }
 
-function PriceRow({ product, effectivePrice, hasOverride, onEdit, onReset }: PriceRowProps): React.JSX.Element {
+function SessionCard({ session, locationName, onPress }: SessionCardProps): React.JSX.Element {
+  const [tickets, setTickets] = useState<Ticket[]>([]);
+
+  useEffect(() => {
+    getTicketsBySession(session.id).then(setTickets).catch(() => setTickets([]));
+  }, [session.id]);
+
+  const total = sessionTotal(tickets);
+
   return (
-    <View style={styles.priceRow}>
-      <View style={styles.priceRowLeft}>
-        <Text style={styles.priceRowName} numberOfLines={1}>
-          {product.name}
-        </Text>
-        {hasOverride && (
-          <Text style={styles.priceRowBase}>base {formatPrice(product.basePrice)}</Text>
-        )}
+    <TouchableRipple onPress={onPress} rippleColor="rgba(0,0,0,0.06)">
+      <View style={cardStyles.row}>
+        <View style={cardStyles.left}>
+          <Text style={cardStyles.date}>{formatDate(session.openedAt ?? session.createdAt)}</Text>
+          <Text style={cardStyles.location}>{locationName}</Text>
+          {session.sessionCode && (
+            <Text style={cardStyles.code}>{session.sessionCode}</Text>
+          )}
+        </View>
+        <View style={cardStyles.right}>
+          <Text style={cardStyles.total}>{formatPrice(total)}</Text>
+          <Text style={cardStyles.tickets}>{tickets.length} ticket{tickets.length !== 1 ? 's' : ''}</Text>
+        </View>
       </View>
-      <View style={styles.priceRowRight}>
-        <Text style={[styles.priceRowPrice, hasOverride && styles.priceRowPriceOverride]}>
-          {formatPrice(effectivePrice)}
-        </Text>
-        <Button
-          compact
-          mode="text"
-          icon={hasOverride ? 'restore' : 'pencil'}
-          onPress={() => hasOverride ? onReset(product.id) : onEdit(product)}
-          textColor={hasOverride ? '#E53935' : '#1565C0'}
-        >
-          {hasOverride ? 'Restablecer' : 'Cambiar'}
-        </Button>
-      </View>
-    </View>
+    </TouchableRipple>
   );
 }
+
+const cardStyles = StyleSheet.create({
+  row: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#e0e0e0',
+    gap: 8,
+  },
+  left: { flex: 1, gap: 3 },
+  right: { alignItems: 'flex-end', gap: 3 },
+  date: { fontSize: 15, fontWeight: '700', color: '#111' },
+  location: { fontSize: 13, color: '#666' },
+  code: { fontSize: 12, color: '#1565C0', fontWeight: '600' },
+  total: { fontSize: 16, fontWeight: '800', color: '#1a1a1a' },
+  tickets: { fontSize: 12, color: '#888' },
+});
+
+// ---------------------------------------------------------------------------
+// ActiveSessionCard
+// ---------------------------------------------------------------------------
+
+interface ActiveSessionCardProps {
+  session: Session;
+  locationName: string;
+  onViewTickets: () => void;
+  onCloseRequest: () => void;
+}
+
+function ActiveSessionCard({ session, locationName, onViewTickets, onCloseRequest }: ActiveSessionCardProps): React.JSX.Element {
+  const [tickets, setTickets] = useState<Ticket[]>([]);
+
+  useEffect(() => {
+    getTicketsBySession(session.id).then(setTickets).catch(() => setTickets([]));
+  }, [session.id]);
+
+  const total = sessionTotal(tickets);
+  const openedAt = session.openedAt ?? session.createdAt;
+  const autoCloseAt = session.autoCloseAt;
+
+  return (
+    <Surface style={activeStyles.card} elevation={3}>
+      {/* Badge */}
+      <View style={activeStyles.badgeRow}>
+        <View style={activeStyles.badge}>
+          <Text style={activeStyles.badgeText}>● ACTIVA</Text>
+        </View>
+        {session.sessionCode && (
+          <Text style={activeStyles.code}>{session.sessionCode}</Text>
+        )}
+      </View>
+
+      {/* Info */}
+      <Text style={activeStyles.location}>{locationName}</Text>
+      <View style={activeStyles.metaRow}>
+        <View style={activeStyles.metaCol}>
+          <Text style={activeStyles.metaLabel}>Apertura</Text>
+          <Text style={activeStyles.metaValue}>{formatDate(openedAt)}</Text>
+          <Text style={activeStyles.metaTime}>{formatTime(openedAt)}</Text>
+        </View>
+        <View style={activeStyles.metaCol}>
+          <Text style={activeStyles.metaLabel}>Cierre automático</Text>
+          <Text style={activeStyles.metaValue}>{formatDate(autoCloseAt)}</Text>
+          <Text style={activeStyles.metaTime}>{formatTime(autoCloseAt)}</Text>
+        </View>
+        <View style={activeStyles.metaCol}>
+          <Text style={activeStyles.metaLabel}>Tickets</Text>
+          <Text style={activeStyles.metaValue}>{tickets.length}</Text>
+        </View>
+        <View style={activeStyles.metaCol}>
+          <Text style={activeStyles.metaLabel}>Total</Text>
+          <Text style={activeStyles.metaValue}>{formatPrice(total)}</Text>
+        </View>
+      </View>
+
+      {/* Actions */}
+      <View style={activeStyles.actions}>
+        <Button
+          mode="contained"
+          icon="receipt"
+          onPress={onViewTickets}
+          style={activeStyles.btn}
+          contentStyle={activeStyles.btnContent}
+          buttonColor="#1E88E5"
+        >
+          Ver tickets
+        </Button>
+        <Button
+          mode="outlined"
+          icon="stop-circle"
+          onPress={onCloseRequest}
+          contentStyle={activeStyles.btnContent}
+          textColor="#E53935"
+          style={[activeStyles.btn, activeStyles.closeBtn]}
+        >
+          Cerrar sesión
+        </Button>
+      </View>
+    </Surface>
+  );
+}
+
+const activeStyles = StyleSheet.create({
+  card: {
+    borderRadius: 14,
+    padding: 18,
+    backgroundColor: '#fff',
+    gap: 10,
+    marginBottom: 24,
+    borderLeftWidth: 4,
+    borderLeftColor: '#43A047',
+  },
+  badgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  badge: {
+    backgroundColor: '#E8F5E9',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 20,
+  },
+  badgeText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#2E7D32',
+    letterSpacing: 0.4,
+  },
+  code: {
+    fontSize: 13,
+    color: '#1565C0',
+    fontWeight: '700',
+  },
+  location: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#111',
+  },
+  metaRow: {
+    flexDirection: 'row',
+    gap: 16,
+    flexWrap: 'wrap',
+    marginTop: 4,
+  },
+  metaCol: {
+    gap: 2,
+    minWidth: 70,
+  },
+  metaLabel: {
+    fontSize: 11,
+    color: '#888',
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  metaValue: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#1a1a1a',
+  },
+  metaTime: {
+    fontSize: 12,
+    color: '#555',
+  },
+  actions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 6,
+    flexWrap: 'wrap',
+  },
+  btn: {
+    flex: 1,
+    borderRadius: 8,
+  },
+  btnContent: {
+    height: 48,
+  },
+  closeBtn: {
+    borderColor: '#E53935',
+  },
+});
 
 // ---------------------------------------------------------------------------
 // Main screen
 // ---------------------------------------------------------------------------
 
+const ALL_LOCATIONS = '__all__';
+
 export default function SessionScreen(): React.JSX.Element {
+  const router = useRouter();
+
   const {
-    activeLocation,
     activeSession,
-    products,
-    setActiveLocation,
+    activeLocation,
     setActiveSession,
+    setActiveLocation,
     setProducts,
-    setPriceOverride,
-    getEffectivePrice,
+    closeCurrentSession,
   } = useSessionStore();
 
   // ── local state ───────────────────────────────────────────────────────────
-  const [locations, setLocations]       = useState<Location[]>([]);
-  const [loading, setLoading]           = useState(true);
-  const [savingOverride, setSavingOverride] = useState(false);
-  const [closingSession, setClosingSession] = useState(false);
+  const [locations, setLocations]               = useState<Location[]>([]);
+  const [sessions, setSessions]                 = useState<Session[]>([]);
+  const [loading, setLoading]                   = useState(true);
+  const [opening, setOpening]                   = useState(false);
+  const [closing, setClosing]                   = useState(false);
+  const [closeDialogVisible, setCloseDialogVisible] = useState(false);
 
-  // Location selector (shown when no open session)
+  // New session selector
   const [selectedLocationId, setSelectedLocationId] = useState<string>('');
 
-  // Price-edit dialog
-  const [editProduct, setEditProduct]   = useState<Product | null>(null);
-  const [editPrice, setEditPrice]       = useState('');
-  const [editPriceError, setEditPriceError] = useState('');
-
-  // Close-session confirmation dialog
-  const [closeDialogVisible, setCloseDialogVisible] = useState(false);
+  // History filter
+  const [filterLocationId, setFilterLocationId] = useState<string>(ALL_LOCATIONS);
+  const [filterMenuVisible, setFilterMenuVisible] = useState(false);
 
   // ── load data ─────────────────────────────────────────────────────────────
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [locs, prods] = await Promise.all([getLocations(), getProducts()]);
+      const [locs, allSessions] = await Promise.all([
+        getLocations(),
+        getSessions(),
+      ]);
       setLocations(locs);
-      setProducts(prods);
 
-      // If we already have an active location, check for an open session
-      const loc = activeLocation ?? locs.find((l) => l.isDefault) ?? locs[0] ?? null;
-      if (loc && !activeLocation) setActiveLocation(loc);
+      const defaultLoc = activeLocation ?? locs.find((l) => l.isDefault) ?? locs[0] ?? null;
+      if (defaultLoc && !activeLocation) setActiveLocation(defaultLoc);
+      setSelectedLocationId(activeSession?.locationId ?? defaultLoc?.id ?? '');
 
-      if (loc && !activeSession) {
-        const openSession = await getOpenSession(loc.id);
-        if (openSession) setActiveSession(openSession);
-      }
-
-      setSelectedLocationId(
-        activeSession?.locationId ?? loc?.id ?? locs[0]?.id ?? '',
-      );
+      // Closed sessions only in history
+      setSessions(allSessions.filter((s) => s.status === 'closed'));
     } finally {
       setLoading(false);
     }
-  }, [activeLocation, activeSession, setActiveLocation, setActiveSession, setProducts]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => {
-    void loadData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  useEffect(() => { void loadData(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── open session ──────────────────────────────────────────────────────────
   async function handleOpenSession(): Promise<void> {
     const loc = locations.find((l) => l.id === selectedLocationId);
     if (!loc) return;
-
-    // Check for existing open session for this location
-    const existing = await getOpenSession(loc.id);
-    if (existing) {
-      setActiveSession(existing);
+    setOpening(true);
+    try {
+      const existing = await getActiveSession();
+      if (existing) {
+        setActiveSession(existing);
+        setActiveLocation(loc);
+        return;
+      }
+      const session = await insertSession(loc.id);
+      setActiveSession(session);
       setActiveLocation(loc);
-      return;
+    } finally {
+      setOpening(false);
     }
-
-    const session = await insertSession(loc.id);
-    setActiveSession(session);
-    setActiveLocation(loc);
   }
 
   // ── close session ─────────────────────────────────────────────────────────
   async function handleCloseSession(): Promise<void> {
-    if (!activeSession) return;
-    setClosingSession(true);
+    setClosing(true);
     try {
-      await closeSession(activeSession.id);
-      useSessionStore.setState({ activeSession: null });
+      await closeCurrentSession();
+      await loadData(); // refresh history
     } finally {
-      setClosingSession(false);
+      setClosing(false);
       setCloseDialogVisible(false);
     }
   }
 
-  // ── price override ────────────────────────────────────────────────────────
-  function handleEditPrice(product: Product): void {
-    const current = getEffectivePrice(product.id, product.basePrice);
-    setEditProduct(product);
-    setEditPrice(String(current).replace('.', ','));
-    setEditPriceError('');
+  // ── derived ───────────────────────────────────────────────────────────────
+  function locationName(id: string): string {
+    return locations.find((l) => l.id === id)?.name ?? id;
   }
 
-  async function handleSavePrice(): Promise<void> {
-    if (!editProduct || !activeSession) return;
-    const price = parsePrice(editPrice);
-    if (price === null) {
-      setEditPriceError('Introduce un precio válido (ej: 12,50)');
-      return;
-    }
-    setSavingOverride(true);
-    try {
-      setPriceOverride(editProduct.id, price);
-      const updated = {
-        ...activeSession.priceOverrides,
-        [editProduct.id]: price,
-      };
-      await updateSessionPriceOverrides(activeSession.id, updated);
-      setEditProduct(null);
-    } finally {
-      setSavingOverride(false);
-    }
-  }
+  const filteredSessions = filterLocationId === ALL_LOCATIONS
+    ? sessions
+    : sessions.filter((s) => s.locationId === filterLocationId);
 
-  async function handleResetPrice(productId: string): Promise<void> {
-    if (!activeSession) return;
-    const updated = { ...activeSession.priceOverrides };
-    delete updated[productId];
-    await updateSessionPriceOverrides(activeSession.id, updated);
-    useSessionStore.setState({
-      activeSession: { ...activeSession, priceOverrides: updated },
-    });
-  }
-
-  // ── grouped products ──────────────────────────────────────────────────────
-  const categoryOrder: Array<Product['category']> = ['burger', 'side', 'drink', 'custom'];
-  const categoryLabel: Record<Product['category'], string> = {
-    burger: 'Hamburguesas',
-    side:   'Acompañamientos',
-    drink:  'Bebidas',
-    custom: 'Otros',
-  };
-
-  const productsByCategory = categoryOrder.reduce<Record<string, Product[]>>(
-    (acc, cat) => {
-      const list = products.filter((p) => p.category === cat);
-      if (list.length > 0) acc[cat] = list;
-      return acc;
-    },
-    {},
-  );
+  const filterLabel = filterLocationId === ALL_LOCATIONS
+    ? 'Todas las ubicaciones'
+    : locationName(filterLocationId);
 
   // ── render: loading ───────────────────────────────────────────────────────
   if (loading) {
@@ -238,168 +387,130 @@ export default function SessionScreen(): React.JSX.Element {
     );
   }
 
-  // ── render: no session open ───────────────────────────────────────────────
-  if (!activeSession || activeSession.status !== 'open') {
-    return (
-      <ScrollView contentContainerStyle={styles.noSessionRoot}>
-        <Text variant="headlineSmall" style={styles.sectionTitle}>
-          Abrir sesión del día
-        </Text>
-
-        {locations.length > 1 && (
-          <Surface style={styles.locationCard} elevation={1}>
-            <Text variant="labelLarge" style={styles.locationLabel}>
-              Selecciona el local
-            </Text>
-            <SegmentedButtons
-              value={selectedLocationId}
-              onValueChange={setSelectedLocationId}
-              buttons={locations.map((l) => ({ value: l.id, label: l.name }))}
-              style={styles.segmented}
-            />
-          </Surface>
-        )}
-
-        {locations.length === 1 && (
-          <Surface style={styles.locationCard} elevation={1}>
-            <Text variant="labelLarge" style={styles.locationLabel}>
-              Local
-            </Text>
-            <Text variant="bodyLarge">{locations[0].name}</Text>
-          </Surface>
-        )}
-
-        <Button
-          mode="contained"
-          icon="play-circle"
-          onPress={() => void handleOpenSession()}
-          style={styles.openBtn}
-          contentStyle={styles.openBtnContent}
-          buttonColor="#43A047"
-          disabled={!selectedLocationId}
-        >
-          Abrir sesión
-        </Button>
-      </ScrollView>
-    );
-  }
-
-  // ── render: session open ──────────────────────────────────────────────────
-  const locationName = locations.find((l) => l.id === activeSession.locationId)?.name ?? '';
-  const overrideCount = Object.keys(activeSession.priceOverrides).length;
-
+  // ── render ────────────────────────────────────────────────────────────────
   return (
-    <ScrollView style={styles.root} contentContainerStyle={styles.scrollContent}>
-      {/* Session header */}
-      <Surface style={styles.sessionHeader} elevation={2}>
-        <View style={styles.sessionHeaderRow}>
-          <View>
-            <Text variant="labelMedium" style={styles.sessionMeta}>SESIÓN ABIERTA</Text>
-            <Text variant="titleLarge" style={styles.sessionLocation}>{locationName}</Text>
-            <Text variant="bodySmall" style={styles.sessionDate}>{activeSession.date}</Text>
-          </View>
-          <Button
-            mode="outlined"
-            icon="stop-circle"
-            onPress={() => setCloseDialogVisible(true)}
-            textColor="#E53935"
-            style={styles.closeBtn}
-          >
-            Cerrar sesión
-          </Button>
-        </View>
-        {overrideCount > 0 && (
-          <Text style={styles.overrideBadge}>
-            {overrideCount} {overrideCount === 1 ? 'precio modificado' : 'precios modificados'}
-          </Text>
-        )}
-      </Surface>
-
-      {/* Price list by category */}
-      <Text variant="titleMedium" style={styles.sectionTitle}>
-        Precios de la sesión
-      </Text>
-      <Text variant="bodySmall" style={styles.sectionHint}>
-        Toca "Cambiar" para aplicar un precio especial para hoy. El resto hereda el precio base.
-      </Text>
-
-      {Object.entries(productsByCategory).map(([cat, prods]) => (
-        <Surface key={cat} style={styles.categoryCard} elevation={1}>
-          <Text style={styles.categoryHeading}>
-            {categoryLabel[cat as Product['category']]}
-          </Text>
-          <Divider />
-          {prods.map((product, idx) => {
-            const effective = getEffectivePrice(product.id, product.basePrice);
-            const hasOverride = (activeSession.priceOverrides[product.id] ?? null) !== null;
-            return (
-              <React.Fragment key={product.id}>
-                {idx > 0 && <Divider />}
-                <PriceRow
-                  product={product}
-                  effectivePrice={effective}
-                  hasOverride={hasOverride}
-                  onEdit={handleEditPrice}
-                  onReset={(id) => void handleResetPrice(id)}
+    <View style={styles.root}>
+      <FlatList
+        data={filteredSessions}
+        keyExtractor={(s) => s.id}
+        contentContainerStyle={styles.listContent}
+        ListHeaderComponent={
+          <>
+            {/* ── SECCIÓN 1: Sesión activa ─────────────────────────────────── */}
+            {activeSession && activeSession.status === 'open' && (
+              <>
+                <Text style={styles.sectionLabel}>SESIÓN ACTIVA</Text>
+                <ActiveSessionCard
+                  session={activeSession}
+                  locationName={locationName(activeSession.locationId)}
+                  onViewTickets={() => router.push(`/session/${activeSession.id}`)}
+                  onCloseRequest={() => setCloseDialogVisible(true)}
                 />
-              </React.Fragment>
-            );
-          })}
-        </Surface>
-      ))}
-
-      {/* ── Dialogs ─────────────────────────────────────────────────────────── */}
-      <Portal>
-        {/* Price edit */}
-        <Dialog visible={editProduct !== null} onDismiss={() => setEditProduct(null)}>
-          <Dialog.Title>Precio para hoy</Dialog.Title>
-          <Dialog.Content>
-            <Text variant="bodyMedium" style={styles.editDialogProduct}>
-              {editProduct?.name}
-            </Text>
-            <TextInput
-              label="Precio (€)"
-              value={editPrice}
-              onChangeText={(v) => {
-                setEditPrice(v);
-                setEditPriceError('');
-              }}
-              mode="outlined"
-              keyboardType="decimal-pad"
-              returnKeyType="done"
-              onSubmitEditing={() => void handleSavePrice()}
-              error={!!editPriceError}
-              autoFocus
-              style={styles.editInput}
-            />
-            {!!editPriceError && (
-              <Text style={styles.editError}>{editPriceError}</Text>
+              </>
             )}
-            <Text variant="bodySmall" style={styles.editHint}>
-              Precio base: {editProduct ? formatPrice(editProduct.basePrice) : ''}
-            </Text>
-          </Dialog.Content>
-          <Dialog.Actions>
-            <Button onPress={() => setEditProduct(null)}>Cancelar</Button>
-            <Button
-              mode="contained"
-              onPress={() => void handleSavePrice()}
-              loading={savingOverride}
-              disabled={savingOverride}
-              buttonColor="#1565C0"
-            >
-              Guardar
-            </Button>
-          </Dialog.Actions>
-        </Dialog>
 
-        {/* Close session confirmation */}
+            {/* ── SECCIÓN 2: Abrir nueva sesión ────────────────────────────── */}
+            {(!activeSession || activeSession.status !== 'open') && (
+              <>
+                <Text style={styles.sectionLabel}>NUEVA SESIÓN</Text>
+                <Surface style={styles.openCard} elevation={1}>
+                  {locations.length > 1 ? (
+                    <>
+                      <Text style={styles.openCardHint}>Selecciona la ubicación</Text>
+                      <SegmentedButtons
+                        value={selectedLocationId}
+                        onValueChange={setSelectedLocationId}
+                        buttons={locations.map((l) => ({ value: l.id, label: l.name }))}
+                      />
+                    </>
+                  ) : (
+                    <Text style={styles.openCardLocation}>
+                      {locations[0]?.name ?? '—'}
+                    </Text>
+                  )}
+                  <Button
+                    mode="contained"
+                    icon="play-circle"
+                    onPress={() => void handleOpenSession()}
+                    loading={opening}
+                    disabled={opening || !selectedLocationId}
+                    buttonColor="#43A047"
+                    style={styles.openBtn}
+                    contentStyle={styles.openBtnContent}
+                    labelStyle={styles.openBtnLabel}
+                  >
+                    Abrir sesión
+                  </Button>
+                </Surface>
+              </>
+            )}
+
+            {/* ── SECCIÓN 3: Historial — cabecera ──────────────────────────── */}
+            <View style={styles.historyHeader}>
+              <Text style={styles.sectionLabel}>HISTORIAL</Text>
+              {locations.length > 1 && (
+                <Menu
+                  visible={filterMenuVisible}
+                  onDismiss={() => setFilterMenuVisible(false)}
+                  anchor={
+                    <Button
+                      mode="outlined"
+                      icon="filter-variant"
+                      onPress={() => setFilterMenuVisible(true)}
+                      compact
+                      style={styles.filterBtn}
+                      contentStyle={styles.filterBtnContent}
+                    >
+                      {filterLabel}
+                    </Button>
+                  }
+                >
+                  <Menu.Item
+                    onPress={() => { setFilterLocationId(ALL_LOCATIONS); setFilterMenuVisible(false); }}
+                    title="Todas las ubicaciones"
+                    leadingIcon={filterLocationId === ALL_LOCATIONS ? 'check' : undefined}
+                  />
+                  <Divider />
+                  {locations.map((l) => (
+                    <Menu.Item
+                      key={l.id}
+                      onPress={() => { setFilterLocationId(l.id); setFilterMenuVisible(false); }}
+                      title={l.name}
+                      leadingIcon={filterLocationId === l.id ? 'check' : undefined}
+                    />
+                  ))}
+                </Menu>
+              )}
+            </View>
+
+            {filteredSessions.length === 0 && (
+              <Text style={styles.emptyText}>No hay sesiones cerradas</Text>
+            )}
+          </>
+        }
+        renderItem={({ item }) => (
+          <Surface style={styles.historyCard} elevation={1}>
+            <SessionCard
+              session={item}
+              locationName={locationName(item.locationId)}
+              onPress={() => router.push(`/session/${item.id}`)}
+            />
+          </Surface>
+        )}
+        ItemSeparatorComponent={() => <View style={styles.separator} />}
+      />
+
+      {/* ── Modals ─────────────────────────────────────────────────────────── */}
+      <Portal>
         <Dialog visible={closeDialogVisible} onDismiss={() => setCloseDialogVisible(false)}>
           <Dialog.Title>¿Cerrar sesión?</Dialog.Title>
           <Dialog.Content>
             <Text variant="bodyMedium">
-              Se cerrará la jornada de hoy en {locationName}.
-              Los tickets ya generados se conservan.
+              Se cerrará la jornada en{' '}
+              <Text style={styles.bold}>
+                {activeSession ? locationName(activeSession.locationId) : ''}
+              </Text>
+              .{'\n'}Los tickets ya generados se conservan.
             </Text>
           </Dialog.Content>
           <Dialog.Actions>
@@ -407,8 +518,8 @@ export default function SessionScreen(): React.JSX.Element {
             <Button
               mode="contained"
               onPress={() => void handleCloseSession()}
-              loading={closingSession}
-              disabled={closingSession}
+              loading={closing}
+              disabled={closing}
               buttonColor="#E53935"
             >
               Cerrar sesión
@@ -416,7 +527,7 @@ export default function SessionScreen(): React.JSX.Element {
           </Dialog.Actions>
         </Dialog>
       </Portal>
-    </ScrollView>
+    </View>
   );
 }
 
@@ -425,165 +536,94 @@ export default function SessionScreen(): React.JSX.Element {
 // ---------------------------------------------------------------------------
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#f5f5f5' },
-  scrollContent: { padding: 16, paddingBottom: 40 },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-
-  // ── no-session layout ──
-  noSessionRoot: {
-    padding: 24,
-    gap: 20,
-    flexGrow: 1,
+  root: {
+    flex: 1,
+    backgroundColor: '#f5f5f5',
+  },
+  center: {
+    flex: 1,
+    alignItems: 'center',
     justifyContent: 'center',
   },
-
-  // ── location picker ──
-  locationCard: {
-    borderRadius: 12,
+  listContent: {
     padding: 16,
-    gap: 12,
-    backgroundColor: '#fff',
-  },
-  locationLabel: {
-    color: '#555',
-  },
-  segmented: {
-    flexWrap: 'wrap',
+    paddingBottom: 40,
+    gap: 0,
   },
 
-  // ── open button ──
+  // section labels
+  sectionLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 1.2,
+    color: '#888',
+    marginBottom: 10,
+    marginTop: 4,
+  },
+
+  // open session card
+  openCard: {
+    borderRadius: 14,
+    padding: 18,
+    backgroundColor: '#fff',
+    gap: 14,
+    marginBottom: 28,
+  },
+  openCardHint: {
+    fontSize: 14,
+    color: '#555',
+    fontWeight: '500',
+  },
+  openCardLocation: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#111',
+  },
   openBtn: {
     borderRadius: 10,
-    alignSelf: 'stretch',
   },
   openBtnContent: {
     height: 52,
   },
-
-  // ── session header ──
-  sessionHeader: {
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 20,
-    backgroundColor: '#fff',
-    gap: 8,
-  },
-  sessionHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: 8,
-  },
-  sessionMeta: {
-    color: '#43A047',
-    fontWeight: '700',
-    letterSpacing: 0.8,
-    marginBottom: 2,
-  },
-  sessionLocation: {
-    fontWeight: '700',
-    color: '#111',
-  },
-  sessionDate: {
-    color: '#777',
-    marginTop: 2,
-  },
-  closeBtn: {
-    borderColor: '#E53935',
-    alignSelf: 'flex-start',
-    flexShrink: 1,
-  },
-  overrideBadge: {
-    fontSize: 12,
-    color: '#1565C0',
-    fontWeight: '600',
-    backgroundColor: '#E3F2FD',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-    alignSelf: 'flex-start',
-  },
-
-  // ── price section ──
-  sectionTitle: {
-    fontWeight: '700',
-    marginBottom: 4,
-    color: '#222',
-  },
-  sectionHint: {
-    color: '#777',
-    marginBottom: 16,
-  },
-
-  // ── category card ──
-  categoryCard: {
-    borderRadius: 12,
-    overflow: 'hidden',
-    marginBottom: 14,
-    backgroundColor: '#fff',
-  },
-  categoryHeading: {
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 0.8,
-    color: '#888',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    textTransform: 'uppercase',
-  },
-
-  // ── price row ──
-  priceRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    gap: 8,
-  },
-  priceRowLeft: {
-    flex: 1,
-    gap: 2,
-  },
-  priceRowName: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#111',
-  },
-  priceRowBase: {
-    fontSize: 12,
-    color: '#999',
-  },
-  priceRowRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  priceRowPrice: {
+  openBtnLabel: {
     fontSize: 16,
-    fontWeight: '700',
-    color: '#222',
-    minWidth: 64,
-    textAlign: 'right',
-  },
-  priceRowPriceOverride: {
-    color: '#1565C0',
+    fontWeight: '800',
   },
 
-  // ── edit dialog ──
-  editDialogProduct: {
-    fontWeight: '700',
-    marginBottom: 12,
-  },
-  editInput: {
-    backgroundColor: '#fff',
-  },
-  editError: {
-    color: '#E53935',
-    fontSize: 12,
+  // history header
+  historyHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
     marginTop: 4,
   },
-  editHint: {
-    color: '#888',
-    marginTop: 6,
+  filterBtn: {
+    borderRadius: 8,
+  },
+  filterBtnContent: {
+    height: 36,
+  },
+
+  // history list
+  historyCard: {
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: '#fff',
+  },
+  separator: {
+    height: 10,
+  },
+  emptyText: {
+    textAlign: 'center',
+    color: '#bbb',
+    fontStyle: 'italic',
+    paddingVertical: 24,
+    fontSize: 15,
+  },
+
+  // close dialog
+  bold: {
+    fontWeight: '700',
   },
 });
