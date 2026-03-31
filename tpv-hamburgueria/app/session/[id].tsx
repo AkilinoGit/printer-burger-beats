@@ -1,17 +1,48 @@
-import React, { useEffect, useState } from 'react';
-import { FlatList, StyleSheet, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Alert, FlatList, StyleSheet, View } from 'react-native';
 import {
   ActivityIndicator,
+  Button,
+  Dialog,
   Divider,
+  IconButton,
+  Portal,
   Surface,
   Text,
   TouchableRipple,
 } from 'react-native-paper';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 
-import { getLocations, getSessionByCode, getSessions, getTicketsBySession } from '../../services/db';
+import { getLocations, getProducts, getSessions, getTicketsBySession, markTicketPrinted } from '../../services/db';
+import { printTicket } from '../../services/printer';
 import { formatPrice } from '../../lib/utils';
-import type { Location, Session, Ticket } from '../../lib/types';
+import { useSessionStore } from '../../stores/useSessionStore';
+import type { Location, Modifier, Session, SyncStatus, Ticket } from '../../lib/types';
+
+// ---------------------------------------------------------------------------
+// Modifier label map (same logic as ticket/[id].tsx)
+// ---------------------------------------------------------------------------
+
+function buildModifierMaps(modifiers: Modifier[]): {
+  labels: Record<string, string>;
+  radioNoSelection: Record<string, string>;
+  radioOptionSets: Record<string, Set<string>>;
+} {
+  const labels: Record<string, string> = {};
+  const radioNoSelection: Record<string, string> = {};
+  const radioOptionSets: Record<string, Set<string>> = {};
+  for (const m of modifiers) {
+    labels[m.id] = m.label;
+    if (m.type === 'radio') {
+      if (m.noSelectionLabel) radioNoSelection[m.id] = m.noSelectionLabel;
+      radioOptionSets[m.id] = new Set((m.options ?? []).map((o) => o.id));
+      for (const opt of m.options ?? []) {
+        labels[opt.id] = opt.label;
+      }
+    }
+  }
+  return { labels, radioNoSelection, radioOptionSets };
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -31,27 +62,92 @@ function ticketTotal(ticket: Ticket): number {
 }
 
 // ---------------------------------------------------------------------------
+// Sync badge
+// ---------------------------------------------------------------------------
+
+const SYNC_CONFIG: Record<SyncStatus, { color: string; bg: string; label: string }> = {
+  pending:        { color: '#757575', bg: '#F5F5F5',  label: 'Pendiente' },
+  synced:         { color: '#2E7D32', bg: '#E8F5E9',  label: 'Sincronizado' },
+  pending_update: { color: '#E65100', bg: '#FFF3E0',  label: 'Actualización' },
+  error:          { color: '#C62828', bg: '#FFEBEE',  label: 'Error sync' },
+};
+
+function SyncBadge({ status }: { status: SyncStatus }): React.JSX.Element {
+  const cfg = SYNC_CONFIG[status] ?? SYNC_CONFIG.pending;
+  return (
+    <View style={[syncStyles.badge, { backgroundColor: cfg.bg }]}>
+      <Text style={[syncStyles.label, { color: cfg.color }]}>{cfg.label}</Text>
+    </View>
+  );
+}
+
+const syncStyles = StyleSheet.create({
+  badge: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
+  label: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+  },
+});
+
+// ---------------------------------------------------------------------------
 // TicketRow
 // ---------------------------------------------------------------------------
 
-function TicketRow({ ticket, onPress }: { ticket: Ticket; onPress: () => void }): React.JSX.Element {
-  const total = ticketTotal(ticket);
-  const orderNames = ticket.orders.map((o) => o.clientName).join(', ');
+interface TicketRowProps {
+  ticket: Ticket;
+  onPress: () => void;
+  onReprint: () => void;
+  reprinting: boolean;
+}
+
+function TicketRow({ ticket, onPress, onReprint, reprinting }: TicketRowProps): React.JSX.Element {
+  const total      = ticketTotal(ticket);
+  const orderNames = ticket.orders.map((o) => o.clientName).filter(Boolean).join(', ');
+  const wasEdited  = ticket.editedAt !== null;
 
   return (
     <TouchableRipple onPress={onPress} rippleColor="rgba(0,0,0,0.06)">
       <View style={rowStyles.row}>
+
+        {/* Left: number + names + badges */}
         <View style={rowStyles.left}>
-          <Text style={rowStyles.number}>#{ticket.ticketNumber}</Text>
+          <View style={rowStyles.topLine}>
+            <Text style={rowStyles.number}>#{ticket.ticketNumber}</Text>
+            {wasEdited && (
+              <View style={rowStyles.editedBadge}>
+                <Text style={rowStyles.editedText}>✏ Editado</Text>
+              </View>
+            )}
+          </View>
           {orderNames.length > 0 && (
             <Text style={rowStyles.names} numberOfLines={1}>{orderNames}</Text>
           )}
-          <Text style={rowStyles.orders}>
-            {ticket.orders.length} pedido{ticket.orders.length !== 1 ? 's' : ''}
-            {ticket.printedAt ? '' : '  ·  Sin imprimir'}
-          </Text>
+          <View style={rowStyles.badgeRow}>
+            <SyncBadge status={ticket.syncStatus} />
+            <Text style={rowStyles.ordersLabel}>
+              {ticket.orders.length} pedido{ticket.orders.length !== 1 ? 's' : ''}
+            </Text>
+          </View>
         </View>
-        <Text style={rowStyles.total}>{formatPrice(total)}</Text>
+
+        {/* Right: total + reprint button */}
+        <View style={rowStyles.right}>
+          <Text style={rowStyles.total}>{formatPrice(total)}</Text>
+          <IconButton
+            icon="printer"
+            size={22}
+            mode="contained-tonal"
+            onPress={onReprint}
+            disabled={reprinting}
+            style={rowStyles.printBtn}
+          />
+        </View>
+
       </View>
     </TouchableRipple>
   );
@@ -61,16 +157,40 @@ const rowStyles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingLeft: 16,
+    paddingRight: 8,
+    paddingVertical: 12,
     gap: 8,
   },
-  left: { flex: 1, gap: 3 },
-  number: { fontSize: 16, fontWeight: '800', color: '#111' },
+  left: { flex: 1, gap: 4 },
+  right: {
+    alignItems: 'center',
+    gap: 2,
+  },
+  topLine: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  number: { fontSize: 17, fontWeight: '800', color: '#111' },
+  editedBadge: {
+    backgroundColor: '#FFF8E1',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
+  editedText: { fontSize: 10, fontWeight: '700', color: '#F57F17' },
   names: { fontSize: 13, color: '#555' },
-  orders: { fontSize: 12, color: '#888' },
-  total: { fontSize: 16, fontWeight: '700', color: '#1a1a1a' },
+  badgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  ordersLabel: { fontSize: 11, color: '#888' },
+  total: { fontSize: 16, fontWeight: '700', color: '#1a1a1a', textAlign: 'right' },
+  printBtn: { margin: 0 },
 });
 
 // ---------------------------------------------------------------------------
@@ -78,37 +198,85 @@ const rowStyles = StyleSheet.create({
 // ---------------------------------------------------------------------------
 
 export default function SessionDetailScreen(): React.JSX.Element {
-  const { id } = useLocalSearchParams<{ id: string }>();
-  const router = useRouter();
+  const { id }   = useLocalSearchParams<{ id: string }>();
+  const router   = useRouter();
+  const testMode = useSessionStore((s) => s.testMode);
+  const storeProducts = useSessionStore((s) => s.products);
+  const closeCurrentSession = useSessionStore((s) => s.closeCurrentSession);
 
-  const [session, setSession]   = useState<Session | null>(null);
-  const [tickets, setTickets]   = useState<Ticket[]>([]);
+  const [session,  setSession]  = useState<Session | null>(null);
+  const [tickets,  setTickets]  = useState<Ticket[]>([]);
   const [location, setLocation] = useState<Location | null>(null);
-  const [loading, setLoading]   = useState(true);
+  const [loading,  setLoading]  = useState(true);
+  const [closing,  setClosing]  = useState(false);
+  const [closeDialogVisible, setCloseDialogVisible] = useState(false);
+  const [reprintingId, setReprintingId] = useState<string | null>(null);
 
-  useEffect(() => {
+  // Modifier maps — built from store products (already loaded by _layout)
+  const { labels: modifierLabels, radioNoSelection, radioOptionSets } = useMemo(
+    () => buildModifierMaps(storeProducts.flatMap((p) => p.modifiers)),
+    [storeProducts],
+  );
+
+  // ── load ──────────────────────────────────────────────────────────────────
+  const loadData = useCallback(async () => {
     if (!id) return;
-    (async () => {
-      try {
-        // getSessions returns all; find by id
-        const all = await getSessions();
-        const found = all.find((s) => s.id === id) ?? null;
-        setSession(found);
+    setLoading(true);
+    try {
+      const [allSessions, locs] = await Promise.all([getSessions(), getLocations()]);
+      const found = allSessions.find((s) => s.id === id) ?? null;
+      setSession(found);
 
-        if (found) {
-          const [locs, tix] = await Promise.all([
-            getLocations(),
-            getTicketsBySession(found.id),
-          ]);
-          setLocation(locs.find((l) => l.id === found.locationId) ?? null);
-          setTickets(tix);
-        }
-      } finally {
-        setLoading(false);
+      if (found) {
+        const tix = await getTicketsBySession(found.id);
+        // Most recent ticket first
+        setTickets([...tix].sort((a, b) => b.ticketNumber - a.ticketNumber));
+        setLocation(locs.find((l) => l.id === found.locationId) ?? null);
       }
-    })();
+    } finally {
+      setLoading(false);
+    }
   }, [id]);
 
+  useEffect(() => { void loadData(); }, [loadData]);
+
+  // If modifier maps are empty (first load before products), reload them
+  useEffect(() => {
+    if (storeProducts.length === 0) {
+      getProducts().catch(() => {/* silently ignore */});
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── reprint ───────────────────────────────────────────────────────────────
+  async function handleReprint(ticket: Ticket): Promise<void> {
+    setReprintingId(ticket.id);
+    try {
+      const result = await printTicket(ticket, testMode, modifierLabels, radioNoSelection, radioOptionSets);
+      if (!result.ok) {
+        Alert.alert('Error de impresión', result.error ?? 'No se pudo conectar con la impresora');
+        return;
+      }
+      if (!testMode) {
+        await markTicketPrinted(ticket.id);
+      }
+    } finally {
+      setReprintingId(null);
+    }
+  }
+
+  // ── close session ─────────────────────────────────────────────────────────
+  async function handleCloseSession(): Promise<void> {
+    setClosing(true);
+    try {
+      await closeCurrentSession();
+      setSession((prev) => prev ? { ...prev, status: 'closed' } : prev);
+    } finally {
+      setClosing(false);
+      setCloseDialogVisible(false);
+    }
+  }
+
+  // ── render: loading ───────────────────────────────────────────────────────
   if (loading) {
     return (
       <View style={styles.center}>
@@ -125,89 +293,139 @@ export default function SessionDetailScreen(): React.JSX.Element {
     );
   }
 
+  // ── derived ───────────────────────────────────────────────────────────────
+  const isOpen     = session.status === 'open';
   const grandTotal = tickets.reduce((sum, t) => sum + ticketTotal(t), 0);
-  const isOpen = session.status === 'open';
+  const orderCount = tickets.reduce((s, t) => s + t.orders.length, 0);
 
+  // ── render ────────────────────────────────────────────────────────────────
   return (
-    <FlatList
-      data={tickets}
-      keyExtractor={(t) => t.id}
-      contentContainerStyle={styles.listContent}
-      ListHeaderComponent={
-        <>
-          {/* Session summary card */}
-          <Surface style={[styles.summaryCard, isOpen && styles.summaryCardOpen]} elevation={2}>
-            <View style={styles.summaryBadgeRow}>
-              <View style={[styles.badge, isOpen ? styles.badgeOpen : styles.badgeClosed]}>
-                <Text style={[styles.badgeText, isOpen ? styles.badgeTextOpen : styles.badgeTextClosed]}>
-                  {isOpen ? '● ACTIVA' : '◼ CERRADA'}
-                </Text>
-              </View>
-              {session.sessionCode && (
-                <Text style={styles.sessionCode}>{session.sessionCode}</Text>
-              )}
-            </View>
+    <View style={styles.root}>
+      <FlatList
+        data={tickets}
+        keyExtractor={(t) => t.id}
+        contentContainerStyle={styles.listContent}
+        ListHeaderComponent={
+          <>
+            {/* ── Summary card ───────────────────────────────────────────── */}
+            <Surface style={[styles.summaryCard, isOpen && styles.summaryCardOpen]} elevation={2}>
 
-            <Text style={styles.locationName}>{location?.name ?? '—'}</Text>
-
-            <View style={styles.metaGrid}>
-              <View style={styles.metaItem}>
-                <Text style={styles.metaLabel}>Apertura</Text>
-                <Text style={styles.metaValue}>{formatDateTime(session.openedAt ?? session.createdAt)}</Text>
-              </View>
-              {session.closedAt && (
-                <View style={styles.metaItem}>
-                  <Text style={styles.metaLabel}>Cierre</Text>
-                  <Text style={styles.metaValue}>{formatDateTime(session.closedAt)}</Text>
+              {/* Status badge + session code */}
+              <View style={styles.badgeRow}>
+                <View style={[styles.statusBadge, isOpen ? styles.statusBadgeOpen : styles.statusBadgeClosed]}>
+                  <Text style={[styles.statusBadgeText, isOpen ? styles.statusTextOpen : styles.statusTextClosed]}>
+                    {isOpen ? '● ACTIVA' : '◼ CERRADA'}
+                  </Text>
                 </View>
-              )}
-              {isOpen && session.autoCloseAt && (
-                <View style={styles.metaItem}>
-                  <Text style={styles.metaLabel}>Cierre automático</Text>
-                  <Text style={styles.metaValue}>{formatDateTime(session.autoCloseAt)}</Text>
+                {session.sessionCode != null && (
+                  <Text style={styles.sessionCode}>{session.sessionCode}</Text>
+                )}
+              </View>
+
+              {/* Location */}
+              <Text style={styles.locationName}>{location?.name ?? '—'}</Text>
+
+              {/* Dates */}
+              <View style={styles.datesCol}>
+                <View style={styles.dateRow}>
+                  <Text style={styles.dateLabel}>Apertura</Text>
+                  <Text style={styles.dateValue}>{formatDateTime(session.openedAt ?? session.createdAt)}</Text>
                 </View>
+                {isOpen && session.autoCloseAt != null && (
+                  <View style={styles.dateRow}>
+                    <Text style={styles.dateLabel}>Cierre automático</Text>
+                    <Text style={styles.dateValue}>{formatDateTime(session.autoCloseAt)}</Text>
+                  </View>
+                )}
+                {!isOpen && session.closedAt != null && (
+                  <View style={styles.dateRow}>
+                    <Text style={styles.dateLabel}>Cierre</Text>
+                    <Text style={styles.dateValue}>{formatDateTime(session.closedAt)}</Text>
+                  </View>
+                )}
+              </View>
+
+              <Divider style={styles.divider} />
+
+              {/* Totals row */}
+              <View style={styles.totalsRow}>
+                <View style={styles.totalItem}>
+                  <Text style={styles.totalLabel}>Tickets</Text>
+                  <Text style={styles.totalValue}>{tickets.length}</Text>
+                </View>
+                <View style={styles.totalItem}>
+                  <Text style={styles.totalLabel}>Pedidos</Text>
+                  <Text style={styles.totalValue}>{orderCount}</Text>
+                </View>
+                <View style={styles.totalItem}>
+                  <Text style={styles.totalLabel}>Total</Text>
+                  <Text style={[styles.totalValue, styles.grandTotal]}>{formatPrice(grandTotal)}</Text>
+                </View>
+              </View>
+
+              {/* Close button (only when active) */}
+              {isOpen && (
+                <Button
+                  mode="outlined"
+                  icon="stop-circle"
+                  onPress={() => setCloseDialogVisible(true)}
+                  textColor="#E53935"
+                  style={styles.closeBtn}
+                  contentStyle={styles.closeBtnContent}
+                >
+                  Cerrar sesión
+                </Button>
               )}
-            </View>
+            </Surface>
 
-            <Divider style={styles.divider} />
-
-            <View style={styles.totalsRow}>
-              <View style={styles.totalItem}>
-                <Text style={styles.totalLabel}>Tickets</Text>
-                <Text style={styles.totalValue}>{tickets.length}</Text>
-              </View>
-              <View style={styles.totalItem}>
-                <Text style={styles.totalLabel}>Pedidos</Text>
-                <Text style={styles.totalValue}>
-                  {tickets.reduce((s, t) => s + t.orders.length, 0)}
-                </Text>
-              </View>
-              <View style={styles.totalItem}>
-                <Text style={styles.totalLabel}>Total sesión</Text>
-                <Text style={[styles.totalValue, styles.grandTotal]}>{formatPrice(grandTotal)}</Text>
-              </View>
-            </View>
+            {/* Tickets section header */}
+            {tickets.length > 0 && (
+              <Text style={styles.sectionLabel}>TICKETS</Text>
+            )}
+          </>
+        }
+        renderItem={({ item }) => (
+          <Surface style={styles.ticketCard} elevation={1}>
+            <TicketRow
+              ticket={item}
+              onPress={() => router.push(`/ticket/${item.id}`)}
+              onReprint={() => void handleReprint(item)}
+              reprinting={reprintingId === item.id}
+            />
           </Surface>
+        )}
+        ItemSeparatorComponent={() => <View style={styles.separator} />}
+        ListEmptyComponent={
+          <Text style={styles.emptyText}>Esta sesión no tiene tickets</Text>
+        }
+      />
 
-          {/* Tickets header */}
-          {tickets.length > 0 && (
-            <Text style={styles.ticketsLabel}>TICKETS</Text>
-          )}
-        </>
-      }
-      renderItem={({ item }) => (
-        <Surface style={styles.ticketCard} elevation={1}>
-          <TicketRow
-            ticket={item}
-            onPress={() => router.push(`/ticket/${item.id}`)}
-          />
-        </Surface>
-      )}
-      ItemSeparatorComponent={() => <View style={styles.separator} />}
-      ListEmptyComponent={
-        <Text style={styles.emptyText}>Esta sesión no tiene tickets</Text>
-      }
-    />
+      {/* Close confirmation dialog */}
+      <Portal>
+        <Dialog visible={closeDialogVisible} onDismiss={() => setCloseDialogVisible(false)}>
+          <Dialog.Title>¿Cerrar sesión?</Dialog.Title>
+          <Dialog.Content>
+            <Text variant="bodyMedium">
+              Se cerrará la jornada en{' '}
+              <Text style={styles.bold}>{location?.name ?? ''}</Text>
+              .{'\n'}Los tickets ya generados se conservan.
+            </Text>
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button onPress={() => setCloseDialogVisible(false)}>Cancelar</Button>
+            <Button
+              mode="contained"
+              onPress={() => void handleCloseSession()}
+              loading={closing}
+              disabled={closing}
+              buttonColor="#E53935"
+            >
+              Cerrar sesión
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
+      </Portal>
+    </View>
   );
 }
 
@@ -216,19 +434,13 @@ export default function SessionDetailScreen(): React.JSX.Element {
 // ---------------------------------------------------------------------------
 
 const styles = StyleSheet.create({
-  center: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  notFound: {
-    fontSize: 16,
-    color: '#888',
-  },
+  root: { flex: 1, backgroundColor: '#f5f5f5' },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  notFound: { fontSize: 16, color: '#888' },
+
   listContent: {
     padding: 16,
     paddingBottom: 40,
-    gap: 0,
   },
 
   // summary card
@@ -236,63 +448,75 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     padding: 18,
     backgroundColor: '#fff',
-    gap: 10,
+    gap: 12,
     marginBottom: 20,
   },
   summaryCardOpen: {
     borderLeftWidth: 4,
     borderLeftColor: '#43A047',
   },
-  summaryBadgeRow: {
+
+  // status badge
+  badgeRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
   },
-  badge: {
+  statusBadge: {
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 20,
   },
-  badgeOpen: { backgroundColor: '#E8F5E9' },
-  badgeClosed: { backgroundColor: '#F5F5F5' },
-  badgeText: {
+  statusBadgeOpen:   { backgroundColor: '#E8F5E9' },
+  statusBadgeClosed: { backgroundColor: '#F5F5F5' },
+  statusBadgeText: {
     fontSize: 12,
     fontWeight: '800',
     letterSpacing: 0.4,
   },
-  badgeTextOpen: { color: '#2E7D32' },
-  badgeTextClosed: { color: '#757575' },
+  statusTextOpen:   { color: '#2E7D32' },
+  statusTextClosed: { color: '#757575' },
   sessionCode: {
     fontSize: 13,
     color: '#1565C0',
     fontWeight: '700',
   },
+
+  // location + dates
   locationName: {
     fontSize: 24,
     fontWeight: '800',
     color: '#111',
   },
-  metaGrid: {
+  datesCol: { gap: 6 },
+  dateRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'baseline',
     gap: 8,
-    marginTop: 4,
   },
-  metaItem: { gap: 2 },
-  metaLabel: {
-    fontSize: 11,
+  dateLabel: {
+    fontSize: 12,
     color: '#888',
     fontWeight: '600',
     textTransform: 'uppercase',
     letterSpacing: 0.4,
+    flexShrink: 0,
   },
-  metaValue: {
-    fontSize: 14,
+  dateValue: {
+    fontSize: 13,
     color: '#333',
     fontWeight: '500',
+    textAlign: 'right',
+    flexShrink: 1,
   },
-  divider: { marginVertical: 4 },
+
+  divider: { marginVertical: 2 },
+
+  // totals
   totalsRow: {
     flexDirection: 'row',
-    gap: 16,
+    gap: 24,
     flexWrap: 'wrap',
   },
   totalItem: { gap: 2 },
@@ -304,22 +528,26 @@ const styles = StyleSheet.create({
     letterSpacing: 0.4,
   },
   totalValue: {
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: '800',
     color: '#1a1a1a',
   },
-  grandTotal: {
-    color: '#1565C0',
+  grandTotal: { color: '#1565C0' },
+
+  // close button
+  closeBtn: {
+    borderColor: '#E53935',
+    borderRadius: 8,
   },
+  closeBtnContent: { height: 48 },
 
   // tickets list
-  ticketsLabel: {
+  sectionLabel: {
     fontSize: 11,
     fontWeight: '700',
     letterSpacing: 1.2,
     color: '#888',
     marginBottom: 10,
-    marginTop: 4,
   },
   ticketCard: {
     borderRadius: 12,
@@ -334,4 +562,6 @@ const styles = StyleSheet.create({
     paddingVertical: 24,
     fontSize: 15,
   },
+
+  bold: { fontWeight: '700' },
 });
