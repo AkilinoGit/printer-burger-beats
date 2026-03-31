@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
 import type { Location, Product, Session } from '../lib/types';
+import { closeSession, getActiveSession, getProducts } from '../services/db';
 
 const TEST_MODE_KEY = 'tpv:testMode';
 
@@ -26,6 +27,17 @@ interface SessionState {
    * Returns the effective price for a product: session override if present, basePrice otherwise.
    */
   getEffectivePrice: (productId: string, basePrice: number) => number;
+
+  /**
+   * Recovers any active session from DB on app start.
+   * Sets activeSession and loads products if a valid session exists.
+   */
+  initSession: () => Promise<void>;
+
+  /**
+   * Closes the current active session in DB and clears the store.
+   */
+  closeCurrentSession: () => Promise<void>;
 
   // --- test mode ---
   /** Load persisted test-mode value from AsyncStorage. Call once on app start. */
@@ -60,6 +72,28 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   getEffectivePrice: (productId, basePrice) => {
     const overrides = get().activeSession?.priceOverrides ?? {};
     return overrides[productId] ?? basePrice;
+  },
+
+  initSession: async () => {
+    try {
+      const session = await getActiveSession();
+      if (!session) return;
+      const products = await getProducts();
+      set({ activeSession: session, products });
+    } catch {
+      // silently ignore — UI will show "no active session"
+    }
+  },
+
+  closeCurrentSession: async () => {
+    const session = useSessionStore.getState().activeSession;
+    if (!session) return;
+    try {
+      await closeSession(session.id);
+    } catch {
+      // DB error — still clear the store so UI stays consistent
+    }
+    set({ activeSession: null });
   },
 
   loadTestMode: async () => {

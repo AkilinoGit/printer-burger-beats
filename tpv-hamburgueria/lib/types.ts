@@ -1,4 +1,4 @@
-export type SyncStatus = 'pending' | 'synced' | 'error';
+export type SyncStatus = 'pending' | 'synced' | 'error' | 'pending_update';
 
 export interface Location {
   id: string;
@@ -14,6 +14,11 @@ export interface Session {
   status: 'open' | 'closed';
   priceOverrides: Record<string, number>;
   createdAt: string;
+  sessionCode: string | null;    // "LUN-2806"
+  openedAt: string | null;       // ISO datetime de apertura real
+  autoCloseAt: string | null;    // ISO datetime — 12:00 del día siguiente
+  closedAt: string | null;       // null = sesión abierta
+  deviceId: string | null;       // identificador del dispositivo que la abrió
 }
 
 export interface ModifierOption {
@@ -72,6 +77,8 @@ export interface Ticket {
   printedAt: string | null;
   syncStatus: SyncStatus;
   createdAt: string;
+  editedAt: string | null;       // null si nunca se editó
+  editCount: number;             // veces que se ha editado
 }
 
 export interface SyncQueueEntry {

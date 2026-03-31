@@ -17,8 +17,8 @@ import type {
 // DB singleton
 // ---------------------------------------------------------------------------
 
-const DB_NAME = 'tpv_v8.db';
-const SCHEMA_VERSION = 8;
+const DB_NAME = 'tpv_v9.db';
+const SCHEMA_VERSION = 9;
 
 let _db: SQLite.SQLiteDatabase | null = null;
 let _initPromise: Promise<void> | null = null;
@@ -74,6 +74,9 @@ export async function initDb(): Promise<void> {
     }
     if (currentVersion < 8) {
       await migrate_v4(db); // reseed with fixed priceAdd for negative modifiers
+    }
+    if (currentVersion < 9) {
+      await migrate_v9(db); // add session_code/opened_at/auto_close_at/closed_at/device_id to sessions; edited_at/edit_count to tickets
     }
     await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
   })();
@@ -220,6 +223,39 @@ async function migrate_v4(db: SQLite.SQLiteDatabase): Promise<void> {
   });
 }
 
+async function migrate_v9(db: SQLite.SQLiteDatabase): Promise<void> {
+  const addCol = async (sql: string) => {
+    try { await db.execAsync(sql); } catch { /* column already exists */ }
+  };
+  await addCol(`ALTER TABLE sessions ADD COLUMN session_code TEXT`);
+  await addCol(`ALTER TABLE sessions ADD COLUMN opened_at TEXT`);
+  await addCol(`ALTER TABLE sessions ADD COLUMN auto_close_at TEXT`);
+  await addCol(`ALTER TABLE sessions ADD COLUMN closed_at TEXT`);
+  await addCol(`ALTER TABLE sessions ADD COLUMN device_id TEXT`);
+  await addCol(`ALTER TABLE tickets ADD COLUMN edited_at TEXT`);
+  await addCol(`ALTER TABLE tickets ADD COLUMN edit_count INTEGER NOT NULL DEFAULT 0`);
+}
+
+// ---------------------------------------------------------------------------
+// Session helpers
+// ---------------------------------------------------------------------------
+
+const DAY_ABBR_ES = ['DOM', 'LUN', 'MAR', 'MIÉ', 'JUE', 'VIE', 'SÁB'];
+
+export function generateSessionCode(date: Date): string {
+  const day = DAY_ABBR_ES[date.getDay()];
+  const dd = String(date.getDate()).padStart(2, '0');
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  return `${day}-${dd}${mm}`;
+}
+
+export function calculateAutoCloseAt(openedAt: Date): string {
+  const next = new Date(openedAt);
+  next.setDate(next.getDate() + 1);
+  next.setHours(12, 0, 0, 0);
+  return next.toISOString();
+}
+
 async function migrate_v3(db: SQLite.SQLiteDatabase): Promise<void> {
   // Re-seed products and modifiers with new order and BURGER NIÑO in 'custom' category
   await db.execAsync('PRAGMA foreign_keys = OFF');
@@ -290,6 +326,11 @@ type SessionRow = {
   status: string;
   price_overrides: string;
   created_at: string;
+  session_code: string | null;
+  opened_at: string | null;
+  auto_close_at: string | null;
+  closed_at: string | null;
+  device_id: string | null;
 };
 
 type ProductRow = {
@@ -319,6 +360,8 @@ type TicketRow = {
   printed_at: string | null;
   sync_status: string;
   created_at: string;
+  edited_at: string | null;
+  edit_count: number;
 };
 
 type OrderRow = {
@@ -369,6 +412,11 @@ function mapSession(row: SessionRow): Session {
     status: row.status as Session['status'],
     priceOverrides: JSON.parse(row.price_overrides) as Record<string, number>,
     createdAt: row.created_at,
+    sessionCode: row.session_code ?? null,
+    openedAt: row.opened_at ?? null,
+    autoCloseAt: row.auto_close_at ?? null,
+    closedAt: row.closed_at ?? null,
+    deviceId: row.device_id ?? null,
   };
 }
 
@@ -405,6 +453,8 @@ function mapTicket(row: TicketRow, orders: Order[]): Ticket {
     printedAt: row.printed_at,
     syncStatus: row.sync_status as SyncStatus,
     createdAt: row.created_at,
+    editedAt: row.edited_at ?? null,
+    editCount: row.edit_count ?? 0,
   };
 }
 
@@ -504,31 +554,94 @@ export async function getOpenSession(locationId: string): Promise<Session | null
   return row ? mapSession(row) : null;
 }
 
-export async function insertSession(locationId: string, priceOverrides: Record<string, number> = {}): Promise<Session> {
+export async function insertSession(locationId: string, priceOverrides: Record<string, number> = {}, deviceId?: string): Promise<Session> {
   const db = await getDb();
+  const now = new Date();
   const session: Session = {
     id: generateId(),
     locationId,
     date: todayISO(),
     status: 'open',
     priceOverrides,
-    createdAt: new Date().toISOString(),
+    createdAt: now.toISOString(),
+    sessionCode: generateSessionCode(now),
+    openedAt: now.toISOString(),
+    autoCloseAt: calculateAutoCloseAt(now),
+    closedAt: null,
+    deviceId: deviceId ?? null,
   };
   await db.runAsync(
-    'INSERT INTO sessions (id, location_id, date, status, price_overrides, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-    [session.id, session.locationId, session.date, session.status, JSON.stringify(session.priceOverrides), session.createdAt],
+    `INSERT INTO sessions
+       (id, location_id, date, status, price_overrides, created_at,
+        session_code, opened_at, auto_close_at, closed_at, device_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      session.id, session.locationId, session.date, session.status,
+      JSON.stringify(session.priceOverrides), session.createdAt,
+      session.sessionCode, session.openedAt, session.autoCloseAt,
+      session.closedAt, session.deviceId,
+    ],
   );
   return session;
 }
 
 export async function closeSession(id: string): Promise<void> {
   const db = await getDb();
-  await db.runAsync("UPDATE sessions SET status = 'closed' WHERE id = ?", [id]);
+  await db.runAsync(
+    "UPDATE sessions SET status = 'closed', closed_at = ? WHERE id = ?",
+    [new Date().toISOString(), id],
+  );
+}
+
+/**
+ * Returns the current active session if it's still within its valid window.
+ * If a session is open but auto_close_at has passed, closes it and returns null.
+ */
+export async function getActiveSession(): Promise<Session | null> {
+  const db = await getDb();
+  const now = new Date().toISOString();
+
+  const row = await db.getFirstAsync<SessionRow>(
+    "SELECT * FROM sessions WHERE status = 'open' ORDER BY opened_at DESC LIMIT 1",
+  );
+  if (!row) return null;
+
+  const session = mapSession(row);
+
+  if (session.autoCloseAt && session.autoCloseAt <= now) {
+    // Session has expired — close it automatically
+    await closeSession(session.id);
+    return null;
+  }
+
+  return session;
+}
+
+export async function getSessions(locationId?: string): Promise<Session[]> {
+  const db = await getDb();
+  const rows = locationId
+    ? await db.getAllAsync<SessionRow>(
+        'SELECT * FROM sessions WHERE location_id = ? ORDER BY opened_at DESC',
+        [locationId],
+      )
+    : await db.getAllAsync<SessionRow>(
+        'SELECT * FROM sessions ORDER BY opened_at DESC',
+      );
+  return rows.map(mapSession);
 }
 
 export async function updateSessionPriceOverrides(id: string, overrides: Record<string, number>): Promise<void> {
   const db = await getDb();
   await db.runAsync('UPDATE sessions SET price_overrides = ? WHERE id = ?', [JSON.stringify(overrides), id]);
+}
+
+export async function getSessionByCode(code: string): Promise<Session | null> {
+  const db = await getDb();
+  const row = await db.getFirstAsync<SessionRow>(
+    'SELECT * FROM sessions WHERE session_code = ? LIMIT 1',
+    [code],
+  );
+  return row ? mapSession(row) : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -592,10 +705,12 @@ export async function insertTicket(sessionId: string, ticketNumber: number): Pro
     printedAt: null,
     syncStatus: 'pending',
     createdAt: new Date().toISOString(),
+    editedAt: null,
+    editCount: 0,
   };
   await db.runAsync(
-    'INSERT INTO tickets (id, session_id, ticket_number, printed_at, sync_status, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-    [ticket.id, ticket.sessionId, ticket.ticketNumber, null, ticket.syncStatus, ticket.createdAt],
+    'INSERT INTO tickets (id, session_id, ticket_number, printed_at, sync_status, created_at, edited_at, edit_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    [ticket.id, ticket.sessionId, ticket.ticketNumber, null, ticket.syncStatus, ticket.createdAt, null, 0],
   );
   return ticket;
 }
