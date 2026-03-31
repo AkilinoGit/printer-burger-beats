@@ -51,6 +51,14 @@ export const useCartStore = create<CartState>((set, get) => ({
       .getState()
       .getEffectivePrice(product.id, product.basePrice);
 
+    // Sum priceAdd from selected modifiers
+    const modifierPriceAdd = product.modifiers.reduce((sum, m) => {
+      if (m.priceAdd && selectedModifiers.includes(m.id)) {
+        return sum + m.priceAdd;
+      }
+      return sum;
+    }, 0);
+
     // Deduplicate: same product + same sorted modifier list
     const modKey = [...selectedModifiers].sort().join(',');
     const existing = get().items.find(
@@ -71,11 +79,12 @@ export const useCartStore = create<CartState>((set, get) => ({
 
     const newItem: OrderItem = {
       id: generateId(),
-      orderId: '',            // filled in when the Order is saved
+      orderId: '',
       productId: product.id,
       productName: product.name,
       qty: 1,
       unitPrice: effectivePrice,
+      modifierPriceAdd,
       selectedModifiers,
       customLabel: customLabel ?? null,
     };
@@ -116,7 +125,7 @@ export const useCartStore = create<CartState>((set, get) => ({
 
   total: () => {
     const items = get().items;
-    const sum = items.reduce((acc, i) => acc + i.unitPrice * i.qty, 0);
+    const sum = items.reduce((acc, i) => acc + (i.unitPrice + i.modifierPriceAdd) * i.qty, 0);
     return Math.round(sum * 100) / 100;
   },
 

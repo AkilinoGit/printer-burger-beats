@@ -97,6 +97,8 @@ export function buildTicketCommands(
   ticket: Ticket,
   isTest: boolean,
   modifierLabels: Record<string, string>,
+  radioNoSelection: Record<string, string> = {},
+  radioOptionSets: Record<string, Set<string>> = {},
 ): string {
   const lines: string[] = [];
 
@@ -119,7 +121,7 @@ export function buildTicketCommands(
       lines.push('[C]' + SEP_THIN);
       lines.push('');
     }
-    lines.push(..._formatOrder(ticket.orders[i], modifierLabels));
+    lines.push(..._formatOrder(ticket.orders[i], modifierLabels, radioNoSelection, radioOptionSets));
   }
 
   // ── Footer ───────────────────────────────────────────────────────────────
@@ -217,34 +219,61 @@ export function buildTicketBuffer(
 // Internal formatters
 // ---------------------------------------------------------------------------
 
-function _formatOrder(order: Order, modifierLabels: Record<string, string>): string[] {
+function _formatOrder(
+  order: Order,
+  modifierLabels: Record<string, string>,
+  radioNoSelection: Record<string, string>,
+  radioOptionSets: Record<string, Set<string>>,
+): string[] {
   const lines: string[] = [];
 
-  // Client name — bold, left-aligned
   lines.push('[L][B]--- ' + order.clientName.toUpperCase() + ' ---[/B]');
   lines.push('');
 
   for (const item of order.items) {
-    lines.push(..._formatItem(item, modifierLabels));
+    lines.push(..._formatItem(item, modifierLabels, radioNoSelection, radioOptionSets));
   }
 
   lines.push('');
   return lines;
 }
 
-function _formatItem(item: OrderItem, modifierLabels: Record<string, string>): string[] {
+function _formatItem(
+  item: OrderItem,
+  modifierLabels: Record<string, string>,
+  radioNoSelection: Record<string, string>,
+  radioOptionSets: Record<string, Set<string>>,
+): string[] {
   const lines: string[] = [];
 
-  // "2x FAT & FURIOUS" or "1x [custom label]"
   const label = item.customLabel ?? item.productName;
   lines.push('[L]' + String(item.qty) + 'x ' + label);
 
-  // Modifiers — resolve IDs to labels, joined by " · "
-  if (item.selectedModifiers.length > 0) {
-    const modStr = item.selectedModifiers
-      .map((id) => modifierLabels[id] ?? id)
-      .join(' · ');
-    lines.push('[L]   ' + modStr);
+  const modParts: string[] = [];
+
+  // For each radio group, check if any of its options was selected;
+  // if not, print the noSelectionLabel (e.g. "Sin salsa")
+  for (const [modId, optionSet] of Object.entries(radioOptionSets)) {
+    const chosen = item.selectedModifiers.find((id) => optionSet.has(id));
+    if (chosen) {
+      modParts.push(modifierLabels[chosen] ?? chosen);
+    } else if (radioNoSelection[modId]) {
+      modParts.push(radioNoSelection[modId]);
+    }
+  }
+
+  // Toggle modifiers (remove / add) — skip any radio option ids
+  const allRadioOptions = new Set(
+    Object.values(radioOptionSets).flatMap((s) => [...s]),
+  );
+  for (const id of item.selectedModifiers) {
+    if (!allRadioOptions.has(id)) {
+      modParts.push(modifierLabels[id] ?? id);
+    }
+  }
+
+  if (modParts.length > 0) {
+    lines.push('[L]   ' + modParts.join(' · '));
   }
 
   return lines;

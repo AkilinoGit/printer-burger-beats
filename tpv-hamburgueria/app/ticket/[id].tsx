@@ -1,14 +1,13 @@
 import React, { useState } from 'react';
 import { Alert, ScrollView, StyleSheet, View } from 'react-native';
-import { ActivityIndicator, Banner, Button, Chip, Divider, Surface, Text } from 'react-native-paper';
+import { ActivityIndicator, Banner, Button, Divider, Surface, Text } from 'react-native-paper';
 import { useRouter } from 'expo-router';
 
 import PaymentModal from '../../components/PaymentModal';
 import TicketPreview from '../../components/TicketPreview';
 
 import { formatPrice } from '../../lib/utils';
-import { INITIAL_MODIFIERS } from '../../lib/constants';
-import type { Order, OrderItem } from '../../lib/types';
+import type { Modifier, Order, OrderItem } from '../../lib/types';
 
 import { useCartStore } from '../../stores/useCartStore';
 import { useSessionStore } from '../../stores/useSessionStore';
@@ -22,13 +21,27 @@ import {
 } from '../../services/db';
 import { printTicket } from '../../services/printer';
 
-// ---------------------------------------------------------------------------
-// Modifier label lookup — built once from INITIAL_MODIFIERS
-// (In production this would come from the DB; sufficient for current product set)
-// ---------------------------------------------------------------------------
-const MODIFIER_LABELS: Record<string, string> = Object.fromEntries(
-  INITIAL_MODIFIERS.map((m) => [m.id, m.label]),
-);
+// Build modifier lookup maps from live products (IDs come from DB, not constants)
+function buildMaps(modifiers: Modifier[]): {
+  labels: Record<string, string>;
+  radioNoSelection: Record<string, string>;
+  radioOptionSets: Record<string, Set<string>>;
+} {
+  const labels: Record<string, string> = {};
+  const radioNoSelection: Record<string, string> = {};
+  const radioOptionSets: Record<string, Set<string>> = {};
+  for (const m of modifiers) {
+    labels[m.id] = m.label;
+    if (m.type === 'radio') {
+      if (m.noSelectionLabel) radioNoSelection[m.id] = m.noSelectionLabel;
+      radioOptionSets[m.id] = new Set((m.options ?? []).map((o) => o.id));
+      for (const opt of m.options ?? []) {
+        labels[opt.id] = opt.label;
+      }
+    }
+  }
+  return { labels, radioNoSelection, radioOptionSets };
+}
 
 // ---------------------------------------------------------------------------
 // Screen
@@ -42,6 +55,11 @@ export default function TicketScreen(): React.JSX.Element {
   // ── stores ────────────────────────────────────────────────────────────────
   const testMode      = useSessionStore((s) => s.testMode);
   const activeSession = useSessionStore((s) => s.activeSession);
+  const products      = useSessionStore((s) => s.products);
+
+  // ── modifier maps (built from live DB products) ───────────────────────────
+  const { labels: MODIFIER_LABELS, radioNoSelection: RADIO_NO_SELECTION, radioOptionSets: RADIO_OPTION_SETS } =
+    React.useMemo(() => buildMaps(products.flatMap((p) => p.modifiers)), [products]);
 
   const clientName = useCartStore((s) => s.clientName);
   const cartItems  = useCartStore((s) => s.items);
@@ -174,7 +192,7 @@ export default function TicketScreen(): React.JSX.Element {
       if (!ticket) throw new Error('Ticket no encontrado en store');
 
       // Print (fire-and-forget: even on BT error we close the ticket)
-      const result = await printTicket(ticket, testMode, MODIFIER_LABELS);
+      const result = await printTicket(ticket, testMode, MODIFIER_LABELS, RADIO_NO_SELECTION, RADIO_OPTION_SETS);
 
       if (!testMode) {
         await markTicketPrinted(ticket.id);
@@ -252,7 +270,7 @@ export default function TicketScreen(): React.JSX.Element {
           <Text style={styles.emptyText}>No hay productos en el carrito</Text>
         ) : (
           cartItems.map((item) => (
-            <OrderItemRow key={item.id} item={item} />
+            <OrderItemRow key={item.id} item={item} modifierLabels={MODIFIER_LABELS} />
           ))
         )}
 
@@ -375,30 +393,22 @@ export default function TicketScreen(): React.JSX.Element {
 // OrderItemRow sub-component
 // ---------------------------------------------------------------------------
 
-function OrderItemRow({ item }: { item: OrderItem }): React.JSX.Element {
-  const modLabels = item.selectedModifiers
-    .map((id) => MODIFIER_LABELS[id] ?? id);
+function OrderItemRow({ item, modifierLabels }: { item: OrderItem; modifierLabels: Record<string, string> }): React.JSX.Element {
+  const modLabels = item.selectedModifiers.map((id) => modifierLabels[id] ?? id);
+  const linePrice = (item.unitPrice + item.modifierPriceAdd) * item.qty;
 
   return (
     <View style={itemStyles.row}>
       <View style={itemStyles.left}>
-        <Text style={itemStyles.name}>
-          {item.customLabel ?? item.productName}
-        </Text>
-        {modLabels.length > 0 && (
-          <View style={itemStyles.chips}>
-            {modLabels.map((label) => (
-              <Chip key={label} style={itemStyles.chip} textStyle={itemStyles.chipText} compact>
-                {label}
-              </Chip>
-            ))}
-          </View>
-        )}
+        <View style={itemStyles.nameRow}>
+          <Text style={itemStyles.qty}>×{item.qty}</Text>
+          <Text style={itemStyles.name}>{item.customLabel ?? item.productName}</Text>
+        </View>
+        {modLabels.map((label) => (
+          <Text key={label} style={itemStyles.mod}>· {label}</Text>
+        ))}
       </View>
-      <View style={itemStyles.right}>
-        <Text style={itemStyles.qty}>×{item.qty}</Text>
-        <Text style={itemStyles.price}>{formatPrice(item.unitPrice * item.qty)}</Text>
-      </View>
+      <Text style={itemStyles.price}>{formatPrice(linePrice)}</Text>
     </View>
   );
 }

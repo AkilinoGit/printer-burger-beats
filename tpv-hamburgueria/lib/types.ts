@@ -16,10 +16,18 @@ export interface Session {
   createdAt: string;
 }
 
+export interface ModifierOption {
+  id: string;
+  label: string;
+}
+
 export interface Modifier {
   id: string;
   label: string;
-  type: 'remove' | 'add';
+  type: 'remove' | 'add' | 'radio';
+  priceAdd?: number;          // extra cost when selected (e.g. +1 for bacon)
+  options?: ModifierOption[]; // only for type 'radio' — user picks exactly one
+  noSelectionLabel?: string;  // printed when no option is chosen (e.g. "Sin salsa")
 }
 
 export interface Product {
@@ -30,6 +38,7 @@ export interface Product {
   modifiers: Modifier[];
   isCustom: boolean;
   isActive: boolean;
+  alwaysShowModifiers?: boolean; // open modifier sheet on tap (not long press)
 }
 
 export interface OrderItem {
@@ -38,7 +47,8 @@ export interface OrderItem {
   productId: string;
   productName: string;
   qty: number;
-  unitPrice: number;
+  unitPrice: number;          // base price (session override or basePrice)
+  modifierPriceAdd: number;   // sum of priceAdd from selected modifiers
   selectedModifiers: string[];
   customLabel: string | null;
 }

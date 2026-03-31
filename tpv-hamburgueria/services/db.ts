@@ -1,5 +1,5 @@
 import * as SQLite from 'expo-sqlite';
-import { INITIAL_MODIFIERS, INITIAL_PRODUCTS, DEFAULT_LOCATION_NAME } from '../lib/constants';
+import { INITIAL_PRODUCTS, DEFAULT_LOCATION_NAME } from '../lib/constants';
 import { generateId, todayISO } from '../lib/utils';
 import type {
   Location,
@@ -17,8 +17,8 @@ import type {
 // DB singleton
 // ---------------------------------------------------------------------------
 
-const DB_NAME = 'tpv.db';
-const SCHEMA_VERSION = 1;
+const DB_NAME = 'tpv_v7.db';
+const SCHEMA_VERSION = 7;
 
 let _db: SQLite.SQLiteDatabase | null = null;
 let _initPromise: Promise<void> | null = null;
@@ -53,8 +53,26 @@ export async function initDb(): Promise<void> {
 
     if (currentVersion < 1) {
       await migrate_v1(db);
-      await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     }
+    if (currentVersion < 2) {
+      await migrate_v2(db);
+    }
+    if (currentVersion < 3) {
+      await migrate_v3(db);
+    }
+    if (currentVersion < 4) {
+      await migrate_v4(db);
+    }
+    if (currentVersion < 5) {
+      await migrate_v4(db);
+    }
+    if (currentVersion < 6) {
+      await migrate_v4(db);
+    }
+    if (currentVersion < 7) {
+      await migrate_v4(db); // same logic: reseed products/modifiers
+    }
+    await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
   })();
   return _initPromise;
 }
@@ -79,19 +97,23 @@ async function migrate_v1(db: SQLite.SQLiteDatabase): Promise<void> {
       );
 
       CREATE TABLE IF NOT EXISTS products (
-        id          TEXT PRIMARY KEY,
-        name        TEXT NOT NULL,
-        base_price  REAL NOT NULL,
-        category    TEXT NOT NULL,
-        is_custom   INTEGER NOT NULL DEFAULT 0,
-        is_active   INTEGER NOT NULL DEFAULT 1
+        id                    TEXT PRIMARY KEY,
+        name                  TEXT NOT NULL,
+        base_price            REAL NOT NULL,
+        category              TEXT NOT NULL,
+        is_custom             INTEGER NOT NULL DEFAULT 0,
+        is_active             INTEGER NOT NULL DEFAULT 1,
+        always_show_modifiers INTEGER NOT NULL DEFAULT 0
       );
 
       CREATE TABLE IF NOT EXISTS modifiers (
-        id          TEXT PRIMARY KEY,
-        product_id  TEXT NOT NULL REFERENCES products(id),
-        label       TEXT NOT NULL,
-        type        TEXT NOT NULL
+        id                  TEXT PRIMARY KEY,
+        product_id          TEXT NOT NULL REFERENCES products(id),
+        label               TEXT NOT NULL,
+        type                TEXT NOT NULL,
+        price_add           REAL NOT NULL DEFAULT 0,
+        options             TEXT NOT NULL DEFAULT '[]',
+        no_selection_label  TEXT
       );
 
       CREATE TABLE IF NOT EXISTS tickets (
@@ -120,6 +142,7 @@ async function migrate_v1(db: SQLite.SQLiteDatabase): Promise<void> {
         product_name        TEXT NOT NULL,
         qty                 INTEGER NOT NULL DEFAULT 1,
         unit_price          REAL NOT NULL,
+        modifier_price_add  REAL NOT NULL DEFAULT 0,
         selected_modifiers  TEXT NOT NULL DEFAULT '[]',
         custom_label        TEXT
       );
@@ -138,6 +161,85 @@ async function migrate_v1(db: SQLite.SQLiteDatabase): Promise<void> {
   await seedInitialData(db);
 }
 
+async function migrate_v2(db: SQLite.SQLiteDatabase): Promise<void> {
+  // ALTER TABLE must run outside a transaction in expo-sqlite.
+  // Ignore "duplicate column" errors in case a previous partial migration ran.
+  const addColumn = async (sql: string) => {
+    try { await db.execAsync(sql); } catch { /* column already exists */ }
+  };
+  await addColumn(`ALTER TABLE modifiers ADD COLUMN price_add REAL NOT NULL DEFAULT 0`);
+  await addColumn(`ALTER TABLE modifiers ADD COLUMN options TEXT NOT NULL DEFAULT '[]'`);
+  await addColumn(`ALTER TABLE modifiers ADD COLUMN no_selection_label TEXT`);
+  await addColumn(`ALTER TABLE order_items ADD COLUMN modifier_price_add REAL NOT NULL DEFAULT 0`);
+
+  // Delete outside transaction first to avoid constraint issues
+  await db.execAsync('PRAGMA foreign_keys = OFF');
+  await db.runAsync('DELETE FROM modifiers');
+  await db.runAsync('DELETE FROM products');
+  await db.execAsync('PRAGMA foreign_keys = ON');
+
+  await db.withExclusiveTransactionAsync(async (txn) => {
+    for (const p of INITIAL_PRODUCTS) {
+      await txn.runAsync(
+        'INSERT INTO products (id, name, base_price, category, is_custom, is_active, always_show_modifiers) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [p.id, p.name, p.basePrice, p.category, p.isCustom ? 1 : 0, p.isActive ? 1 : 0, p.alwaysShowModifiers ? 1 : 0],
+      );
+      for (const m of p.modifiers) {
+        await txn.runAsync(
+          'INSERT INTO modifiers (id, product_id, label, type, price_add, options, no_selection_label) VALUES (?, ?, ?, ?, ?, ?, ?)',
+          [`${p.id}-${m.id}`, p.id, m.label, m.type, m.priceAdd ?? 0, JSON.stringify(m.options ?? []), m.noSelectionLabel ?? null],
+        );
+      }
+    }
+  });
+}
+
+async function migrate_v4(db: SQLite.SQLiteDatabase): Promise<void> {
+  // Reseed products in correct display order (rowid-based sorting)
+  await db.execAsync('PRAGMA foreign_keys = OFF');
+  await db.runAsync('DELETE FROM modifiers');
+  await db.runAsync('DELETE FROM products');
+  await db.execAsync('PRAGMA foreign_keys = ON');
+
+  await db.withExclusiveTransactionAsync(async (txn) => {
+    for (const p of INITIAL_PRODUCTS) {
+      await txn.runAsync(
+        'INSERT INTO products (id, name, base_price, category, is_custom, is_active, always_show_modifiers) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [p.id, p.name, p.basePrice, p.category, p.isCustom ? 1 : 0, p.isActive ? 1 : 0, p.alwaysShowModifiers ? 1 : 0],
+      );
+      for (const m of p.modifiers) {
+        await txn.runAsync(
+          'INSERT INTO modifiers (id, product_id, label, type, price_add, options, no_selection_label) VALUES (?, ?, ?, ?, ?, ?, ?)',
+          [`${p.id}-${m.id}`, p.id, m.label, m.type, m.priceAdd ?? 0, JSON.stringify(m.options ?? []), m.noSelectionLabel ?? null],
+        );
+      }
+    }
+  });
+}
+
+async function migrate_v3(db: SQLite.SQLiteDatabase): Promise<void> {
+  // Re-seed products and modifiers with new order and BURGER NIÑO in 'custom' category
+  await db.execAsync('PRAGMA foreign_keys = OFF');
+  await db.runAsync('DELETE FROM modifiers');
+  await db.runAsync('DELETE FROM products');
+  await db.execAsync('PRAGMA foreign_keys = ON');
+
+  await db.withExclusiveTransactionAsync(async (txn) => {
+    for (const p of INITIAL_PRODUCTS) {
+      await txn.runAsync(
+        'INSERT INTO products (id, name, base_price, category, is_custom, is_active, always_show_modifiers) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [p.id, p.name, p.basePrice, p.category, p.isCustom ? 1 : 0, p.isActive ? 1 : 0, p.alwaysShowModifiers ? 1 : 0],
+      );
+      for (const m of p.modifiers) {
+        await txn.runAsync(
+          'INSERT INTO modifiers (id, product_id, label, type, price_add, options, no_selection_label) VALUES (?, ?, ?, ?, ?, ?, ?)',
+          [`${p.id}-${m.id}`, p.id, m.label, m.type, m.priceAdd ?? 0, JSON.stringify(m.options ?? []), m.noSelectionLabel ?? null],
+        );
+      }
+    }
+  });
+}
+
 async function seedInitialData(db: SQLite.SQLiteDatabase): Promise<void> {
   await db.withExclusiveTransactionAsync(async (txn) => {
     // Default location
@@ -150,21 +252,17 @@ async function seedInitialData(db: SQLite.SQLiteDatabase): Promise<void> {
     // Products
     for (const p of INITIAL_PRODUCTS) {
       await txn.runAsync(
-        'INSERT INTO products (id, name, base_price, category, is_custom, is_active) VALUES (?, ?, ?, ?, ?, ?)',
-        [p.id, p.name, p.basePrice, p.category, p.isCustom ? 1 : 0, p.isActive ? 1 : 0],
+        'INSERT INTO products (id, name, base_price, category, is_custom, is_active, always_show_modifiers) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [p.id, p.name, p.basePrice, p.category, p.isCustom ? 1 : 0, p.isActive ? 1 : 0, p.alwaysShowModifiers ? 1 : 0],
       );
     }
 
-    // Modifiers — linked to all burger products
-    const burgerIds = INITIAL_PRODUCTS
-      .filter((p) => p.category === 'burger')
-      .map((p) => p.id);
-
-    for (const burgerId of burgerIds) {
-      for (const m of INITIAL_MODIFIERS) {
+    // Modifiers — use product-scoped id to avoid duplicates across shared modifier lists
+    for (const p of INITIAL_PRODUCTS) {
+      for (const m of p.modifiers) {
         await txn.runAsync(
-          'INSERT INTO modifiers (id, product_id, label, type) VALUES (?, ?, ?, ?)',
-          [`${burgerId}-${m.id}`, burgerId, m.label, m.type],
+          'INSERT INTO modifiers (id, product_id, label, type, price_add, options, no_selection_label) VALUES (?, ?, ?, ?, ?, ?, ?)',
+          [`${p.id}-${m.id}`, p.id, m.label, m.type, m.priceAdd ?? 0, JSON.stringify(m.options ?? []), m.noSelectionLabel ?? null],
         );
       }
     }
@@ -198,6 +296,7 @@ type ProductRow = {
   category: string;
   is_custom: number;
   is_active: number;
+  always_show_modifiers: number;
 };
 
 type ModifierRow = {
@@ -205,6 +304,9 @@ type ModifierRow = {
   product_id: string;
   label: string;
   type: string;
+  price_add: number;
+  options: string;
+  no_selection_label: string | null;
 };
 
 type TicketRow = {
@@ -233,6 +335,7 @@ type OrderItemRow = {
   product_name: string;
   qty: number;
   unit_price: number;
+  modifier_price_add: number;
   selected_modifiers: string;
   custom_label: string | null;
 };
@@ -275,6 +378,7 @@ function mapProduct(row: ProductRow, modifiers: Modifier[]): Product {
     modifiers,
     isCustom: row.is_custom === 1,
     isActive: row.is_active === 1,
+    alwaysShowModifiers: row.always_show_modifiers === 1,
   };
 }
 
@@ -283,6 +387,9 @@ function mapModifier(row: ModifierRow): Modifier {
     id: row.id,
     label: row.label,
     type: row.type as Modifier['type'],
+    priceAdd: row.price_add > 0 ? row.price_add : undefined,
+    options: JSON.parse(row.options),
+    noSelectionLabel: row.no_selection_label ?? undefined,
   };
 }
 
@@ -319,6 +426,7 @@ function mapOrderItem(row: OrderItemRow): OrderItem {
     productName: row.product_name,
     qty: row.qty,
     unitPrice: row.unit_price,
+    modifierPriceAdd: row.modifier_price_add ?? 0,
     selectedModifiers: JSON.parse(row.selected_modifiers) as string[],
     customLabel: row.custom_label,
   };
@@ -426,7 +534,7 @@ export async function updateSessionPriceOverrides(id: string, overrides: Record<
 
 export async function getProducts(): Promise<Product[]> {
   const db = await getDb();
-  const productRows = await db.getAllAsync<ProductRow>('SELECT * FROM products WHERE is_active = 1 ORDER BY category, name');
+  const productRows = await db.getAllAsync<ProductRow>('SELECT * FROM products WHERE is_active = 1 ORDER BY rowid ASC');
   const modifierRows = await db.getAllAsync<ModifierRow>('SELECT * FROM modifiers');
 
   return productRows.map((p) => {
@@ -448,8 +556,8 @@ export async function getProductById(id: string): Promise<Product | null> {
 export async function insertProduct(product: Omit<Product, 'modifiers'>): Promise<void> {
   const db = await getDb();
   await db.runAsync(
-    'INSERT INTO products (id, name, base_price, category, is_custom, is_active) VALUES (?, ?, ?, ?, ?, ?)',
-    [product.id, product.name, product.basePrice, product.category, product.isCustom ? 1 : 0, product.isActive ? 1 : 0],
+    'INSERT INTO products (id, name, base_price, category, is_custom, is_active, always_show_modifiers) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [product.id, product.name, product.basePrice, product.category, product.isCustom ? 1 : 0, product.isActive ? 1 : 0, product.alwaysShowModifiers ? 1 : 0],
   );
 }
 
@@ -559,17 +667,8 @@ export async function getOrdersByTicketId(ticketId: string): Promise<Order[]> {
 export async function insertOrderItem(item: OrderItem): Promise<void> {
   const db = await getDb();
   await db.runAsync(
-    'INSERT INTO order_items (id, order_id, product_id, product_name, qty, unit_price, selected_modifiers, custom_label) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-    [
-      item.id,
-      item.orderId,
-      item.productId,
-      item.productName,
-      item.qty,
-      item.unitPrice,
-      JSON.stringify(item.selectedModifiers),
-      item.customLabel,
-    ],
+    'INSERT INTO order_items (id, order_id, product_id, product_name, qty, unit_price, modifier_price_add, selected_modifiers, custom_label) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [item.id, item.orderId, item.productId, item.productName, item.qty, item.unitPrice, item.modifierPriceAdd, JSON.stringify(item.selectedModifiers), item.customLabel],
   );
 }
 
@@ -599,17 +698,8 @@ export async function saveOrderWithItems(order: Order): Promise<void> {
     );
     for (const item of order.items) {
       await txn.runAsync(
-        'INSERT INTO order_items (id, order_id, product_id, product_name, qty, unit_price, selected_modifiers, custom_label) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-        [
-          item.id,
-          item.orderId,
-          item.productId,
-          item.productName,
-          item.qty,
-          item.unitPrice,
-          JSON.stringify(item.selectedModifiers),
-          item.customLabel,
-        ],
+        'INSERT INTO order_items (id, order_id, product_id, product_name, qty, unit_price, modifier_price_add, selected_modifiers, custom_label) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [item.id, item.orderId, item.productId, item.productName, item.qty, item.unitPrice, item.modifierPriceAdd, JSON.stringify(item.selectedModifiers), item.customLabel],
       );
     }
     // Enqueue for sync

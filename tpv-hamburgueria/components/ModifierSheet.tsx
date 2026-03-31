@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { Modal, ScrollView, StyleSheet, TouchableWithoutFeedback, View } from 'react-native';
 import { Button, Chip, Divider, Surface, Text, TouchableRipple } from 'react-native-paper';
-import type { Product } from '../lib/types';
+import { formatPrice } from '../lib/utils';
+import type { Modifier, Product } from '../lib/types';
 
 interface Props {
   product: Product | null;
@@ -11,17 +12,27 @@ interface Props {
 }
 
 export default function ModifierSheet({ product, visible, onConfirm, onDismiss }: Props): React.JSX.Element {
+  // toggle modifiers (remove / add)
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // radio modifiers: modifierId → selected optionId (or null)
+  const [radioSelected, setRadioSelected] = useState<Record<string, string | null>>({});
 
-  // Reset selection every time a new product opens the sheet
   useEffect(() => {
-    if (visible) setSelected(new Set());
+    if (visible && product) {
+      setSelected(new Set());
+      const initialRadio: Record<string, string | null> = {};
+      product.modifiers.filter((m) => m.type === 'radio').forEach((m) => {
+        initialRadio[m.id] = null;
+      });
+      setRadioSelected(initialRadio);
+    }
   }, [visible, product?.id]);
 
   if (!product) return <></>;
 
   const removes = product.modifiers.filter((m) => m.type === 'remove');
   const adds    = product.modifiers.filter((m) => m.type === 'add');
+  const radios  = product.modifiers.filter((m) => m.type === 'radio');
 
   function toggle(id: string): void {
     setSelected((prev) => {
@@ -32,8 +43,21 @@ export default function ModifierSheet({ product, visible, onConfirm, onDismiss }
     });
   }
 
+  function selectRadioOption(modifierId: string, optionId: string): void {
+    setRadioSelected((prev) => ({
+      ...prev,
+      [modifierId]: prev[modifierId] === optionId ? null : optionId,
+    }));
+  }
+
   function handleConfirm(): void {
-    onConfirm([...selected]);
+    // Collect toggle selections
+    const result: string[] = [...selected];
+    // Collect radio selections (optionId goes into selectedModifiers)
+    for (const optionId of Object.values(radioSelected)) {
+      if (optionId !== null) result.push(optionId);
+    }
+    onConfirm(result);
   }
 
   return (
@@ -43,13 +67,11 @@ export default function ModifierSheet({ product, visible, onConfirm, onDismiss }
       animationType="slide"
       onRequestClose={onDismiss}
     >
-      {/* Tap outside to dismiss */}
       <TouchableWithoutFeedback onPress={onDismiss}>
         <View style={styles.backdrop} />
       </TouchableWithoutFeedback>
 
       <Surface style={styles.sheet} elevation={4}>
-        {/* Handle — tap to dismiss */}
         <TouchableRipple onPress={onDismiss} style={styles.handleArea} borderless>
           <View style={styles.handle} />
         </TouchableRipple>
@@ -59,8 +81,35 @@ export default function ModifierSheet({ product, visible, onConfirm, onDismiss }
         <Divider style={styles.divider} />
 
         <ScrollView contentContainerStyle={styles.chipScroll}>
+
+          {/* RADIO modifiers — pick one option per group */}
+          {radios.map((m: Modifier) => (
+            <View key={m.id} style={styles.radioGroup}>
+              <Text style={styles.groupLabel}>{m.label.toUpperCase()}</Text>
+              <View style={styles.chipRow}>
+                {(m.options ?? []).map((opt) => {
+                  const isChosen = radioSelected[m.id] === opt.id;
+                  return (
+                    <Chip
+                      key={opt.id}
+                      mode={isChosen ? 'flat' : 'outlined'}
+                      selected={isChosen}
+                      onPress={() => selectRadioOption(m.id, opt.id)}
+                      style={styles.chip}
+                      selectedColor="#1E88E5"
+                      showSelectedCheck={false}
+                    >
+                      {opt.label}
+                    </Chip>
+                  );
+                })}
+              </View>
+            </View>
+          ))}
+
+          {/* REMOVE modifiers */}
           {removes.length > 0 && (
-            <>
+            <View style={radios.length > 0 ? styles.radioGroup : undefined}>
               <Text style={styles.groupLabel}>QUITAR</Text>
               <View style={styles.chipRow}>
                 {removes.map((m) => (
@@ -73,16 +122,17 @@ export default function ModifierSheet({ product, visible, onConfirm, onDismiss }
                     selectedColor="#E53935"
                     showSelectedCheck={false}
                   >
-                    {m.label}
+                    {m.label}{m.priceAdd ? `  ${m.priceAdd > 0 ? '+' : ''}${formatPrice(m.priceAdd)}` : ''}
                   </Chip>
                 ))}
               </View>
-            </>
+            </View>
           )}
 
+          {/* ADD modifiers (with optional price) */}
           {adds.length > 0 && (
-            <>
-              <Text style={[styles.groupLabel, { marginTop: 16 }]}>AÑADIR</Text>
+            <View style={styles.radioGroup}>
+              <Text style={styles.groupLabel}>AÑADIR</Text>
               <View style={styles.chipRow}>
                 {adds.map((m) => (
                   <Chip
@@ -94,12 +144,13 @@ export default function ModifierSheet({ product, visible, onConfirm, onDismiss }
                     selectedColor="#43A047"
                     showSelectedCheck={false}
                   >
-                    {m.label}
+                    {m.label}{m.priceAdd ? `  +${formatPrice(m.priceAdd)}` : ''}
                   </Chip>
                 ))}
               </View>
-            </>
+            </View>
           )}
+
         </ScrollView>
 
         <Divider style={styles.divider} />
@@ -170,6 +221,9 @@ const styles = StyleSheet.create({
   },
   chipScroll: {
     paddingBottom: 8,
+  },
+  radioGroup: {
+    marginTop: 16,
   },
   groupLabel: {
     fontSize: 11,

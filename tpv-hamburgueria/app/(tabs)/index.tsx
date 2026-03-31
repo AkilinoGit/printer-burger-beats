@@ -45,7 +45,10 @@ export default function HomeScreen(): React.JSX.Element {
       setOtrosVisible(true);
       return;
     }
-    // Press always adds directly, regardless of modifiers
+    if (product.alwaysShowModifiers && product.modifiers.length > 0) {
+      setSheetProduct(product);
+      return;
+    }
     addProduct(product, []);
   }
 

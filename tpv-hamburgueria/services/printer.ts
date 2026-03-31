@@ -129,6 +129,8 @@ export async function printTicket(
   ticket: Ticket,
   isTest: boolean,
   modifierLabels: Record<string, string>,
+  radioNoSelection: Record<string, string>,
+  radioOptionSets: Record<string, Set<string>>,
 ): Promise<PrintResult> {
   if (!_pairedAddress) {
     return {
@@ -138,7 +140,7 @@ export async function printTicket(
     };
   }
 
-  const payload = buildTicketCommands(ticket, isTest, modifierLabels);
+  const payload = buildTicketCommands(ticket, isTest, modifierLabels, radioNoSelection, radioOptionSets);
 
   for (let attempt = 1; attempt <= MAX_RETRIES + 1; attempt++) {
     const result = await _attemptPrint(payload);
