@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { View } from 'react-native';
 import { Stack } from 'expo-router';
-import { ActivityIndicator, PaperProvider } from 'react-native-paper';
+import { ActivityIndicator, MD3LightTheme, PaperProvider } from 'react-native-paper';
 import { initDb } from '../services/db';
 import { useSessionStore } from '../stores/useSessionStore';
 
@@ -29,7 +29,7 @@ export default function RootLayout(): React.JSX.Element {
   }
 
   return (
-    <PaperProvider>
+    <PaperProvider theme={MD3LightTheme}>
       <Stack>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="ticket/[id]" options={{ title: 'Ticket' }} />

@@ -1,16 +1,17 @@
 import React, { useState } from 'react';
 import { KeyboardAvoidingView, Platform, StyleSheet, View } from 'react-native';
-import { Banner, Button, Dialog, Portal, Text, TextInput } from 'react-native-paper';
+import { Banner, Button, Dialog, Divider, IconButton, Portal, Text, TextInput } from 'react-native-paper';
 import { useRouter } from 'expo-router';
 
 import CartSummary from '../../components/CartSummary';
 import ModifierSheet from '../../components/ModifierSheet';
 import ProductGrid from '../../components/ProductGrid';
 
-import type { Product } from '../../lib/types';
+import type { OrderItem, Product } from '../../lib/types';
 import { useCartStore } from '../../stores/useCartStore';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useTicketStore } from '../../stores/useTicketStore';
+import { buildModifierLabels } from '../../lib/constants';
 
 export default function HomeScreen(): React.JSX.Element {
   const router = useRouter();

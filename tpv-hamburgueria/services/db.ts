@@ -17,8 +17,8 @@ import type {
 // DB singleton
 // ---------------------------------------------------------------------------
 
-const DB_NAME = 'tpv_v7.db';
-const SCHEMA_VERSION = 7;
+const DB_NAME = 'tpv_v8.db';
+const SCHEMA_VERSION = 8;
 
 let _db: SQLite.SQLiteDatabase | null = null;
 let _initPromise: Promise<void> | null = null;
@@ -71,6 +71,9 @@ export async function initDb(): Promise<void> {
     }
     if (currentVersion < 7) {
       await migrate_v4(db); // same logic: reseed products/modifiers
+    }
+    if (currentVersion < 8) {
+      await migrate_v4(db); // reseed with fixed priceAdd for negative modifiers
     }
     await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
   })();
@@ -387,7 +390,7 @@ function mapModifier(row: ModifierRow): Modifier {
     id: row.id,
     label: row.label,
     type: row.type as Modifier['type'],
-    priceAdd: row.price_add > 0 ? row.price_add : undefined,
+    priceAdd: row.price_add !== 0 ? row.price_add : undefined,
     options: JSON.parse(row.options),
     noSelectionLabel: row.no_selection_label ?? undefined,
   };

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Alert, ScrollView, StyleSheet, View } from 'react-native';
-import { ActivityIndicator, Banner, Button, Divider, Surface, Text } from 'react-native-paper';
+import { ActivityIndicator, Banner, Button, Dialog, Divider, IconButton, Portal, Surface, Text } from 'react-native-paper';
+import { TouchableRipple } from 'react-native-paper';
 import { useRouter } from 'expo-router';
 
 import PaymentModal from '../../components/PaymentModal';
@@ -61,10 +62,13 @@ export default function TicketScreen(): React.JSX.Element {
   const { labels: MODIFIER_LABELS, radioNoSelection: RADIO_NO_SELECTION, radioOptionSets: RADIO_OPTION_SETS } =
     React.useMemo(() => buildMaps(products.flatMap((p) => p.modifiers)), [products]);
 
-  const clientName = useCartStore((s) => s.clientName);
-  const cartItems  = useCartStore((s) => s.items);
-  const cartTotal  = useCartStore((s) => s.total());
-  const clearCart  = useCartStore((s) => s.clearCart);
+  const clientName      = useCartStore((s) => s.clientName);
+  const cartItems       = useCartStore((s) => s.items);
+  const cartTotal       = useCartStore((s) => s.total());
+  const clearCart       = useCartStore((s) => s.clearCart);
+  const incrementItem   = useCartStore((s) => s.incrementItem);
+  const decrementItem   = useCartStore((s) => s.decrementItem);
+  const removeItem      = useCartStore((s) => s.removeItem);
 
   const activeTicket    = useTicketStore((s) => s.activeTicket);
   const openTicket      = useTicketStore((s) => s.openTicket);
@@ -77,6 +81,7 @@ export default function TicketScreen(): React.JSX.Element {
   const [paidAmount, setPaidAmount]         = useState<number | null>(null);
   const [paidChange, setPaidChange]         = useState<number | null>(null);
   const [actionState, setActionState]       = useState<ActionState>('idle');
+  const [qtyItem, setQtyItem]               = useState<OrderItem | null>(null);
 
   // ── derived ───────────────────────────────────────────────────────────────
   const hasItems    = cartItems.length > 0;
@@ -270,7 +275,7 @@ export default function TicketScreen(): React.JSX.Element {
           <Text style={styles.emptyText}>No hay productos en el carrito</Text>
         ) : (
           cartItems.map((item) => (
-            <OrderItemRow key={item.id} item={item} modifierLabels={MODIFIER_LABELS} />
+            <OrderItemRow key={item.id} item={item} modifierLabels={MODIFIER_LABELS} onLongPress={() => setQtyItem(item)} />
           ))
         )}
 
@@ -385,6 +390,50 @@ export default function TicketScreen(): React.JSX.Element {
         onConfirm={handlePaymentConfirm}
         onDismiss={() => setPaymentVisible(false)}
       />
+
+      {/* Qty dialog */}
+      <Portal>
+        <Dialog visible={qtyItem !== null} onDismiss={() => setQtyItem(null)}>
+          <Dialog.Title numberOfLines={2}>
+            {qtyItem?.customLabel ?? qtyItem?.productName ?? ''}
+          </Dialog.Title>
+          <Dialog.Content>
+            <View style={styles.qtyRow}>
+              <IconButton
+                icon="minus"
+                size={32}
+                mode="contained"
+                containerColor="#E53935"
+                iconColor="#fff"
+                onPress={() => {
+                  if (!qtyItem) return;
+                  if (qtyItem.qty <= 1) { removeItem(qtyItem.id); setQtyItem(null); }
+                  else { decrementItem(qtyItem.id); setQtyItem({ ...qtyItem, qty: qtyItem.qty - 1 }); }
+                }}
+              />
+              <Text style={styles.qtyValue}>{qtyItem?.qty ?? 0}</Text>
+              <IconButton
+                icon="plus"
+                size={32}
+                mode="contained"
+                containerColor="#43A047"
+                iconColor="#fff"
+                onPress={() => {
+                  if (!qtyItem) return;
+                  incrementItem(qtyItem.id);
+                  setQtyItem({ ...qtyItem, qty: qtyItem.qty + 1 });
+                }}
+              />
+            </View>
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button onPress={() => { if (qtyItem) { removeItem(qtyItem.id); setQtyItem(null); } }} textColor="#E53935">
+              Eliminar
+            </Button>
+            <Button onPress={() => setQtyItem(null)}>Hecho</Button>
+          </Dialog.Actions>
+        </Dialog>
+      </Portal>
     </View>
   );
 }
@@ -393,23 +442,29 @@ export default function TicketScreen(): React.JSX.Element {
 // OrderItemRow sub-component
 // ---------------------------------------------------------------------------
 
-function OrderItemRow({ item, modifierLabels }: { item: OrderItem; modifierLabels: Record<string, string> }): React.JSX.Element {
+function OrderItemRow({ item, modifierLabels, onLongPress }: {
+  item: OrderItem;
+  modifierLabels: Record<string, string>;
+  onLongPress: () => void;
+}): React.JSX.Element {
   const modLabels = item.selectedModifiers.map((id) => modifierLabels[id] ?? id);
   const linePrice = (item.unitPrice + item.modifierPriceAdd) * item.qty;
 
   return (
-    <View style={itemStyles.row}>
-      <View style={itemStyles.left}>
-        <View style={itemStyles.nameRow}>
-          <Text style={itemStyles.qty}>×{item.qty}</Text>
-          <Text style={itemStyles.name}>{item.customLabel ?? item.productName}</Text>
+    <TouchableRipple onLongPress={onLongPress} rippleColor="rgba(0,0,0,0.08)">
+      <View style={itemStyles.row}>
+        <View style={itemStyles.left}>
+          <View style={itemStyles.nameRow}>
+            <Text style={itemStyles.qty}>×{item.qty}</Text>
+            <Text style={itemStyles.name}>{item.customLabel ?? item.productName}</Text>
+          </View>
+          {modLabels.map((label) => (
+            <Text key={label} style={itemStyles.mod}>· {label}</Text>
+          ))}
         </View>
-        {modLabels.map((label) => (
-          <Text key={label} style={itemStyles.mod}>· {label}</Text>
-        ))}
+        <Text style={itemStyles.price}>{formatPrice(linePrice)}</Text>
       </View>
-      <Text style={itemStyles.price}>{formatPrice(linePrice)}</Text>
-    </View>
+    </TouchableRipple>
   );
 }
 
@@ -590,49 +645,66 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 0.3,
   },
+  qtyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 16,
+    paddingVertical: 8,
+  },
+  qtyValue: {
+    fontSize: 40,
+    fontWeight: '800',
+    color: '#1a1a1a',
+    minWidth: 48,
+    textAlign: 'center',
+  },
 });
 
 const itemStyles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    paddingVertical: 10,
+    alignItems: 'flex-start',
+    paddingVertical: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#e0e0e0',
     gap: 8,
   },
   left: { flex: 1 },
-  name: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#1a1a1a',
-  },
-  chips: {
+  nameRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 4,
-    marginTop: 4,
+    alignItems: 'baseline',
+    gap: 8,
+    marginBottom: 4,
   },
-  chip: {
-    height: 26,
-    backgroundColor: '#FFF3E0',
+  name: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#1a1a1a',
+    flexShrink: 1,
   },
-  chipText: {
-    fontSize: 11,
+  mod: {
+    fontSize: 15,
     color: '#E65100',
+    paddingLeft: 4,
+    lineHeight: 22,
   },
   right: {
     alignItems: 'flex-end',
-    justifyContent: 'center',
+    justifyContent: 'flex-start',
     minWidth: 80,
   },
   qty: {
-    fontSize: 13,
+    fontSize: 15,
     color: '#888',
+    fontWeight: '600',
+    minWidth: 24,
   },
   price: {
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: '700',
     color: '#1a1a1a',
+    marginTop: 2,
   },
 });
