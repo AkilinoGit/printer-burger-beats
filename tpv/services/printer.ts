@@ -27,6 +27,7 @@ export interface ScanResult {
   ok: boolean;
   devices: PrinterDevice[];
   error?: string;
+  rawError?: string;
 }
 
 export interface ConnectResult {
@@ -56,23 +57,42 @@ const RETRY_DELAY_MS = 800;
 // Public API
 // ---------------------------------------------------------------------------
 
+/** Timeout (ms) for getBluetoothDeviceList before we give up waiting. */
+const SCAN_TIMEOUT_MS = 10_000;
+
 /**
  * Returns all Bluetooth devices paired with the Android device.
  * The user picks one from the list to configure the printer.
+ *
+ * Includes a hard timeout because getBluetoothDeviceList() can hang
+ * indefinitely on some Android versions instead of rejecting.
  */
 export async function scanPrinters(): Promise<ScanResult> {
   try {
-    const raw = await ThermalPrinter.getBluetoothDeviceList();
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`getBluetoothDeviceList timeout after ${SCAN_TIMEOUT_MS}ms`)), SCAN_TIMEOUT_MS),
+    );
+
+    console.log('[printer] scanPrinters: calling getBluetoothDeviceList…');
+    const raw = await Promise.race([
+      ThermalPrinter.getBluetoothDeviceList(),
+      timeoutPromise,
+    ]);
+    console.log('[printer] scanPrinters: raw result =', JSON.stringify(raw));
+
     const devices: PrinterDevice[] = raw.map((d) => ({
       name: d.deviceName ?? 'Unknown',
       address: d.macAddress,
     }));
     return { ok: true, devices };
   } catch (e) {
+    const errorMsg = e instanceof Error ? e.message : String(e);
+    console.error('[printer] scanPrinters error:', errorMsg);
     return {
       ok: false,
       devices: [],
       error: _describe(e, 'No se pudo obtener la lista de dispositivos Bluetooth.'),
+      rawError: errorMsg,
     };
   }
 }

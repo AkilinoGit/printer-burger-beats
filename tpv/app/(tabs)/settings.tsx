@@ -59,6 +59,7 @@ export default function SettingsScreen(): React.JSX.Element {
   const [btDevices, setBtDevices]           = useState<PrinterDevice[]>([]);
   const [btDialogVisible, setBtDialogVisible] = useState(false);
   const [btError, setBtError]               = useState('');
+  const [btDiagLog, setBtDiagLog]           = useState<string[]>([]);
 
   // Feriante prices
   const ferianteProductIds = Object.keys(DEFAULT_FERIANTE_PRICES);
@@ -134,9 +135,23 @@ export default function SettingsScreen(): React.JSX.Element {
   // ── bluetooth printer ─────────────────────────────────────────────────────
   async function handleScanPrinters(): Promise<void> {
     setBtError('');
+    setBtDiagLog([]);
     setScanning(true);
+    const log: string[] = [];
+    const addLog = (msg: string): void => {
+      log.push(`[${new Date().toLocaleTimeString()}] ${msg}`);
+      setBtDiagLog([...log]);
+    };
     try {
+      addLog('Llamando a scanPrinters()…');
       const result = await scanPrinters();
+      addLog(`ok=${result.ok} | devices=${result.devices.length}`);
+      if (result.rawError) addLog(`rawError: ${result.rawError}`);
+      if (result.devices.length > 0) {
+        result.devices.forEach((d, i) => {
+          addLog(`  [${i}] ${d.name} — ${d.address}`);
+        });
+      }
       if (!result.ok) {
         setBtError(result.error ?? 'Error al buscar impresoras.');
         return;
@@ -147,8 +162,13 @@ export default function SettingsScreen(): React.JSX.Element {
       }
       setBtDevices(result.devices);
       setBtDialogVisible(true);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      addLog(`EXCEPCIÓN no capturada: ${msg}`);
+      setBtError(`Error inesperado: ${msg}`);
     } finally {
       setScanning(false);
+      addLog('Búsqueda finalizada.');
     }
   }
 
@@ -277,8 +297,21 @@ export default function SettingsScreen(): React.JSX.Element {
           </View>
         </View>
 
+        {scanning && (
+          <Text style={styles.btDiagStatus}>Buscando dispositivos…</Text>
+        )}
+
         {!!btError && (
           <Text style={styles.btError}>{btError}</Text>
+        )}
+
+        {btDiagLog.length > 0 && (
+          <View style={styles.btDiagBox}>
+            <Text style={styles.btDiagTitle}>LOG DIAGNÓSTICO</Text>
+            {btDiagLog.map((line, i) => (
+              <Text key={i} style={styles.btDiagLine}>{line}</Text>
+            ))}
+          </View>
         )}
 
         <View style={styles.printerButtons}>
@@ -590,11 +623,40 @@ const styles = StyleSheet.create({
     color: '#888',
     fontFamily: 'monospace',
   },
+  btDiagStatus: {
+    color: '#1565C0',
+    fontSize: 13,
+    paddingHorizontal: 16,
+    paddingBottom: 4,
+    fontStyle: 'italic',
+  },
   btError: {
     color: '#E53935',
     fontSize: 13,
     paddingHorizontal: 16,
     paddingBottom: 8,
+  },
+  btDiagBox: {
+    backgroundColor: '#1A1A2E',
+    marginHorizontal: 16,
+    marginBottom: 8,
+    borderRadius: 6,
+    padding: 10,
+    gap: 2,
+  },
+  btDiagTitle: {
+    color: '#888',
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 1,
+    marginBottom: 4,
+    fontFamily: 'monospace',
+  },
+  btDiagLine: {
+    color: '#A8E6CF',
+    fontSize: 11,
+    fontFamily: 'monospace',
+    lineHeight: 16,
   },
   printerButtons: {
     paddingHorizontal: 16,

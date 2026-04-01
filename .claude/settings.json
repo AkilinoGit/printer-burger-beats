@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(rm -rf android)",
+      "Bash(NODE_OPTIONS=--experimental-require-module npx expo prebuild --platform android --clean)"
+    ]
+  }
+}
