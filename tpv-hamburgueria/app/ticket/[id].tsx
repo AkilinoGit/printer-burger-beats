@@ -184,6 +184,7 @@ export default function TicketScreen(): React.JSX.Element {
   const clientName    = useCartStore((s) => s.clientName);
   const cartItems     = useCartStore((s) => s.items);
   const cartTotal     = useCartStore((s) => s.total());
+  const priceProfile  = useCartStore((s) => s.priceProfile);
   const clearCart     = useCartStore((s) => s.clearCart);
   const incrementItem = useCartStore((s) => s.incrementItem);
   const decrementItem = useCartStore((s) => s.decrementItem);
@@ -286,6 +287,7 @@ const previewTicket: import('../../lib/types').Ticket | null = hasItems ? {
       clientName: clientName.trim() || 'COMENSAL',
       items: cartItems,
       total: cartTotal,
+      priceProfile,
       amountPaid: overrideAmountPaid ?? paidAmount ?? undefined,
       change:     overrideChange     ?? paidChange  ?? undefined,
     });

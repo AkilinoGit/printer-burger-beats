@@ -253,24 +253,27 @@ function _formatItem(
 ): string[] {
   const lines: string[] = [];
 
-  const label = item.customLabel ?? item.productName;
-  const basePrice = item.unitPrice + item.modifierPriceAdd;
+  const label     = item.customLabel ?? item.productName;
+  const unitTotal = (item.unitPrice + item.modifierPriceAdd) * item.qty;
 
-  let priceSuffix = '';
+  // Product name — large so it's readable from 1.5m
+  lines.push('[L][BIG]' + String(item.qty) + 'x ' + label + '[/BIG]');
+
+  // Price line
   if (priceProfile === 'invitacion') {
-    priceSuffix = ' 0.00EUR';
+    lines.push('[L][B]  PRECIO: 0.00EUR (INVITACION)[/B]');
   } else if (priceProfile === 'feriante') {
-    const ferianteTotal = item.unitPrice * item.qty;
-    const normalTotal   = basePrice * item.qty;
-    priceSuffix = ' ' + ferianteTotal.toFixed(2) + 'EUR (antes ' + normalTotal.toFixed(2) + 'EUR)';
+    const normalTotal = unitTotal; // unitPrice is already the feriante price after setPriceProfile
+    const ferianteStr = normalTotal.toFixed(2) + 'EUR';
+    // item.unitPrice holds feriante price; show it clearly
+    lines.push('[L][B]  PRECIO: ' + ferianteStr + ' (FERIANTE)[/B]');
+  } else {
+    lines.push('[L][B]  PRECIO: ' + unitTotal.toFixed(2) + 'EUR[/B]');
   }
 
-  lines.push('[L]' + String(item.qty) + 'x ' + label + priceSuffix);
-
+  // Collect modifiers
   const modParts: string[] = [];
 
-  // For each radio group, check if any of its options was selected;
-  // if not, print the noSelectionLabel (e.g. "Sin salsa")
   for (const [modId, optionSet] of Object.entries(radioOptionSets)) {
     const chosen = item.selectedModifiers.find((id) => optionSet.has(id));
     if (chosen) {
@@ -280,7 +283,6 @@ function _formatItem(
     }
   }
 
-  // Toggle modifiers (remove / add) — skip any radio option ids
   const allRadioOptions = new Set(
     Object.values(radioOptionSets).flatMap((s) => [...s]),
   );
@@ -291,9 +293,13 @@ function _formatItem(
   }
 
   if (modParts.length > 0) {
-    lines.push('[L]   ' + modParts.join(' · '));
+    lines.push('[C][B]*****COMPLEMENTOS*****[/B]');
+    for (const mod of modParts) {
+      lines.push('[L]  > ' + mod);
+    }
   }
 
+  lines.push('');
   return lines;
 }
 
@@ -319,27 +325,36 @@ function _appendOrderBytes(
   line('');
 
   for (const item of order.items) {
-    parts.push(CMD_ALIGN_LEFT);
-    const label = item.customLabel ?? item.productName;
-    const basePrice = item.unitPrice + item.modifierPriceAdd;
+    const label     = item.customLabel ?? item.productName;
+    const unitTotal = (item.unitPrice + item.modifierPriceAdd) * item.qty;
 
-    let priceSuffix = '';
+    // Product name — double size for readability at 1.5m
+    parts.push(CMD_ALIGN_LEFT, CMD_SIZE_DOUBLE, CMD_BOLD_ON);
+    line(String(item.qty) + 'x ' + label);
+    parts.push(CMD_SIZE_NORMAL, CMD_BOLD_OFF);
+
+    // Price line
+    parts.push(CMD_ALIGN_LEFT, CMD_BOLD_ON);
     if (profile === 'invitacion') {
-      priceSuffix = ' 0.00EUR';
+      line('  PRECIO: 0.00EUR (INVITACION)');
     } else if (profile === 'feriante') {
-      const ferianteTotal = item.unitPrice * item.qty;
-      const normalTotal   = basePrice * item.qty;
-      priceSuffix = ' ' + ferianteTotal.toFixed(2) + 'EUR (antes ' + normalTotal.toFixed(2) + 'EUR)';
+      line('  PRECIO: ' + unitTotal.toFixed(2) + 'EUR (FERIANTE)');
+    } else {
+      line('  PRECIO: ' + unitTotal.toFixed(2) + 'EUR');
     }
+    parts.push(CMD_BOLD_OFF);
 
-    line(String(item.qty) + 'x ' + label + priceSuffix);
-
+    // Modifiers — one per line under a header
     if (item.selectedModifiers.length > 0) {
-      const modStr = item.selectedModifiers
-        .map((id) => modifierLabels[id] ?? id)
-        .join(' · ');
-      line('   ' + modStr);
+      parts.push(CMD_ALIGN_CENTER, CMD_BOLD_ON);
+      line('*****COMPLEMENTOS*****');
+      parts.push(CMD_BOLD_OFF, CMD_ALIGN_LEFT);
+      for (const id of item.selectedModifiers) {
+        line('  > ' + (modifierLabels[id] ?? id));
+      }
     }
+
+    line('');
   }
 
   line('');

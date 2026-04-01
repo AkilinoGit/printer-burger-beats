@@ -18,8 +18,8 @@ import type {
 // DB singleton
 // ---------------------------------------------------------------------------
 
-const DB_NAME = 'tpv_v11.db';
-const SCHEMA_VERSION = 11;
+const DB_NAME = 'tpv_v12.db';
+const SCHEMA_VERSION = 13;
 
 let _db: SQLite.SQLiteDatabase | null = null;
 let _initPromise: Promise<void> | null = null;
@@ -84,6 +84,12 @@ export async function initDb(): Promise<void> {
     }
     if (currentVersion < 11) {
       await migrate_v11(db); // add price_profile column to orders
+    }
+    if (currentVersion < 12) {
+      await migrate_v12(db); // ensure price_profile column exists (retry after silent fail in v11)
+    }
+    if (currentVersion < 13) {
+      await migrate_v13(db); // guarantee price_profile exists on devices already at v12
     }
     await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
   })();
@@ -253,6 +259,21 @@ async function migrate_v11(db: SQLite.SQLiteDatabase): Promise<void> {
   try {
     await db.execAsync(`ALTER TABLE orders ADD COLUMN price_profile TEXT NOT NULL DEFAULT 'normal'`);
   } catch { /* column already exists */ }
+}
+
+async function migrate_v12(db: SQLite.SQLiteDatabase): Promise<void> {
+  // Retry adding price_profile in case migrate_v11 was silently swallowed on tpv_v11.db
+  try {
+    await db.execAsync(`ALTER TABLE orders ADD COLUMN price_profile TEXT NOT NULL DEFAULT 'normal'`);
+  } catch { /* column already exists — OK */ }
+}
+
+async function migrate_v13(db: SQLite.SQLiteDatabase): Promise<void> {
+  // Guarantee price_profile exists on devices whose user_version was already 12
+  // but the column was never actually created (v11/v12 may have been skipped).
+  try {
+    await db.execAsync(`ALTER TABLE orders ADD COLUMN price_profile TEXT NOT NULL DEFAULT 'normal'`);
+  } catch { /* column already exists — OK */ }
 }
 
 // ---------------------------------------------------------------------------
@@ -883,8 +904,8 @@ export async function updateTicketWithOrders(ticket: Ticket): Promise<void> {
     // 2. Re-insert orders and their items
     for (const order of ticket.orders) {
       await txn.runAsync(
-        'INSERT INTO orders (id, ticket_id, client_name, amount_paid, change, total, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        [order.id, ticket.id, order.clientName, order.amountPaid, order.change, order.total, order.createdAt],
+        'INSERT INTO orders (id, ticket_id, client_name, price_profile, amount_paid, change, total, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        [order.id, ticket.id, order.clientName, order.priceProfile ?? 'normal', order.amountPaid, order.change, order.total, order.createdAt],
       );
       for (const item of order.items) {
         await txn.runAsync(

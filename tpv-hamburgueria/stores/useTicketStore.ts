@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { generateId } from '../lib/utils';
-import type { Order, OrderItem, Ticket } from '../lib/types';
+import type { Order, OrderItem, PriceProfile, Ticket } from '../lib/types';
 
 interface TicketState {
   // --- data ---
@@ -22,6 +22,7 @@ interface TicketState {
     clientName: string;
     items: Omit<OrderItem, 'orderId'>[];
     total: number;
+    priceProfile: PriceProfile;
     amountPaid?: number;
     change?: number;
   }) => Order;
@@ -67,7 +68,7 @@ export const useTicketStore = create<TicketState>((set, get) => ({
     return ticket;
   },
 
-  addOrder: ({ clientName, items, total, amountPaid, change }) => {
+  addOrder: ({ clientName, items, total, priceProfile, amountPaid, change }) => {
     const ticket = get().activeTicket;
     if (!ticket) {
       throw new Error('addOrder called with no active ticket');
@@ -81,6 +82,7 @@ export const useTicketStore = create<TicketState>((set, get) => ({
       id: orderId,
       ticketId: ticket.id,
       clientName,
+      priceProfile,
       items: stampedItems,
       amountPaid: amountPaid ?? null,
       change: change ?? null,
