@@ -930,3 +930,19 @@ export async function clearSyncedEntries(): Promise<void> {
   const db = await getDb();
   await db.runAsync("DELETE FROM sync_queue WHERE status = 'synced'");
 }
+
+export async function deleteTicket(id: string): Promise<void> {
+  const db = await getDb();
+  await db.withExclusiveTransactionAsync(async (txn) => {
+    const orderRows = await txn.getAllAsync<{ id: string }>(
+      'SELECT id FROM orders WHERE ticket_id = ?',
+      [id],
+    );
+    for (const { id: orderId } of orderRows) {
+      await txn.runAsync('DELETE FROM order_items WHERE order_id = ?', [orderId]);
+    }
+    await txn.runAsync('DELETE FROM orders WHERE ticket_id = ?', [id]);
+    await txn.runAsync('DELETE FROM sync_queue WHERE entity_type = ? AND entity_id = ?', ['ticket', id]);
+    await txn.runAsync('DELETE FROM tickets WHERE id = ?', [id]);
+  });
+}

@@ -29,6 +29,7 @@ import { useSessionStore } from '../../stores/useSessionStore';
 import { useTicketStore } from '../../stores/useTicketStore';
 
 import {
+  deleteTicket,
   getNextTicketNumber,
   getTicketById,
   insertTicket,
@@ -524,6 +525,16 @@ async function handleAddAnother(): Promise<void> {
     }
   }
 
+  async function handleDeleteTicket(): Promise<void> {
+    if (!savedTicket) return;
+    try {
+      await deleteTicket(savedTicket.id);
+      router.back();
+    } catch (e) {
+      Alert.alert('Error', e instanceof Error ? e.message : 'No se pudo eliminar el ticket');
+    }
+  }
+
   async function handleReprintAfterSave(): Promise<void> {
     setReprintDialogVisible(false);
     const ticket = savedTicketRef.current;
@@ -634,6 +645,7 @@ async function handleAddAnother(): Promise<void> {
           router.back();
         }}
         onStartEdit={handleStartEdit}
+        onDeleteTicket={() => void handleDeleteTicket()}
       />
     );
   }
@@ -681,6 +693,7 @@ function ViewModeScreen({
   onReprintConfirm,
   onReprintDismiss,
   onStartEdit,
+  onDeleteTicket,
 }: {
   ticket: import('../../lib/types').Ticket;
   modifierLabels: Record<string, string>;
@@ -688,7 +701,9 @@ function ViewModeScreen({
   onReprintConfirm: () => void;
   onReprintDismiss: () => void;
   onStartEdit: () => void;
+  onDeleteTicket: () => void;
 }): React.JSX.Element {
+  const [deleteDialogVisible, setDeleteDialogVisible] = React.useState(false);
   const ticketTotal = ticket.orders.reduce((s, o) => s + o.total, 0);
 
   return (
@@ -698,16 +713,29 @@ function ViewModeScreen({
         <Surface style={styles.viewHeader} elevation={1}>
           <View style={styles.viewHeaderTop}>
             <Text style={styles.viewTicketNum}>Comanda #{ticket.ticketNumber}</Text>
-            <Button
-              mode="contained-tonal"
-              icon="pencil"
-              onPress={onStartEdit}
-              compact
-              style={styles.editBtn}
-              contentStyle={styles.editBtnContent}
-            >
-              Editar ticket
-            </Button>
+            <View style={styles.viewHeaderActions}>
+              <Button
+                mode="contained-tonal"
+                icon="pencil"
+                onPress={onStartEdit}
+                compact
+                style={styles.editBtn}
+                contentStyle={styles.editBtnContent}
+              >
+                Editar ticket
+              </Button>
+              <Button
+                mode="contained"
+                icon="delete"
+                onPress={() => setDeleteDialogVisible(true)}
+                compact
+                style={styles.editBtn}
+                contentStyle={styles.editBtnContent}
+                buttonColor="#E53935"
+              >
+                Eliminar
+              </Button>
+            </View>
           </View>
           {ticket.editedAt != null && (
             <View style={styles.editedBadge}>
@@ -742,6 +770,28 @@ function ViewModeScreen({
           <Text style={styles.grandTotalValue}>{formatPrice(ticketTotal)}</Text>
         </View>
       </ScrollView>
+
+      {/* Delete confirmation dialog */}
+      <Portal>
+        <Dialog visible={deleteDialogVisible} onDismiss={() => setDeleteDialogVisible(false)}>
+          <Dialog.Title>¿Eliminar ticket?</Dialog.Title>
+          <Dialog.Content>
+            <Text variant="bodyMedium">
+              Esta acción no se puede deshacer. Se eliminará la comanda #{ticket.ticketNumber} y todos sus pedidos.
+            </Text>
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button onPress={() => setDeleteDialogVisible(false)}>Cancelar</Button>
+            <Button
+              mode="contained"
+              buttonColor="#E53935"
+              onPress={() => { setDeleteDialogVisible(false); onDeleteTicket(); }}
+            >
+              Eliminar
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
+      </Portal>
 
       {/* Reprint dialog (shown after save) */}
       <Portal>
@@ -1211,6 +1261,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     gap: 8,
   },
+  viewHeaderActions: { flexDirection: 'row', gap: 8 },
   viewHeaderTop: {
     flexDirection: 'row',
     justifyContent: 'space-between',
