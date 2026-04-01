@@ -17,8 +17,8 @@ import type {
 // DB singleton
 // ---------------------------------------------------------------------------
 
-const DB_NAME = 'tpv_v9.db';
-const SCHEMA_VERSION = 9;
+const DB_NAME = 'tpv_v10.db';
+const SCHEMA_VERSION = 10;
 
 let _db: SQLite.SQLiteDatabase | null = null;
 let _initPromise: Promise<void> | null = null;
@@ -77,6 +77,9 @@ export async function initDb(): Promise<void> {
     }
     if (currentVersion < 9) {
       await migrate_v9(db); // add session_code/opened_at/auto_close_at/closed_at/device_id to sessions; edited_at/edit_count to tickets
+    }
+    if (currentVersion < 10) {
+      await migrate_v10(db); // add action column to sync_queue
     }
     await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
   })();
@@ -236,6 +239,12 @@ async function migrate_v9(db: SQLite.SQLiteDatabase): Promise<void> {
   await addCol(`ALTER TABLE tickets ADD COLUMN edit_count INTEGER NOT NULL DEFAULT 0`);
 }
 
+async function migrate_v10(db: SQLite.SQLiteDatabase): Promise<void> {
+  try {
+    await db.execAsync(`ALTER TABLE sync_queue ADD COLUMN action TEXT NOT NULL DEFAULT 'create'`);
+  } catch { /* column already exists */ }
+}
+
 // ---------------------------------------------------------------------------
 // Session helpers
 // ---------------------------------------------------------------------------
@@ -390,6 +399,7 @@ type SyncQueueRow = {
   id: string;
   entity_type: string;
   entity_id: string;
+  action: string;
   status: string;
   attempts: number;
   created_at: string;
@@ -490,6 +500,7 @@ function mapSyncQueueEntry(row: SyncQueueRow): SyncQueueEntry {
     id: row.id,
     entity_type: row.entity_type as SyncQueueEntry['entity_type'],
     entity_id: row.entity_id,
+    action: (row.action ?? 'create') as SyncQueueEntry['action'],
     status: row.status as SyncStatus,
     attempts: row.attempts,
     created_at: row.created_at,
@@ -822,8 +833,8 @@ export async function saveOrderWithItems(order: Order): Promise<void> {
     }
     // Enqueue for sync
     await txn.runAsync(
-      'INSERT INTO sync_queue (id, entity_type, entity_id, status, attempts, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-      [generateId(), 'order', order.id, 'pending', 0, new Date().toISOString()],
+      'INSERT INTO sync_queue (id, entity_type, entity_id, action, status, attempts, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [generateId(), 'order', order.id, 'create', 'pending', 0, new Date().toISOString()],
     );
   });
 }
@@ -843,8 +854,8 @@ export async function saveOrderWithItems(order: Order): Promise<void> {
 export async function updateTicketWithOrders(ticket: Ticket): Promise<void> {
   const db = await getDb();
   const now = new Date().toISOString();
-  const newSyncStatus: SyncStatus =
-    ticket.syncStatus === 'synced' ? 'pending_update' : ticket.syncStatus;
+  const wasAlreadySynced = ticket.syncStatus === 'synced';
+  const newSyncStatus: SyncStatus = wasAlreadySynced ? 'pending_update' : ticket.syncStatus;
 
   await db.withExclusiveTransactionAsync(async (txn) => {
     // 1. Delete existing order_items and orders for this ticket
@@ -876,6 +887,14 @@ export async function updateTicketWithOrders(ticket: Ticket): Promise<void> {
       'UPDATE tickets SET edited_at = ?, edit_count = edit_count + 1, sync_status = ? WHERE id = ?',
       [now, newSyncStatus, ticket.id],
     );
+
+    // 4. If transitioning to pending_update, enqueue with action='update'
+    if (wasAlreadySynced) {
+      await txn.runAsync(
+        'INSERT INTO sync_queue (id, entity_type, entity_id, action, status, attempts, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [generateId(), 'ticket', ticket.id, 'update', 'pending', 0, now],
+      );
+    }
   });
 }
 
@@ -886,16 +905,16 @@ export async function updateTicketWithOrders(ticket: Ticket): Promise<void> {
 export async function getPendingSyncEntries(): Promise<SyncQueueEntry[]> {
   const db = await getDb();
   const rows = await db.getAllAsync<SyncQueueRow>(
-    "SELECT * FROM sync_queue WHERE status = 'pending' OR status = 'error' ORDER BY created_at ASC",
+    "SELECT * FROM sync_queue WHERE status IN ('pending', 'error') ORDER BY created_at ASC",
   );
   return rows.map(mapSyncQueueEntry);
 }
 
-export async function enqueueSyncEntry(entityType: 'order' | 'ticket', entityId: string): Promise<void> {
+export async function enqueueSyncEntry(entityType: 'order' | 'ticket', entityId: string, action: 'create' | 'update' = 'create'): Promise<void> {
   const db = await getDb();
   await db.runAsync(
-    'INSERT INTO sync_queue (id, entity_type, entity_id, status, attempts, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-    [generateId(), entityType, entityId, 'pending', 0, new Date().toISOString()],
+    'INSERT INTO sync_queue (id, entity_type, entity_id, action, status, attempts, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [generateId(), entityType, entityId, action, 'pending', 0, new Date().toISOString()],
   );
 }
 

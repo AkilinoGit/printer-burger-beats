@@ -85,6 +85,7 @@ export interface SyncQueueEntry {
   id: string;
   entity_type: 'order' | 'ticket';
   entity_id: string;
+  action: 'create' | 'update';
   status: SyncStatus;
   attempts: number;
   created_at: string;
