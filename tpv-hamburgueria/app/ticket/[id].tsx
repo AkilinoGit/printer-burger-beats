@@ -188,11 +188,13 @@ export default function TicketScreen(): React.JSX.Element {
   const removeItem    = useCartStore((s) => s.removeItem);
   const addProduct    = useCartStore((s) => s.addProduct);
 
-  const activeTicket      = useTicketStore((s) => s.activeTicket);
-  const openTicket        = useTicketStore((s) => s.openTicket);
-  const addOrder          = useTicketStore((s) => s.addOrder);
-  const markPrinted       = useTicketStore((s) => s.markPrinted);
-  const clearActiveTicket = useTicketStore((s) => s.clearActiveTicket);
+  const activeTicket          = useTicketStore((s) => s.activeTicket);
+  const pendingPrintTickets   = useTicketStore((s) => s.pendingPrintTickets);
+  const openTicket            = useTicketStore((s) => s.openTicket);
+  const addOrder              = useTicketStore((s) => s.addOrder);
+  const markPrinted           = useTicketStore((s) => s.markPrinted);
+  const commitTicketToPending = useTicketStore((s) => s.commitTicketToPending);
+  const clearAll              = useTicketStore((s) => s.clearAll);
 
   // ── screen mode ───────────────────────────────────────────────────────────
   const isNew = id === 'new';
@@ -238,29 +240,30 @@ export default function TicketScreen(): React.JSX.Element {
   const hasSession = activeSession !== null;
   const isBusy     = actionState !== 'idle';
 
-  const previewTicket: import('../../lib/types').Ticket | null = hasItems ? {
-    id: activeTicket?.id ?? 'preview',
-    sessionId: activeSession?.id ?? '',
-    ticketNumber: activeTicket?.ticketNumber ?? 1,
-    printedAt: null,
-    syncStatus: 'pending',
-    createdAt: new Date().toISOString(),
-    editedAt: null,
-    editCount: 0,
-    orders: [
-      ...(activeTicket?.orders ?? []),
-      {
-        id: 'preview-order',
-        ticketId: activeTicket?.id ?? 'preview',
-        clientName,
-        items: cartItems,
-        amountPaid: null,
-        change: null,
-        total: cartTotal,
-        createdAt: new Date().toISOString(),
-      },
-    ],
-  } : activeTicket;
+const previewTicket: import('../../lib/types').Ticket | null = hasItems ? {
+  id: activeTicket?.id ?? 'preview',
+  sessionId: activeSession?.id ?? '',
+  ticketNumber: pendingPrintTickets[0]?.ticketNumber ?? activeTicket?.ticketNumber ?? 1,
+  printedAt: null,
+  syncStatus: 'pending',
+  createdAt: new Date().toISOString(),
+  editedAt: null,
+  editCount: 0,
+  orders: [
+    // ← añadir los orders de los tickets pendientes
+    ...pendingPrintTickets.flatMap((t) => t.orders),
+    {
+      id: 'preview-order',
+      ticketId: activeTicket?.id ?? 'preview',
+      clientName,
+      items: cartItems,
+      amountPaid: null,
+      change: null,
+      total: cartTotal,
+      createdAt: new Date().toISOString(),
+    },
+  ],
+} : activeTicket;
 
   // ── helpers (new-ticket mode) ─────────────────────────────────────────────
   async function ensureTicket(): Promise<string> {
@@ -300,21 +303,25 @@ export default function TicketScreen(): React.JSX.Element {
     setPaymentVisible(false);
   }
 
-  async function handleAddAnother(): Promise<void> {
-    if (!hasItems) return;
-    setActionState('saving');
-    try {
-      const ticketId = await ensureTicket();
-      await persistCurrentOrder(ticketId);
-      clearCart();
-      router.replace('/');
-    } catch (e) {
-      Alert.alert('Error', e instanceof Error ? e.message : 'No se pudo guardar el pedido');
-    } finally {
-      setActionState('idle');
+async function handleAddAnother(): Promise<void> {
+  if (!hasItems) return;
+  setActionState('saving');
+  try {
+    const ticketId = await ensureTicket();
+    await persistCurrentOrder(ticketId);
+    // Leer el estado actualizado del store antes de commitear
+    const updatedTicket = useTicketStore.getState().activeTicket;
+    if (updatedTicket) {
+      useTicketStore.getState().commitTicketToPending();
     }
+    clearCart();
+    router.replace('/');
+  } catch (e) {
+    Alert.alert('Error', e instanceof Error ? e.message : 'No se pudo guardar el pedido');
+  } finally {
+    setActionState('idle');
   }
-
+}
   async function handlePrint(): Promise<void> {
     if (!hasItems) return;
     setActionState('printing');
@@ -322,13 +329,24 @@ export default function TicketScreen(): React.JSX.Element {
       const ticketId = await ensureTicket();
       await persistCurrentOrder(ticketId);
 
-      const ticket = useTicketStore.getState().activeTicket;
-      if (!ticket) throw new Error('Ticket no encontrado en store');
+      const currentTicket = useTicketStore.getState().activeTicket;
+      if (!currentTicket) throw new Error('Ticket no encontrado en store');
 
-      const result = await printTicket(ticket, testMode, MODIFIER_LABELS, RADIO_NO_SELECTION, RADIO_OPTION_SETS);
+      const allTickets = [...useTicketStore.getState().pendingPrintTickets, currentTicket];
+      const firstTicket = allTickets[0];
+
+      const virtualTicket: import('../../lib/types').Ticket = {
+        ...currentTicket,
+        ticketNumber: firstTicket.ticketNumber,
+        orders: allTickets.flatMap((t) => t.orders),
+      };
+
+      const result = await printTicket(virtualTicket, testMode, MODIFIER_LABELS, RADIO_NO_SELECTION, RADIO_OPTION_SETS);
 
       if (!testMode) {
-        await markTicketPrinted(ticket.id);
+        for (const t of allTickets) {
+          await markTicketPrinted(t.id);
+        }
       }
       markPrinted();
 
@@ -337,7 +355,7 @@ export default function TicketScreen(): React.JSX.Element {
           [{ text: 'Continuar', style: 'default' }]);
       }
 
-      clearActiveTicket();
+      clearAll();
       clearCart();
       router.replace('/');
     } catch (e) {
@@ -625,6 +643,7 @@ export default function TicketScreen(): React.JSX.Element {
     <NewTicketScreen
       testMode={testMode}
       activeTicket={activeTicket}
+      pendingTickets={pendingPrintTickets}
       clientName={clientName}
       cartItems={cartItems}
       cartTotal={cartTotal}
@@ -954,6 +973,7 @@ function EditModeScreen({
 interface NewTicketProps {
   testMode: boolean;
   activeTicket: import('../../lib/types').Ticket | null;
+  pendingTickets: import('../../lib/types').Ticket[];
   clientName: string;
   cartItems: OrderItem[];
   cartTotal: number;
@@ -979,7 +999,7 @@ interface NewTicketProps {
 }
 
 function NewTicketScreen({
-  testMode, activeTicket, clientName, cartItems, cartTotal,
+  testMode, activeTicket, pendingTickets, clientName, cartItems, cartTotal,
   paidAmount, paidChange, actionState, isBusy, hasItems, previewTicket, modifierLabels,
   paymentVisible, onCobrar, onPaymentConfirm, onPaymentDismiss,
   onAddAnother, onPrint,
@@ -1044,14 +1064,16 @@ function NewTicketScreen({
           </View>
         )}
 
-        {activeTicket && activeTicket.orders.length > 0 && (
+        {pendingTickets.length > 0 && (
           <View style={styles.prevOrdersBox}>
             <Text style={styles.prevOrdersTitle}>Pedidos anteriores en esta comanda</Text>
-            {activeTicket.orders.map((o, i) => (
-              <Text key={o.id} style={styles.prevOrderRow}>
-                {i + 1}. {o.clientName} — {formatPrice(o.total)}
-              </Text>
-            ))}
+            {pendingTickets.map((t) =>
+              t.orders.map((o) => (
+                <Text key={o.id} style={styles.prevOrderRow}>
+                  #{t.ticketNumber} · {o.clientName} — {formatPrice(o.total)}
+                </Text>
+              ))
+            )}
           </View>
         )}
       </ScrollView>
