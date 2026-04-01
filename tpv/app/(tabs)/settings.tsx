@@ -25,13 +25,8 @@ import {
   insertLocation,
   updateLocation,
 } from '../../services/db';
-import {
-  connectPrinter,
-  disconnectPrinter,
-  getPairedAddress,
-  scanPrinters,
-  type PrinterDevice,
-} from '../../services/printer';
+import { diagMethod1, diagMethod2, openRawBT, printTicket, type DiagResult } from '../../services/printer';
+import { useTicketStore } from '../../stores/useTicketStore';
 import { DEFAULT_FERIANTE_PRICES } from '../../lib/constants';
 import type { Location } from '../../lib/types';
 
@@ -53,13 +48,11 @@ export default function SettingsScreen(): React.JSX.Element {
   const [loadingData, setLoadingData]       = useState(true);
 
   // Printer
-  const [pairedAddress, setPairedAddress]   = useState<string | null>(null);
-  const [scanning, setScanning]             = useState(false);
-  const [connecting, setConnecting]         = useState(false);
-  const [btDevices, setBtDevices]           = useState<PrinterDevice[]>([]);
-  const [btDialogVisible, setBtDialogVisible] = useState(false);
-  const [btError, setBtError]               = useState('');
-  const [btDiagLog, setBtDiagLog]           = useState<string[]>([]);
+  const [printerError, setPrinterError]     = useState('');
+  const [testPrinting, setTestPrinting]     = useState(false);
+  const [diagRunning, setDiagRunning]       = useState(false);
+  const [diagResults, setDiagResults]       = useState<DiagResult[]>([]);
+  const activeTicket = useTicketStore((s) => s.activeTicket);
 
   // Feriante prices
   const ferianteProductIds = Object.keys(DEFAULT_FERIANTE_PRICES);
@@ -104,7 +97,6 @@ export default function SettingsScreen(): React.JSX.Element {
       ]);
       setLocations(locs);
       setPendingCount(pending.length);
-      setPairedAddress(getPairedAddress());
     } finally {
       setLoadingData(false);
     }
@@ -132,66 +124,63 @@ export default function SettingsScreen(): React.JSX.Element {
     }
   }
 
-  // ── bluetooth printer ─────────────────────────────────────────────────────
-  async function handleScanPrinters(): Promise<void> {
-    setBtError('');
-    setBtDiagLog([]);
-    setScanning(true);
-    const log: string[] = [];
-    const addLog = (msg: string): void => {
-      log.push(`[${new Date().toLocaleTimeString()}] ${msg}`);
-      setBtDiagLog([...log]);
-    };
+  // ── rawbt printer ─────────────────────────────────────────────────────────
+  async function handleOpenRawBT(): Promise<void> {
+    setPrinterError('');
+    const result = await openRawBT();
+    if (!result.ok) {
+      setPrinterError(result.error ?? 'No se pudo abrir RawBT.');
+    }
+  }
+
+  async function handleTestPrint(): Promise<void> {
+    setPrinterError('');
+    setTestPrinting(true);
     try {
-      addLog('Llamando a scanPrinters()…');
-      const result = await scanPrinters();
-      addLog(`ok=${result.ok} | devices=${result.devices.length}`);
-      if (result.rawError) addLog(`rawError: ${result.rawError}`);
-      if (result.devices.length > 0) {
-        result.devices.forEach((d, i) => {
-          addLog(`  [${i}] ${d.name} — ${d.address}`);
-        });
-      }
+      // Build a minimal test ticket in memory — nothing is persisted.
+      const now = new Date().toISOString();
+      const testTicket = activeTicket ?? {
+        id: 'test',
+        sessionId: 'test',
+        ticketNumber: 0,
+        orders: [{
+          id: 'test-order',
+          ticketId: 'test',
+          clientName: 'PRUEBA',
+          priceProfile: 'normal' as const,
+          items: [],
+          amountPaid: null,
+          change: null,
+          total: 0,
+          createdAt: now,
+        }],
+        printedAt: null,
+        editedAt: null,
+        editCount: 0,
+        syncStatus: 'pending' as const,
+        createdAt: now,
+      };
+      const result = await printTicket(testTicket, true, {});
       if (!result.ok) {
-        setBtError(result.error ?? 'Error al buscar impresoras.');
-        return;
+        setPrinterError(result.error ?? 'No se pudo imprimir.');
       }
-      if (result.devices.length === 0) {
-        setBtError('No se encontraron dispositivos Bluetooth emparejados.');
-        return;
-      }
-      setBtDevices(result.devices);
-      setBtDialogVisible(true);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      addLog(`EXCEPCIÓN no capturada: ${msg}`);
-      setBtError(`Error inesperado: ${msg}`);
     } finally {
-      setScanning(false);
-      addLog('Búsqueda finalizada.');
+      setTestPrinting(false);
     }
   }
 
-  async function handleConnectPrinter(device: PrinterDevice): Promise<void> {
-    setBtDialogVisible(false);
-    setConnecting(true);
-    setBtError('');
-    try {
-      const result = await connectPrinter(device.address);
-      if (result.ok) {
-        setPairedAddress(device.address);
-      } else {
-        setBtError(result.error ?? 'No se pudo conectar.');
-      }
-    } finally {
-      setConnecting(false);
-    }
-  }
-
-  async function handleDisconnectPrinter(): Promise<void> {
-    await disconnectPrinter();
-    setPairedAddress(null);
-    setBtError('');
+  async function handleDiag(): Promise<void> {
+    setDiagResults([]);
+    setDiagRunning(true);
+    // Minimal ESC/POS payload: just "TEST\n" to keep the base64 short
+    const testBytes = new Uint8Array([0x54, 0x45, 0x53, 0x54, 0x0a]); // "TEST\n"
+    let binary = '';
+    for (let i = 0; i < testBytes.length; i++) binary += String.fromCharCode(testBytes[i]);
+    const b64 = btoa(binary);
+    const r1 = await diagMethod1(b64);
+    const r2 = await diagMethod2(b64);
+    setDiagResults([r1, r2]);
+    setDiagRunning(false);
   }
 
   // ── location management ───────────────────────────────────────────────────
@@ -276,68 +265,72 @@ export default function SettingsScreen(): React.JSX.Element {
         )}
       </Surface>
 
-      {/* ── BLUETOOTH PRINTER ─────────────────────────────────────────────── */}
+      {/* ── RAWBT PRINTER ─────────────────────────────────────────────────── */}
       <Text variant="labelLarge" style={styles.sectionLabel}>IMPRESORA BLUETOOTH</Text>
       <Surface style={styles.card} elevation={1}>
         <View style={styles.printerRow}>
-          <View style={styles.printerStatus}>
-            <Icon
-              source={pairedAddress ? 'bluetooth-connect' : 'bluetooth-off'}
-              size={24}
-              color={pairedAddress ? '#43A047' : '#999'}
-            />
-            <View style={styles.printerStatusText}>
-              <Text style={styles.printerStatusLabel}>
-                {pairedAddress ? 'Conectada' : 'Sin impresora'}
-              </Text>
-              {pairedAddress && (
-                <Text style={styles.printerAddress}>{pairedAddress}</Text>
-              )}
-            </View>
+          <Icon source="printer-check" size={24} color="#43A047" />
+          <View style={styles.printerStatusText}>
+            <Text style={styles.printerStatusLabel}>Listo</Text>
+            <Text style={styles.printerAddress}>
+              La impresión se realiza a través de RawBT
+            </Text>
           </View>
         </View>
 
-        {scanning && (
-          <Text style={styles.btDiagStatus}>Buscando dispositivos…</Text>
+        {!!printerError && (
+          <Text style={styles.btError}>{printerError}</Text>
         )}
 
-        {!!btError && (
-          <Text style={styles.btError}>{btError}</Text>
-        )}
-
-        {btDiagLog.length > 0 && (
-          <View style={styles.btDiagBox}>
-            <Text style={styles.btDiagTitle}>LOG DIAGNÓSTICO</Text>
-            {btDiagLog.map((line, i) => (
-              <Text key={i} style={styles.btDiagLine}>{line}</Text>
+        {diagResults.length > 0 && (
+          <View style={styles.diagBox}>
+            {diagResults.map((r) => (
+              <View key={r.method} style={styles.diagRow}>
+                <Text style={[styles.diagBadge, r.ok ? styles.diagOk : styles.diagFail]}>
+                  {r.ok ? 'OK' : 'FAIL'}
+                </Text>
+                <View style={styles.diagText}>
+                  <Text style={styles.diagMethod}>{r.method}</Text>
+                  {r.error !== null && (
+                    <Text style={styles.diagError}>{r.error}</Text>
+                  )}
+                </View>
+              </View>
             ))}
           </View>
         )}
 
         <View style={styles.printerButtons}>
-          {pairedAddress ? (
-            <Button
-              mode="outlined"
-              icon="bluetooth-off"
-              onPress={() => void handleDisconnectPrinter()}
-              textColor="#E53935"
-              style={[styles.printerBtn, { borderColor: '#E53935' }]}
-            >
-              Desconectar
-            </Button>
-          ) : (
-            <Button
-              mode="contained"
-              icon="bluetooth-search"
-              onPress={() => void handleScanPrinters()}
-              loading={scanning || connecting}
-              disabled={scanning || connecting}
-              buttonColor="#1565C0"
-              style={styles.printerBtn}
-            >
-              {connecting ? 'Conectando…' : 'Buscar impresoras'}
-            </Button>
-          )}
+          <Button
+            mode="contained"
+            icon="cog"
+            onPress={() => void handleOpenRawBT()}
+            buttonColor="#546E7A"
+            style={styles.printerBtn}
+          >
+            Configurar RawBT
+          </Button>
+          <Button
+            mode="outlined"
+            icon="printer"
+            onPress={() => void handleTestPrint()}
+            loading={testPrinting}
+            disabled={testPrinting || diagRunning}
+            style={styles.printerBtn}
+          >
+            Imprimir ticket de prueba
+          </Button>
+          <Button
+            mode="outlined"
+            icon="bug"
+            onPress={() => void handleDiag()}
+            loading={diagRunning}
+            disabled={diagRunning || testPrinting}
+            textColor="#F57C00"
+            style={[styles.printerBtn, { borderColor: '#F57C00' }]}
+          >
+            Test Intent (diagnóstico)
+          </Button>
         </View>
       </Surface>
 
@@ -467,34 +460,6 @@ export default function SettingsScreen(): React.JSX.Element {
 
       {/* ── DIALOGS ───────────────────────────────────────────────────────── */}
       <Portal>
-        {/* BT device picker */}
-        <Dialog visible={btDialogVisible} onDismiss={() => setBtDialogVisible(false)}>
-          <Dialog.Title>Selecciona impresora</Dialog.Title>
-          <Dialog.Content style={styles.btList}>
-            {btDevices.map((d, idx) => (
-              <React.Fragment key={d.address}>
-                {idx > 0 && <Divider />}
-                <Button
-                  mode="text"
-                  icon="printer"
-                  onPress={() => void handleConnectPrinter(d)}
-                  style={styles.btDeviceBtn}
-                  contentStyle={styles.btDeviceBtnContent}
-                  textColor="#111"
-                >
-                  <View style={styles.btDeviceInfo}>
-                    <Text style={styles.btDeviceName}>{d.name}</Text>
-                    <Text style={styles.btDeviceAddr}>{d.address}</Text>
-                  </View>
-                </Button>
-              </React.Fragment>
-            ))}
-          </Dialog.Content>
-          <Dialog.Actions>
-            <Button onPress={() => setBtDialogVisible(false)}>Cancelar</Button>
-          </Dialog.Actions>
-        </Dialog>
-
         {/* Add / edit location */}
         <Dialog visible={locationDialogVisible} onDismiss={() => setLocationDialogVisible(false)}>
           <Dialog.Title>
@@ -623,56 +588,61 @@ const styles = StyleSheet.create({
     color: '#888',
     fontFamily: 'monospace',
   },
-  btDiagStatus: {
-    color: '#1565C0',
-    fontSize: 13,
-    paddingHorizontal: 16,
-    paddingBottom: 4,
-    fontStyle: 'italic',
-  },
   btError: {
     color: '#E53935',
     fontSize: 13,
     paddingHorizontal: 16,
     paddingBottom: 8,
   },
-  btDiagBox: {
+  printerButtons: {
+    paddingHorizontal: 16,
+    paddingBottom: 16,
+    gap: 8,
+  },
+  printerBtn: {
+    borderRadius: 8,
+  },
+  printerBtnTop: {
+    marginTop: 0,
+  },
+  diagBox: {
     backgroundColor: '#1A1A2E',
     marginHorizontal: 16,
     marginBottom: 8,
     borderRadius: 6,
     padding: 10,
-    gap: 2,
+    gap: 8,
   },
-  btDiagTitle: {
-    color: '#888',
+  diagRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+  },
+  diagBadge: {
     fontSize: 10,
-    fontWeight: '700',
-    letterSpacing: 1,
-    marginBottom: 4,
+    fontWeight: '800',
     fontFamily: 'monospace',
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 4,
+    overflow: 'hidden',
+    flexShrink: 0,
   },
-  btDiagLine: {
+  diagOk:   { backgroundColor: '#2E7D32', color: '#fff' },
+  diagFail: { backgroundColor: '#C62828', color: '#fff' },
+  diagText: { flex: 1, gap: 2 },
+  diagMethod: {
     color: '#A8E6CF',
+    fontSize: 12,
+    fontFamily: 'monospace',
+    fontWeight: '700',
+  },
+  diagError: {
+    color: '#EF9A9A',
     fontSize: 11,
     fontFamily: 'monospace',
     lineHeight: 16,
   },
-  printerButtons: {
-    paddingHorizontal: 16,
-    paddingBottom: 16,
-  },
-  printerBtn: {
-    borderRadius: 8,
-  },
-
-  // ── bt device list ──
-  btList: { gap: 0, padding: 0 },
-  btDeviceBtn: { justifyContent: 'flex-start' },
-  btDeviceBtnContent: { justifyContent: 'flex-start', paddingVertical: 6 },
-  btDeviceInfo: { flex: 1, gap: 2 },
-  btDeviceName: { fontSize: 15, fontWeight: '600', color: '#111' },
-  btDeviceAddr: { fontSize: 12, color: '#888', fontFamily: 'monospace' },
 
   // ── sync ──
   syncRow: {

@@ -1,26 +1,36 @@
-// ESC/POS Bluetooth SPP: scanning, connection, reconnection, and printing.
+// ESC/POS printing via RawBT Android app using Intents.
 //
-// react-native-thermal-printer drives the Android BT SPP stack.
-// All public functions return a typed result — never throw — so the UI
-// can handle failures gracefully (offline-first: print is fire-and-forget).
+// RawBT receives raw ESC/POS bytes encoded as Base64 via an Android Intent.
+// No Bluetooth pairing or socket management needed — RawBT handles the
+// printer connection entirely. The app just fires the Intent and RawBT
+// delivers the job.
 //
-// Connection lifecycle:
-//   1. Call scanPrinters() to list paired BT devices.
-//   2. Call connectPrinter(address) to open the SPP channel.
-//   3. Call printTicket(...) — reconnects automatically if the link dropped.
-//   4. Call disconnectPrinter() to release the socket when done.
+// Install requirement: RawBT must be installed on the device.
+//   Play Store: https://play.google.com/store/apps/details?id=ru.a402d.rawbtprinter
+//
+// Intent API (method 1 — android.intent.action.SEND):
+//   Action : android.intent.action.SEND
+//   Extra  : android.intent.extra.TEXT → Base64-encoded ESC/POS bytes
+//   Type   : application/octet-stream
+//   Package: ru.a402d.rawbtprinter
 
-import ThermalPrinter from 'react-native-thermal-printer';
+import * as IntentLauncher from 'expo-intent-launcher';
 import type { Ticket } from '../lib/types';
-import { buildTicketCommands } from './escpos';
+import { buildTicketBuffer } from './escpos';
 
 // ---------------------------------------------------------------------------
-// Public types
+// Public types  (kept compatible with existing callers)
 // ---------------------------------------------------------------------------
 
+export interface PrintResult {
+  ok: boolean;
+  error?: string;
+}
+
+// The BT-scanning types are kept so existing imports in settings.tsx compile.
 export interface PrinterDevice {
   name: string;
-  address: string; // MAC address, e.g. "AA:BB:CC:DD:EE:FF"
+  address: string;
 }
 
 export interface ScanResult {
@@ -35,208 +45,165 @@ export interface ConnectResult {
   error?: string;
 }
 
-export interface PrintResult {
+// ---------------------------------------------------------------------------
+// RawBT Intent constants
+// ---------------------------------------------------------------------------
+
+const RAWBT_PACKAGE = 'ru.a402d.rawbtprinter';
+const RAWBT_NOT_INSTALLED =
+  'No se pudo abrir RawBT. ¿Está instalado?\n' +
+  'Descárgalo en Play Store: ru.a402d.rawbtprinter';
+
+// ---------------------------------------------------------------------------
+// Diagnostic result — exposed for the settings debug panel
+// ---------------------------------------------------------------------------
+
+export interface DiagResult {
+  method: string;
   ok: boolean;
-  error?: string;
+  error: string | null;
 }
-
-// ---------------------------------------------------------------------------
-// Module-level state
-// ---------------------------------------------------------------------------
-
-/** MAC address of the currently paired printer. Persisted only in memory. */
-let _pairedAddress: string | null = null;
-
-/** How many times to retry a failed print before giving up. */
-const MAX_RETRIES = 2;
-
-/** Delay (ms) between retry attempts. */
-const RETRY_DELAY_MS = 800;
 
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
-/** Timeout (ms) for getBluetoothDeviceList before we give up waiting. */
-const SCAN_TIMEOUT_MS = 10_000;
-
 /**
- * Returns all Bluetooth devices paired with the Android device.
- * The user picks one from the list to configure the printer.
+ * Prints a ticket by sending raw ESC/POS bytes to RawBT via Android Intent.
  *
- * Includes a hard timeout because getBluetoothDeviceList() can hang
- * indefinitely on some Android versions instead of rejecting.
- */
-export async function scanPrinters(): Promise<ScanResult> {
-  try {
-    const timeoutPromise = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error(`getBluetoothDeviceList timeout after ${SCAN_TIMEOUT_MS}ms`)), SCAN_TIMEOUT_MS),
-    );
-
-    console.log('[printer] scanPrinters: calling getBluetoothDeviceList…');
-    const raw = await Promise.race([
-      ThermalPrinter.getBluetoothDeviceList(),
-      timeoutPromise,
-    ]);
-    console.log('[printer] scanPrinters: raw result =', JSON.stringify(raw));
-
-    const devices: PrinterDevice[] = raw.map((d) => ({
-      name: d.deviceName ?? 'Unknown',
-      address: d.macAddress,
-    }));
-    return { ok: true, devices };
-  } catch (e) {
-    const errorMsg = e instanceof Error ? e.message : String(e);
-    console.error('[printer] scanPrinters error:', errorMsg);
-    return {
-      ok: false,
-      devices: [],
-      error: _describe(e, 'No se pudo obtener la lista de dispositivos Bluetooth.'),
-      rawError: errorMsg,
-    };
-  }
-}
-
-/**
- * Opens an SPP connection to the printer at the given MAC address.
- * Call this once after the user selects a printer from the scan list.
- */
-export async function connectPrinter(address: string): Promise<ConnectResult> {
-  try {
-    await ThermalPrinter.connectBluetooth(address);
-    _pairedAddress = address;
-    return { ok: true };
-  } catch (e) {
-    return {
-      ok: false,
-      error: _describe(e, `No se pudo conectar con la impresora (${address}).`),
-    };
-  }
-}
-
-/**
- * Closes the current SPP connection.
- * Safe to call even if no printer is connected.
- */
-export async function disconnectPrinter(): Promise<void> {
-  try {
-    await ThermalPrinter.disconnectBluetooth();
-  } catch {
-    // Ignore — socket may already be closed.
-  } finally {
-    _pairedAddress = null;
-  }
-}
-
-/**
- * Returns the MAC address of the currently paired printer, or null if none.
- */
-export function getPairedAddress(): string | null {
-  return _pairedAddress;
-}
-
-/**
- * Prints a ticket to the paired Bluetooth ESC/POS printer.
- *
- * Reconnects automatically if the link was lost.
- * Retries up to MAX_RETRIES times before returning a failure result.
- *
- * @param ticket          Fully populated Ticket (all Orders + OrderItems).
- * @param isTest          When true, adds *** PRUEBA — NO VÁLIDO *** watermark.
- * @param modifierLabels  Map from Modifier.id → Modifier.label for readable output.
+ * @param ticket         Fully populated Ticket (all Orders + OrderItems).
+ * @param isTest         Adds *** PRUEBA — NO VÁLIDO *** watermark when true.
+ * @param modifierLabels Map from Modifier.id → Modifier.label for readable output.
  */
 export async function printTicket(
   ticket: Ticket,
   isTest: boolean,
   modifierLabels: Record<string, string>,
-  radioNoSelection: Record<string, string>,
-  radioOptionSets: Record<string, Set<string>>,
+  _radioNoSelection: Record<string, string> = {},
+  _radioOptionSets: Record<string, Set<string>> = {},
 ): Promise<PrintResult> {
-  if (!_pairedAddress) {
+  try {
+    const bytes      = buildTicketBuffer(ticket, isTest, modifierLabels);
+    const base64Data = _uint8ArrayToBase64(bytes);
+
+    await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+      data: 'rawbt:base64,' + base64Data,
+      packageName: RAWBT_PACKAGE,
+    });
+
+    return { ok: true };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error('[printer] printTicket error:', msg);
     return {
       ok: false,
-      error:
-        'No hay impresora configurada. Ve a Ajustes > Impresora y selecciona un dispositivo.',
+      error: _isNotFoundError(msg) ? RAWBT_NOT_INSTALLED : msg,
     };
   }
+}
 
-  const payload = buildTicketCommands(ticket, isTest, modifierLabels, radioNoSelection, radioOptionSets);
-
-  for (let attempt = 1; attempt <= MAX_RETRIES + 1; attempt++) {
-    const result = await _attemptPrint(payload);
-
-    if (result.ok) return result;
-
-    const isLastAttempt = attempt === MAX_RETRIES + 1;
-    if (isLastAttempt) return result;
-
-    // Connection likely dropped — try to reconnect before next attempt.
-    await _reconnect();
-    await _delay(RETRY_DELAY_MS);
+/**
+ * Opens the RawBT app for printer configuration.
+ * Returns an error result if RawBT is not installed.
+ */
+export async function openRawBT(): Promise<PrintResult> {
+  try {
+    await IntentLauncher.startActivityAsync('android.intent.action.MAIN', {
+      packageName: RAWBT_PACKAGE,
+    });
+    return { ok: true };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error('[printer] openRawBT error:', msg);
+    return {
+      ok: false,
+      error: _isNotFoundError(msg) ? RAWBT_NOT_INSTALLED : msg,
+    };
   }
+}
 
-  // TypeScript: unreachable, but keeps the return type happy.
-  return { ok: false, error: 'Error de impresión desconocido.' };
+// ---------------------------------------------------------------------------
+// Diagnostic helpers — probe each Intent method and report results
+// ---------------------------------------------------------------------------
+
+/**
+ * Tests method 1: VIEW with rawbt:base64, scheme (primary — used by printTicket).
+ */
+export async function diagMethod1(base64Data: string): Promise<DiagResult> {
+  try {
+    await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+      data: 'rawbt:base64,' + base64Data,
+      packageName: RAWBT_PACKAGE,
+    });
+    return { method: 'VIEW / rawbt:base64,', ok: true, error: null };
+  } catch (e) {
+    return {
+      method: 'VIEW / rawbt:base64,',
+      ok: false,
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
+}
+
+/**
+ * Tests method 2: VIEW with intent: URI fallback scheme.
+ */
+export async function diagMethod2(base64Data: string): Promise<DiagResult> {
+  const uri =
+    'intent:' + base64Data +
+    '#Intent;scheme=rawbt;package=' + RAWBT_PACKAGE + ';end;';
+  try {
+    await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+      data: uri,
+      packageName: RAWBT_PACKAGE,
+    });
+    return { method: 'VIEW / intent: URI', ok: true, error: null };
+  } catch (e) {
+    return {
+      method: 'VIEW / intent: URI',
+      ok: false,
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Legacy stubs — kept so existing imports compile without changes.
+// RawBT manages the printer connection; the app no longer needs these.
+// ---------------------------------------------------------------------------
+
+export async function scanPrinters(): Promise<ScanResult> {
+  return { ok: true, devices: [] };
+}
+
+export async function connectPrinter(_address: string): Promise<ConnectResult> {
+  return { ok: true };
+}
+
+export async function disconnectPrinter(): Promise<void> {
+  // no-op
+}
+
+export function getPairedAddress(): string | null {
+  return null;
 }
 
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-async function _attemptPrint(payload: string): Promise<PrintResult> {
-  try {
-    await ThermalPrinter.printBluetooth({
-      payload,
-      printerNbrCharactersPerLine: 32,
-    });
-    return { ok: true };
-  } catch (e) {
-    return { ok: false, error: _describe(e, 'Error al enviar datos a la impresora.') };
+function _uint8ArrayToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
   }
-}
-
-async function _reconnect(): Promise<void> {
-  if (!_pairedAddress) return;
-  try {
-    // Attempt to close cleanly first, then reopen.
-    await ThermalPrinter.disconnectBluetooth();
-  } catch {
-    // Ignore — socket may already be dead.
-  }
-  try {
-    await ThermalPrinter.connectBluetooth(_pairedAddress);
-  } catch {
-    // If reconnect also fails, the next _attemptPrint will surface the error.
-  }
-}
-
-function _delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return btoa(binary);
 }
 
 /**
- * Produces a human-readable error message.
- * Maps common BT stack messages to Spanish-language UI strings.
+ * Detects Android "activity not found" errors that indicate the target app
+ * is not installed on the device.
  */
-function _describe(e: unknown, fallback: string): string {
-  const raw = e instanceof Error ? e.message : String(e);
-
-  if (/not connected|socket.*closed|connection.*reset/i.test(raw)) {
-    return 'La impresora se desconectó. Intentando reconectar…';
-  }
-  if (/bonded|paired|discovery/i.test(raw)) {
-    return 'La impresora no está emparejada con este dispositivo. Emparéjala primero en Ajustes de Android.';
-  }
-  if (/bluetooth.*off|bt.*disabled/i.test(raw)) {
-    return 'El Bluetooth está desactivado. Actívalo e inténtalo de nuevo.';
-  }
-  if (/permission|denied/i.test(raw)) {
-    return 'La app no tiene permiso para usar Bluetooth. Revisa los permisos en Ajustes de Android.';
-  }
-  if (/timeout/i.test(raw)) {
-    return 'La impresora tardó demasiado en responder. Comprueba que está encendida y cerca.';
-  }
-
-  // Return the original message in dev, fallback in production-like errors.
-  return raw.length > 0 ? raw : fallback;
+function _isNotFoundError(msg: string): boolean {
+  return /no activity found|ActivityNotFoundException|unable to find/i.test(msg);
 }
