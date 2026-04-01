@@ -9,6 +9,7 @@ import type {
   Ticket,
   Order,
   OrderItem,
+  PriceProfile,
   SyncStatus,
   SyncQueueEntry,
 } from '../lib/types';
@@ -17,8 +18,8 @@ import type {
 // DB singleton
 // ---------------------------------------------------------------------------
 
-const DB_NAME = 'tpv_v10.db';
-const SCHEMA_VERSION = 10;
+const DB_NAME = 'tpv_v11.db';
+const SCHEMA_VERSION = 11;
 
 let _db: SQLite.SQLiteDatabase | null = null;
 let _initPromise: Promise<void> | null = null;
@@ -80,6 +81,9 @@ export async function initDb(): Promise<void> {
     }
     if (currentVersion < 10) {
       await migrate_v10(db); // add action column to sync_queue
+    }
+    if (currentVersion < 11) {
+      await migrate_v11(db); // add price_profile column to orders
     }
     await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
   })();
@@ -245,6 +249,12 @@ async function migrate_v10(db: SQLite.SQLiteDatabase): Promise<void> {
   } catch { /* column already exists */ }
 }
 
+async function migrate_v11(db: SQLite.SQLiteDatabase): Promise<void> {
+  try {
+    await db.execAsync(`ALTER TABLE orders ADD COLUMN price_profile TEXT NOT NULL DEFAULT 'normal'`);
+  } catch { /* column already exists */ }
+}
+
 // ---------------------------------------------------------------------------
 // Session helpers
 // ---------------------------------------------------------------------------
@@ -377,6 +387,7 @@ type OrderRow = {
   id: string;
   ticket_id: string;
   client_name: string;
+  price_profile: string;
   amount_paid: number | null;
   change: number | null;
   total: number;
@@ -473,6 +484,7 @@ function mapOrder(row: OrderRow, items: OrderItem[]): Order {
     id: row.id,
     ticketId: row.ticket_id,
     clientName: row.client_name,
+    priceProfile: (row.price_profile ?? 'normal') as PriceProfile,
     items,
     amountPaid: row.amount_paid,
     change: row.change,
@@ -765,8 +777,8 @@ export async function getTicketsBySession(sessionId: string): Promise<Ticket[]> 
 export async function insertOrder(order: Omit<Order, 'items'>): Promise<void> {
   const db = await getDb();
   await db.runAsync(
-    'INSERT INTO orders (id, ticket_id, client_name, amount_paid, change, total, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    [order.id, order.ticketId, order.clientName, order.amountPaid, order.change, order.total, order.createdAt],
+    'INSERT INTO orders (id, ticket_id, client_name, price_profile, amount_paid, change, total, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    [order.id, order.ticketId, order.clientName, order.priceProfile, order.amountPaid, order.change, order.total, order.createdAt],
   );
 }
 
@@ -822,8 +834,8 @@ export async function saveOrderWithItems(order: Order): Promise<void> {
   const db = await getDb();
   await db.withExclusiveTransactionAsync(async (txn) => {
     await txn.runAsync(
-      'INSERT INTO orders (id, ticket_id, client_name, amount_paid, change, total, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [order.id, order.ticketId, order.clientName, order.amountPaid, order.change, order.total, order.createdAt],
+      'INSERT INTO orders (id, ticket_id, client_name, price_profile, amount_paid, change, total, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [order.id, order.ticketId, order.clientName, order.priceProfile, order.amountPaid, order.change, order.total, order.createdAt],
     );
     for (const item of order.items) {
       await txn.runAsync(

@@ -32,6 +32,7 @@ import {
   scanPrinters,
   type PrinterDevice,
 } from '../../services/printer';
+import { DEFAULT_FERIANTE_PRICES } from '../../lib/constants';
 import type { Location } from '../../lib/types';
 
 // ---------------------------------------------------------------------------
@@ -39,8 +40,11 @@ import type { Location } from '../../lib/types';
 // ---------------------------------------------------------------------------
 
 export default function SettingsScreen(): React.JSX.Element {
-  const testMode    = useSessionStore((s) => s.testMode);
-  const setTestMode = useSessionStore((s) => s.setTestMode);
+  const testMode          = useSessionStore((s) => s.testMode);
+  const setTestMode       = useSessionStore((s) => s.setTestMode);
+  const products          = useSessionStore((s) => s.products);
+  const feriantePrices    = useSessionStore((s) => s.feriantePrices);
+  const setFeriantePrices = useSessionStore((s) => s.setFeriantePrices);
 
   // ── local state ───────────────────────────────────────────────────────────
   const [locations, setLocations]           = useState<Location[]>([]);
@@ -55,6 +59,32 @@ export default function SettingsScreen(): React.JSX.Element {
   const [btDevices, setBtDevices]           = useState<PrinterDevice[]>([]);
   const [btDialogVisible, setBtDialogVisible] = useState(false);
   const [btError, setBtError]               = useState('');
+
+  // Feriante prices
+  const ferianteProductIds = Object.keys(DEFAULT_FERIANTE_PRICES);
+  const ferianteProducts   = products.filter((p) => ferianteProductIds.includes(p.id));
+  const [ferianteDraft, setFerianteDraft] = useState<Record<string, string>>(() =>
+    Object.fromEntries(ferianteProductIds.map((id) => [id, String(feriantePrices[id] ?? DEFAULT_FERIANTE_PRICES[id])]))
+  );
+  const [savingFeriante, setSavingFeriante] = useState(false);
+
+  async function handleSaveFeriantePrices(): Promise<void> {
+    const parsed: Record<string, number> = {};
+    for (const id of ferianteProductIds) {
+      const val = parseFloat(ferianteDraft[id].replace(',', '.'));
+      if (isNaN(val) || val < 0) {
+        Alert.alert('Precio inválido', `El precio de "${ferianteDraft[id]}" no es válido.`);
+        return;
+      }
+      parsed[id] = val;
+    }
+    setSavingFeriante(true);
+    try {
+      await setFeriantePrices(parsed);
+    } finally {
+      setSavingFeriante(false);
+    }
+  }
 
   // Location management
   const [locationDialogVisible, setLocationDialogVisible] = useState(false);
@@ -312,6 +342,44 @@ export default function SettingsScreen(): React.JSX.Element {
         <Text style={styles.syncHint}>
           API no configurada. Los datos se sincronizarán automáticamente cuando esté disponible.
         </Text>
+      </Surface>
+
+      {/* ── FERIANTE PRICES ──────────────────────────────────────────────── */}
+      <Text variant="labelLarge" style={styles.sectionLabel}>PRECIOS FERIANTE</Text>
+      <Surface style={styles.card} elevation={1}>
+        {ferianteProductIds.map((id, idx) => {
+          const product = ferianteProducts.find((p) => p.id === id);
+          const name    = product?.name ?? id;
+          return (
+            <React.Fragment key={id}>
+              {idx > 0 && <Divider />}
+              <View style={styles.ferianteRow}>
+                <Text style={styles.ferianteName}>{name}</Text>
+                <TextInput
+                  value={ferianteDraft[id]}
+                  onChangeText={(v) => setFerianteDraft((prev) => ({ ...prev, [id]: v }))}
+                  mode="outlined"
+                  keyboardType="decimal-pad"
+                  dense
+                  style={styles.ferianteInput}
+                  right={<TextInput.Affix text="€" />}
+                />
+              </View>
+            </React.Fragment>
+          );
+        })}
+        <Divider />
+        <Button
+          mode="contained"
+          icon="content-save"
+          onPress={() => void handleSaveFeriantePrices()}
+          loading={savingFeriante}
+          disabled={savingFeriante}
+          buttonColor="#1E88E5"
+          style={styles.ferianteSaveBtn}
+        >
+          Guardar precios feriante
+        </Button>
       </Surface>
 
       {/* ── LOCATIONS ─────────────────────────────────────────────────────── */}
@@ -615,6 +683,29 @@ const styles = StyleSheet.create({
   },
   addLocationBtn: {
     margin: 4,
+  },
+
+  // ── feriante prices ──
+  ferianteRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    gap: 12,
+  },
+  ferianteName: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111',
+  },
+  ferianteInput: {
+    width: 90,
+    backgroundColor: '#fff',
+  },
+  ferianteSaveBtn: {
+    borderRadius: 8,
+    margin: 12,
   },
 
   // ── location dialog ──

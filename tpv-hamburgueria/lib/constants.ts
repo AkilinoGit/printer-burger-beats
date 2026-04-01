@@ -106,6 +106,15 @@ export const INITIAL_PRODUCTS: Product[] = [
 
 export const DEFAULT_LOCATION_NAME = 'Local principal';
 
+export const DEFAULT_FERIANTE_PRICES: Record<string, number> = {
+  'fat-furious': 11,
+  'ben-muerde': 10,
+  'doble-subwoofer': 10,
+  'alitas': 6,
+  'tekenos': 6,
+  'patatas': 5,
+};
+
 /**
  * Returns a flat map of id → label covering:
  * - all INITIAL_MODIFIERS

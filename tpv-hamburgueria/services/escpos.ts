@@ -226,12 +226,18 @@ function _formatOrder(
   radioOptionSets: Record<string, Set<string>>,
 ): string[] {
   const lines: string[] = [];
+  const profile = order.priceProfile ?? 'normal';
 
   lines.push('[L][B]--- ' + order.clientName.toUpperCase() + ' ---[/B]');
+
+  if (profile === 'invitacion') {
+    lines.push('[C][B]*** INVITACION ***[/B]');
+  }
+
   lines.push('');
 
   for (const item of order.items) {
-    lines.push(..._formatItem(item, modifierLabels, radioNoSelection, radioOptionSets));
+    lines.push(..._formatItem(item, profile, modifierLabels, radioNoSelection, radioOptionSets));
   }
 
   lines.push('');
@@ -240,6 +246,7 @@ function _formatOrder(
 
 function _formatItem(
   item: OrderItem,
+  priceProfile: Order['priceProfile'],
   modifierLabels: Record<string, string>,
   radioNoSelection: Record<string, string>,
   radioOptionSets: Record<string, Set<string>>,
@@ -247,7 +254,18 @@ function _formatItem(
   const lines: string[] = [];
 
   const label = item.customLabel ?? item.productName;
-  lines.push('[L]' + String(item.qty) + 'x ' + label);
+  const basePrice = item.unitPrice + item.modifierPriceAdd;
+
+  let priceSuffix = '';
+  if (priceProfile === 'invitacion') {
+    priceSuffix = ' 0.00EUR';
+  } else if (priceProfile === 'feriante') {
+    const ferianteTotal = item.unitPrice * item.qty;
+    const normalTotal   = basePrice * item.qty;
+    priceSuffix = ' ' + ferianteTotal.toFixed(2) + 'EUR (antes ' + normalTotal.toFixed(2) + 'EUR)';
+  }
+
+  lines.push('[L]' + String(item.qty) + 'x ' + label + priceSuffix);
 
   const modParts: string[] = [];
 
@@ -285,17 +303,36 @@ function _appendOrderBytes(
   modifierLabels: Record<string, string>,
 ): void {
   const line = (text: string) => parts.push(encodeText(text + '\n'));
+  const profile = order.priceProfile ?? 'normal';
 
   // Client name — bold, left-aligned
   parts.push(CMD_ALIGN_LEFT, CMD_BOLD_ON);
   line('--- ' + order.clientName.toUpperCase() + ' ---');
   parts.push(CMD_BOLD_OFF);
+
+  if (profile === 'invitacion') {
+    parts.push(CMD_ALIGN_CENTER, CMD_BOLD_ON);
+    line('*** INVITACION ***');
+    parts.push(CMD_BOLD_OFF, CMD_ALIGN_LEFT);
+  }
+
   line('');
 
   for (const item of order.items) {
     parts.push(CMD_ALIGN_LEFT);
     const label = item.customLabel ?? item.productName;
-    line(String(item.qty) + 'x ' + label);
+    const basePrice = item.unitPrice + item.modifierPriceAdd;
+
+    let priceSuffix = '';
+    if (profile === 'invitacion') {
+      priceSuffix = ' 0.00EUR';
+    } else if (profile === 'feriante') {
+      const ferianteTotal = item.unitPrice * item.qty;
+      const normalTotal   = basePrice * item.qty;
+      priceSuffix = ' ' + ferianteTotal.toFixed(2) + 'EUR (antes ' + normalTotal.toFixed(2) + 'EUR)';
+    }
+
+    line(String(item.qty) + 'x ' + label + priceSuffix);
 
     if (item.selectedModifiers.length > 0) {
       const modStr = item.selectedModifiers

@@ -1,8 +1,10 @@
 import React from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import { Surface, Text, TouchableRipple } from 'react-native-paper';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { formatPrice } from '../lib/utils';
-import type { Product } from '../lib/types';
+import type { PriceProfile, Product } from '../lib/types';
+import { useCartStore } from '../stores/useCartStore';
 
 interface Props {
   products: Product[];
@@ -27,6 +29,9 @@ const CATEGORY_COLOR: Record<Category, string> = {
 };
 
 export default function ProductGrid({ products, onSelect, onLongPress }: Props): React.JSX.Element {
+  const priceProfile  = useCartStore((s) => s.priceProfile);
+  const setPriceProfile = useCartStore((s) => s.setPriceProfile);
+
   const byCategory = CATEGORY_ORDER.reduce<Record<Category, Product[]>>(
     (acc, cat) => {
       acc[cat] = products.filter((p) => p.category === cat && p.isActive);
@@ -34,6 +39,10 @@ export default function ProductGrid({ products, onSelect, onLongPress }: Props):
     },
     { burger: [], side: [], drink: [], custom: [] },
   );
+
+  function handleOfertaPress(profile: PriceProfile): void {
+    setPriceProfile(priceProfile === profile ? 'normal' : profile);
+  }
 
   return (
     <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
@@ -59,6 +68,27 @@ export default function ProductGrid({ products, onSelect, onLongPress }: Props):
           </View>
         );
       })}
+
+      {/* OFERTAS */}
+      <View style={styles.section}>
+        <Text style={[styles.categoryLabel, { color: '#7B1FA2' }]}>OFERTAS</Text>
+        <View style={styles.grid}>
+          <OfertaTile
+            label="OFERTA FERIANTE"
+            icon="tag-multiple"
+            color="#1E88E5"
+            active={priceProfile === 'feriante'}
+            onPress={() => handleOfertaPress('feriante')}
+          />
+          <OfertaTile
+            label="INVITACIÓN"
+            icon="gift"
+            color="#43A047"
+            active={priceProfile === 'invitacion'}
+            onPress={() => handleOfertaPress('invitacion')}
+          />
+        </View>
+      </View>
     </ScrollView>
   );
 }
@@ -96,6 +126,50 @@ function ProductTile({ product, accentColor, onPress, onLongPress }: TileProps):
           )}
           {product.isCustom && (
             <Text style={[styles.tilePriceFree, { color: accentColor }]}>precio libre</Text>
+          )}
+        </View>
+      </TouchableRipple>
+    </Surface>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+interface OfertaTileProps {
+  label: string;
+  icon: string;
+  color: string;
+  active: boolean;
+  onPress: () => void;
+}
+
+function OfertaTile({ label, icon, color, active, onPress }: OfertaTileProps): React.JSX.Element {
+  return (
+    <Surface
+      style={[
+        styles.tile,
+        styles.ofertaTile,
+        active && { backgroundColor: color, borderColor: color },
+      ]}
+      elevation={active ? 4 : 2}
+    >
+      <TouchableRipple
+        onPress={onPress}
+        style={styles.tileRipple}
+        borderless
+        rippleColor={color + '44'}
+      >
+        <View style={[styles.tileInner, styles.ofertaInner]}>
+          <MaterialCommunityIcons
+            name={icon}
+            size={28}
+            color={active ? '#fff' : color}
+          />
+          <Text style={[styles.ofertaLabel, { color: active ? '#fff' : color }]}>
+            {label}
+          </Text>
+          {active && (
+            <Text style={styles.ofertaActiveTag}>ACTIVO</Text>
           )}
         </View>
       </TouchableRipple>
@@ -164,5 +238,28 @@ const styles = StyleSheet.create({
   tilePriceFree: {
     fontSize: 12,
     fontStyle: 'italic',
+  },
+  ofertaTile: {
+    borderWidth: 2,
+    borderColor: '#e0e0e0',
+    backgroundColor: '#fafafa',
+  },
+  ofertaInner: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 8,
+  },
+  ofertaLabel: {
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+    textAlign: 'center',
+  },
+  ofertaActiveTag: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#ffffffcc',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
   },
 });

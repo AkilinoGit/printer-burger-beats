@@ -1,16 +1,20 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
 import type { Location, Product, Session } from '../lib/types';
-import { closeSession, getActiveSession, getProducts } from '../services/db';
+import { DEFAULT_FERIANTE_PRICES } from '../lib/constants';
+import { closeSession, getActiveSession, getProducts, initDb } from '../services/db';
 
-const TEST_MODE_KEY = 'tpv:testMode';
+const TEST_MODE_KEY       = 'tpv:testMode';
+const FERIANTE_PRICES_KEY = 'tpv:feriantePrices';
 
 interface SessionState {
   // --- data ---
   activeLocation: Location | null;
   activeSession: Session | null;
   products: Product[];
+  isLoadingProducts: boolean;
   testMode: boolean;
+  feriantePrices: Record<string, number>;
 
   // --- setters ---
   setActiveLocation: (location: Location) => void;
@@ -35,6 +39,13 @@ interface SessionState {
   initSession: () => Promise<void>;
 
   /**
+   * Loads products from DB (always calls initDb first).
+   * Sets isLoadingProducts to false when done, whether it succeeds or fails.
+   * Safe to call multiple times — use as the "retry" action.
+   */
+  loadProducts: () => Promise<void>;
+
+  /**
    * Closes the current active session in DB and clears the store.
    */
   closeCurrentSession: () => Promise<void>;
@@ -44,13 +55,21 @@ interface SessionState {
   loadTestMode: () => Promise<void>;
   /** Toggle test mode and persist the new value. */
   setTestMode: (enabled: boolean) => Promise<void>;
+
+  // --- feriante prices ---
+  /** Load persisted feriante prices from AsyncStorage. Call once on app start. */
+  loadFeriantePrices: () => Promise<void>;
+  /** Update feriante prices and persist to AsyncStorage. */
+  setFeriantePrices: (prices: Record<string, number>) => Promise<void>;
 }
 
 export const useSessionStore = create<SessionState>((set, get) => ({
   activeLocation: null,
   activeSession: null,
   products: [],
+  isLoadingProducts: true,
   testMode: false,
+  feriantePrices: DEFAULT_FERIANTE_PRICES,
 
   setActiveLocation: (location) => set({ activeLocation: location }),
 
@@ -74,14 +93,25 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     return overrides[productId] ?? basePrice;
   },
 
-  initSession: async () => {
+  loadProducts: async () => {
+    set({ isLoadingProducts: true });
     try {
-      const session = await getActiveSession();
-      if (!session) return;
+      await initDb();
       const products = await getProducts();
-      set({ activeSession: session, products });
+      set({ products, isLoadingProducts: false });
     } catch {
-      // silently ignore — UI will show "no active session"
+      set({ isLoadingProducts: false });
+    }
+  },
+
+  initSession: async () => {
+    set({ isLoadingProducts: true });
+    try {
+      await initDb();
+      const [session, products] = await Promise.all([getActiveSession(), getProducts()]);
+      set({ products, isLoadingProducts: false, ...(session ? { activeSession: session } : {}) });
+    } catch {
+      set({ isLoadingProducts: false });
     }
   },
 
@@ -109,6 +139,26 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     set({ testMode: enabled });
     try {
       await AsyncStorage.setItem(TEST_MODE_KEY, enabled ? 'true' : 'false');
+    } catch {
+      // silently ignore
+    }
+  },
+
+  loadFeriantePrices: async () => {
+    try {
+      const stored = await AsyncStorage.getItem(FERIANTE_PRICES_KEY);
+      if (stored) {
+        set({ feriantePrices: JSON.parse(stored) as Record<string, number> });
+      }
+    } catch {
+      // silently ignore — defaults to DEFAULT_FERIANTE_PRICES
+    }
+  },
+
+  setFeriantePrices: async (prices) => {
+    set({ feriantePrices: prices });
+    try {
+      await AsyncStorage.setItem(FERIANTE_PRICES_KEY, JSON.stringify(prices));
     } catch {
       // silently ignore
     }

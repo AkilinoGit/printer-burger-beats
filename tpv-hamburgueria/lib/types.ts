@@ -1,5 +1,7 @@
 export type SyncStatus = 'pending' | 'synced' | 'error' | 'pending_update';
 
+export type PriceProfile = 'normal' | 'feriante' | 'invitacion';
+
 export interface Location {
   id: string;
   name: string;
@@ -62,6 +64,7 @@ export interface Order {
   id: string;
   ticketId: string;
   clientName: string;
+  priceProfile: PriceProfile;
   items: OrderItem[];
   amountPaid: number | null;
   change: number | null;

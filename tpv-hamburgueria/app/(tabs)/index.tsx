@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { KeyboardAvoidingView, Platform, StyleSheet, View } from 'react-native';
-import { Banner, Button, Dialog, Divider, IconButton, Portal, Text, TextInput } from 'react-native-paper';
+import { ActivityIndicator, Banner, Button, Dialog, Divider, IconButton, Portal, Text, TextInput } from 'react-native-paper';
 import { useRouter } from 'expo-router';
 
 import CartSummary from '../../components/CartSummary';
@@ -17,12 +17,15 @@ export default function HomeScreen(): React.JSX.Element {
   const router = useRouter();
 
   // ── stores ────────────────────────────────────────────────────────────────
-  const products   = useSessionStore((s) => s.products);
-  const testMode   = useSessionStore((s) => s.testMode);
+  const products           = useSessionStore((s) => s.products);
+  const isLoadingProducts  = useSessionStore((s) => s.isLoadingProducts);
+  const loadProducts       = useSessionStore((s) => s.loadProducts);
+  const testMode           = useSessionStore((s) => s.testMode);
 
-  const clientName = useCartStore((s) => s.clientName);
-  const items      = useCartStore((s) => s.items);
-  const total      = useCartStore((s) => s.total());
+  const clientName    = useCartStore((s) => s.clientName);
+  const items         = useCartStore((s) => s.items);
+  const total         = useCartStore((s) => s.total());
+  const priceProfile  = useCartStore((s) => s.priceProfile);
   const setClientName = useCartStore((s) => s.setClientName);
   const addProduct    = useCartStore((s) => s.addProduct);
 
@@ -111,6 +114,22 @@ export default function HomeScreen(): React.JSX.Element {
         </Text>
       </Banner>
 
+      {/* Price profile banner */}
+      <Banner
+        visible={priceProfile === 'feriante'}
+        style={styles.ferianteBanner}
+        icon="tag-multiple"
+      >
+        <Text style={styles.ferianteBannerText}>⚡ OFERTA FERIANTE activa</Text>
+      </Banner>
+      <Banner
+        visible={priceProfile === 'invitacion'}
+        style={styles.invitacionBanner}
+        icon="gift"
+      >
+        <Text style={styles.invitacionBannerText}>🎁 INVITACIÓN activa</Text>
+      </Banner>
+
       {/* Client name input */}
       <View style={styles.nameRow}>
         <TextInput
@@ -144,7 +163,20 @@ export default function HomeScreen(): React.JSX.Element {
 
       {/* Product grid */}
       <View style={styles.gridWrapper}>
-        <ProductGrid products={products} onSelect={handleProductPress} onLongPress={handleProductLongPress} />
+        {isLoadingProducts ? (
+          <View style={styles.gridCenter}>
+            <ActivityIndicator size="large" />
+          </View>
+        ) : products.length === 0 ? (
+          <View style={styles.gridCenter}>
+            <Text style={styles.gridErrorText}>No se pudieron cargar los productos.</Text>
+            <Button mode="contained" onPress={() => void loadProducts()} style={styles.retryBtn}>
+              Reintentar
+            </Button>
+          </View>
+        ) : (
+          <ProductGrid products={products} onSelect={handleProductPress} onLongPress={handleProductLongPress} />
+        )}
       </View>
 
       {/* Cart summary (sticky bottom) */}
@@ -230,6 +262,12 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
 
+  // price profile banners
+  ferianteBanner: { backgroundColor: '#1E88E5' },
+  ferianteBannerText: { color: '#fff', fontWeight: '800', fontSize: 14, letterSpacing: 0.4 },
+  invitacionBanner: { backgroundColor: '#43A047' },
+  invitacionBannerText: { color: '#fff', fontWeight: '800', fontSize: 14, letterSpacing: 0.4 },
+
   // client name
   nameRow: {
     paddingHorizontal: 12,
@@ -257,6 +295,21 @@ const styles = StyleSheet.create({
   // grid
   gridWrapper: {
     flex: 1,
+  },
+  gridCenter: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 16,
+    padding: 32,
+  },
+  gridErrorText: {
+    fontSize: 15,
+    color: '#666',
+    textAlign: 'center',
+  },
+  retryBtn: {
+    borderRadius: 8,
   },
 
   // otros dialog
