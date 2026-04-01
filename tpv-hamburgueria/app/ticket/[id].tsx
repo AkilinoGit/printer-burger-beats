@@ -14,6 +14,7 @@ import {
 } from 'react-native-paper';
 import { TouchableRipple } from 'react-native-paper';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import PaymentModal from '../../components/PaymentModal';
 import TicketPreview from '../../components/TicketPreview';
@@ -1055,6 +1056,7 @@ function NewTicketScreen({
   onAddAnother, onPrint,
   qtyItem, onLongPressItem, onQtyItemDismiss, onIncrementItem, onDecrementItem, onRemoveItem,
 }: NewTicketProps): React.JSX.Element {
+  const insets = useSafeAreaInsets();
   return (
     <View style={styles.root}>
       <Banner visible={testMode} style={styles.testBanner} icon="alert">
@@ -1140,7 +1142,7 @@ function NewTicketScreen({
 
       <Surface style={styles.actions} elevation={8}>
         <Divider />
-        <View style={styles.actionsInner}>
+        <View style={[styles.actionsInner, { paddingBottom: 12 + insets.bottom }]}>
           <Button
             mode="contained"
             onPress={onCobrar}
