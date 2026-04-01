@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "react-native-reanimated": "^4.3.0",
+    "react-native-worklets-core": "^2.0.0-beta.4"
+  }
+}

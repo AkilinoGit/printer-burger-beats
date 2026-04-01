@@ -3,8 +3,8 @@
     "name": "TPV Hamburguería",
     "slug": "tpv-hamburgueria",
     "updates": {
-        "enabled": false
-      },
+      "enabled": false
+    },
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -32,8 +32,14 @@
         "android.permission.BLUETOOTH_ADMIN",
         "android.permission.BLUETOOTH_SCAN",
         "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.BLUETOOTH",
+        "android.permission.BLUETOOTH_ADMIN",
+        "android.permission.BLUETOOTH_SCAN",
+        "android.permission.BLUETOOTH_CONNECT",
         "android.permission.ACCESS_FINE_LOCATION"
-      ]
+      ],
+      "package": "com.anonymous.tpvhamburgueria"
     },
     "web": {
       "favicon": "./assets/favicon.png"
