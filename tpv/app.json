@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "TPV Hamburguería",
-    "slug": "tpv-hamburgueria",
+   "name": "TPV by AKI SOFTWARE",
+    "slug": "tpv-aki-software",
     "updates": {
       "enabled": false
     },
@@ -27,7 +27,8 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.anonymous.tpvhamburgueria",
+      "package": "com.akisoftware.burgerbeats",
+      "versionCode": 1,
       "permissions": []
     },
     "web": {
