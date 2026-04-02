@@ -4,11 +4,11 @@
 
 App móvil TPV (Terminal Punto de Venta) para una hamburguesería. Genera comandas para cocina vía impresora Bluetooth ESC/POS. **No es una app para clientes**, es una herramienta interna de toma de pedidos.
 
-- **Plataforma**: Android primero
-- **Stack**: React Native + Expo (SDK 51+), TypeScript estricto
+- **Plataforma**: Android (development build propio — no Expo Go)
+- **Stack**: React Native + Expo SDK 52, TypeScript estricto
 - **BD local**: expo-sqlite (offline-first)
 - **Backend**: por definir — la app funciona sin él. El sync queda en cola local hasta que exista API.
-- **Impresión**: react-native-thermal-printer (ESC/POS Bluetooth SPP clásico)
+- **Impresión**: RawBT vía Android Intents (`expo-intent-launcher`) — ver sección impresión
 - **Gestión de estado**: Zustand
 - **Navegación**: Expo Router (file-based)
 
@@ -26,121 +26,122 @@ App móvil TPV (Terminal Punto de Venta) para una hamburguesería. Genera comand
 | `Order` | Pedido individual de una persona (con nombre) |
 | `OrderItem` | Línea de producto dentro de un Order |
 | `Product` | Producto del menú con precio base |
-| `Modifier` | Variante de producto ("sin lechuga", "sin cebolla"…) |
+| `Modifier` | Variante de producto ("sin lechuga", "extra queso", selector de salsa…) |
 
-### Tipos TypeScript
+### Tipos TypeScript (fuente de verdad: `lib/types.ts`)
 
 ```typescript
-type SyncStatus = 'pending' | 'synced' | 'error';
+type SyncStatus = 'pending' | 'synced' | 'error' | 'pending_update';
+type PriceProfile = 'normal' | 'feriante' | 'invitacion';
 
 interface Location {
   id: string;
-  name: string;                        // "Local principal", "Terraza", "Evento X"…
-  isDefault: boolean;                  // el dispositivo arranca con este location
+  name: string;         // "Local principal", "Terraza", "Evento X"…
+  isDefault: boolean;
   createdAt: string;
 }
 
 interface Session {
   id: string;
-  locationId: string;                  // FK → Location — OBLIGATORIO
+  locationId: string;
   date: string;                        // ISO date YYYY-MM-DD
   status: 'open' | 'closed';
-  priceOverrides: Record<string, number>; // productId -> precio sesión
+  priceOverrides: Record<string, number>; // productId → precio sesión
   createdAt: string;
+  sessionCode: string | null;          // "LUN-2806"
+  openedAt: string | null;
+  autoCloseAt: string | null;          // 12:00 del día siguiente
+  closedAt: string | null;
+  deviceId: string | null;
+}
+
+interface ModifierOption {
+  id: string;
+  label: string;
+}
+
+interface Modifier {
+  id: string;
+  label: string;
+  type: 'remove' | 'add' | 'radio';
+  priceAdd?: number;           // coste extra al seleccionar (ej. +1€ bacon)
+  options?: ModifierOption[];  // solo para type 'radio' — el usuario elige uno
+  noSelectionLabel?: string;   // impreso si no se elige nada (ej. "Sin salsa")
 }
 
 interface Product {
   id: string;
   name: string;
-  basePrice: number;                   // precio por defecto
+  basePrice: number;
   category: 'burger' | 'side' | 'drink' | 'custom';
-  modifiers: Modifier[];               // solo burgers tienen modifiers
-  isCustom: boolean;                   // true = "OTROS" (precio y nombre libres)
+  modifiers: Modifier[];
+  isCustom: boolean;           // true = "OTROS" (precio y nombre libres)
   isActive: boolean;
-}
-
-interface Modifier {
-  id: string;
-  label: string;                       // "Sin lechuga", "Sin cebolla", "Extra queso"…
-  type: 'remove' | 'add';
-}
-
-interface Ticket {
-  id: string;
-  sessionId: string;
-  ticketNumber: number;                // nº correlativo en la sesión
-  orders: Order[];
-  printedAt: string | null;
-  syncStatus: SyncStatus;
-  createdAt: string;
-}
-
-interface Order {
-  id: string;
-  ticketId: string;
-  clientName: string;                  // OBLIGATORIO — se muestra en ticket cocina
-  items: OrderItem[];
-  amountPaid: number | null;           // null si no se ha cobrado aún
-  change: number | null;
-  total: number;
-  createdAt: string;
+  alwaysShowModifiers?: boolean; // abre el sheet al pulsar, no solo al mantener
 }
 
 interface OrderItem {
   id: string;
   orderId: string;
   productId: string;
-  productName: string;                 // snapshot del nombre en el momento de venta
+  productName: string;         // snapshot del nombre en el momento de venta
   qty: number;
-  unitPrice: number;                   // precio efectivo (sesión override o base)
-  selectedModifiers: string[];         // array de Modifier.id
-  customLabel: string | null;          // solo si product.isCustom === true
+  unitPrice: number;           // precio base efectivo (override sesión o basePrice)
+  modifierPriceAdd: number;    // suma de priceAdd de los modifiers seleccionados
+  selectedModifiers: string[]; // array de Modifier.id / ModifierOption.id
+  customLabel: string | null;  // solo si product.isCustom === true
+}
+
+interface Order {
+  id: string;
+  ticketId: string;
+  clientName: string;          // OBLIGATORIO — se muestra en ticket cocina
+  priceProfile: PriceProfile;  // 'normal' | 'feriante' | 'invitacion'
+  items: OrderItem[];
+  amountPaid: number | null;
+  change: number | null;
+  total: number;
+  createdAt: string;
+}
+
+interface Ticket {
+  id: string;
+  sessionId: string;
+  ticketNumber: number;        // nº correlativo en la sesión
+  orders: Order[];
+  printedAt: string | null;
+  syncStatus: SyncStatus;
+  createdAt: string;
+  editedAt: string | null;     // null si nunca se editó
+  editCount: number;
 }
 ```
 
 ---
 
-## Menú inicial (seed data)
+## Menú y modifiers
 
-```typescript
-const INITIAL_PRODUCTS: Product[] = [
-  { id: 'fat-furious',      name: 'FAT & FURIOUS',     basePrice: 13.40, category: 'burger', modifiers: [], isCustom: false, isActive: true },
-  { id: 'ben-muerde',       name: 'BEN Y MUERDE',      basePrice: 12.50, category: 'burger', modifiers: [], isCustom: false, isActive: true },
-  { id: 'doble-subwoofer',  name: 'DOBLE SUBWOOFER',   basePrice: 11.00, category: 'burger', modifiers: [], isCustom: false, isActive: true },
-  { id: 'burger-nino',      name: 'BURGER NIÑO',        basePrice:  8.00, category: 'burger', modifiers: [], isCustom: false, isActive: true },
-  { id: 'tekenos',          name: 'TEKEÑOS',            basePrice:  8.00, category: 'side',   modifiers: [], isCustom: false, isActive: true },
-  { id: 'alitas',           name: 'ALITAS',             basePrice:  8.00, category: 'side',   modifiers: [], isCustom: false, isActive: true },
-  { id: 'gyozas',           name: 'GYOZAS',             basePrice:  8.00, category: 'side',   modifiers: [], isCustom: false, isActive: true },
-  { id: 'patatas',          name: 'PATATAS',            basePrice:  6.00, category: 'side',   modifiers: [], isCustom: false, isActive: true },
-  { id: 'bebida',           name: 'BEBIDA',             basePrice:  2.00, category: 'drink',  modifiers: [], isCustom: false, isActive: true },
-  { id: 'agua',             name: 'AGUA',               basePrice:  1.00, category: 'drink',  modifiers: [], isCustom: false, isActive: true },
-  { id: 'otros',            name: 'OTROS',              basePrice:  0.00, category: 'custom', modifiers: [], isCustom: true,  isActive: true },
-];
+El menú está definido en `lib/constants.ts` (INITIAL_PRODUCTS + INITIAL_MODIFIERS).
+Los modifiers de tipo `radio` tienen un array `options` — el usuario elige exactamente una opción del grupo.
+Los modifiers de tipo `remove`/`add` son checkboxes simples.
 
-const INITIAL_MODIFIERS: Modifier[] = [
-  { id: 'sin-lechuga',  label: 'Sin lechuga',  type: 'remove' },
-  { id: 'sin-cebolla',  label: 'Sin cebolla',  type: 'remove' },
-  { id: 'sin-tomate',   label: 'Sin tomate',   type: 'remove' },
-  { id: 'sin-pepinillo',label: 'Sin pepinillo', type: 'remove' },
-  { id: 'sin-bacon',    label: 'Sin bacon',    type: 'remove' },
-  { id: 'extra-queso',  label: 'Extra queso',  type: 'add'    },
-];
-// Asignar modifiers a burgers al hacer seed
-```
+Perfiles de precio:
+- **normal**: precio base / override de sesión
+- **feriante**: precios especiales configurables en Ajustes (DEFAULT_FERIANTE_PRICES en constants.ts)
+- **invitacion**: precio 0 — se imprime "INVITACION" en el ticket
 
 ---
 
 ## Modo prueba
 
-La app tiene un **modo prueba** activable desde ajustes (toggle visible y claramente identificado). Cuando está activo:
+Activable desde Ajustes (toggle). Cuando está activo:
 
-- Se muestra un banner permanente en la UI: **"MODO PRUEBA — nada se guardará"**
-- El flujo de venta funciona exactamente igual (selección, cobro, variantes, añadir otro)
-- La impresión ESC/POS funciona igual — el ticket llega físicamente a la impresora
-- El ticket impreso incluye una línea visible: `*** PRUEBA — NO VÁLIDO ***`
+- Banner permanente: **"MODO PRUEBA ACTIVO — nada se guardará"**
+- Flujo de venta igual, impresión ESC/POS igual
+- El ticket impreso incluye: `*** PRUEBA - NO VALIDO ***`
 - **Nada se persiste en SQLite** — ni tickets, ni orders, ni sync_queue
-- El modo prueba se recuerda entre sesiones (guardado en AsyncStorage, no en SQLite)
-- No cuenta en el número correlativo de tickets (`ticketNumber` no se incrementa)
+- Se recuerda entre sesiones (AsyncStorage, no SQLite)
+- `ticketNumber` no se incrementa
 
 ---
 
@@ -151,37 +152,63 @@ La app tiene un **modo prueba** activable desde ajustes (toggle visible y claram
       |
       v
 [Selección de productos]  ← usuario añade items al carrito activo
-      |                      puede añadir variantes a burgers
-      |                      introduce nombre del cliente (OBLIGATORIO antes de continuar)
+      |                      puede añadir modifiers (remove/add/radio)
+      |                      nombre del cliente OBLIGATORIO antes de continuar
       v
-[Revisión del pedido]
+[Revisión del pedido — ticket/[id].tsx]
       |
       +---> [COBRAR]        → modal: input importe pagado → muestra cambio
       |                       NO guarda, NO imprime automáticamente
       |
       +---> [AÑADIR OTRO]   → guarda Order actual en Ticket
-      |                       abre nueva pantalla de selección con nombre vacío
+      |                       abre nueva selección con nombre vacío
       |                       el Ticket permanece abierto (mismo ticketId)
-      |                       implícito: persiste en SQLite + intenta sync
+      |                       persiste en SQLite + intenta sync
       |
       +---> [IMPRIMIR]      → cierra el Ticket
                               genera ESC/POS con TODOS los Orders del Ticket
-                              envía a impresora BT
-                              implícito: persiste en SQLite + intenta sync
+                              envía a RawBT vía Intent
+                              persiste en SQLite + intenta sync
 ```
 
 ### Reglas de negocio importantes
 
-1. **Nombre del cliente es obligatorio** en cada Order antes de proceder.
+1. **Nombre del cliente obligatorio** en cada Order.
 2. **Cobrar no imprime ni guarda** — es solo un cálculo de cambio.
-3. **Añadir otro e Imprimir siempre persisten** en SQLite, independientemente de si se ha cobrado.
+3. **Añadir otro e Imprimir siempre persisten** en SQLite.
 4. **Un Ticket puede tener N Orders** con nombres distintos (misma mesa).
-5. **El ticket de cocina muestra todos los Orders agrupados**, cada uno con el nombre de su cliente.
-6. **Precios por sesión**: al inicio del día se puede hacer override de cualquier precio; los no modificados heredan `basePrice`.
+5. **El ticket de cocina muestra todos los Orders**, cada uno con el nombre del cliente.
+6. **Precios por sesión**: override configurable al inicio del día; sin override hereda `basePrice`.
+7. Los tickets pueden **editarse** después de imprimir (editedAt, editCount).
 
 ---
 
-## Formato ticket de cocina (ESC/POS)
+## Impresión ESC/POS vía RawBT
+
+**Arquitectura**: la app genera bytes ESC/POS raw, los codifica en Base64 y los envía a la app RawBT instalada en Android mediante `expo-intent-launcher`. RawBT gestiona la conexión Bluetooth con la impresora.
+
+**No se necesitan permisos Bluetooth** en la app — RawBT los gestiona por su cuenta.
+
+### Método de Intent activo (en `services/printer.ts`)
+
+```typescript
+// Método principal (printTicket usa este):
+await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+  data: 'rawbt:base64,' + base64Data,
+  packageName: 'ru.a402d.rawbtprinter',
+});
+```
+
+Hay un segundo método de diagnóstico (`diagMethod2`) con intent: URI scheme como fallback.
+Ambos son testables desde Ajustes con el botón "Test Intent (diagnóstico)".
+
+### Generación de bytes (`services/escpos.ts`)
+
+- `buildTicketBuffer(ticket, isTest, modifierLabels)` → `Uint8Array` de bytes ESC/POS reales
+- `buildTicketCommands(...)` → string con tags `[B]`/`[C]` (legado, ya no se usa para imprimir)
+- Los bytes se convierten a Base64 en `printer.ts` con `_uint8ArrayToBase64()`
+
+### Formato ticket de cocina
 
 ```
 ================================
@@ -190,21 +217,14 @@ La app tiene un **modo prueba** activable desde ajustes (toggle visible y claram
 ================================
 --- [clientName Order 1] ---
 2x FAT & FURIOUS
-   Sin lechuga · Sin cebolla
-1x PATATAS
-1x BEBIDA
+   Sin lechuga
+   PRECIO: 13.40EUR
 
 --- [clientName Order 2] ---
 1x BURGER NIÑO
-1x AGUA
+   PRECIO: 8.00EUR
 ================================
 ```
-
-**Reglas de impresión:**
-- Fuente grande para nombre del cliente (ESC/POS emphasis ON)
-- Sin precios en el ticket de cocina
-- Separador visual entre Orders
-- Número de ticket correlativo por sesión
 
 ---
 
@@ -214,15 +234,14 @@ La app tiene un **modo prueba** activable desde ajustes (toggle visible y claram
 
 Tablas: `locations`, `sessions`, `products`, `modifiers`, `tickets`, `orders`, `order_items`, `sync_queue`
 
-**Seed de locations:** al inicializar la app por primera vez se crea un location por defecto ("Local principal"). El usuario puede añadir más desde ajustes. El `locationId` activo se guarda en `useSessionStore` y se selecciona al abrir cada sesión del día.
-
-La tabla `sync_queue` almacena los IDs de entidades pendientes de sync:
+La tabla `sync_queue` almacena entidades pendientes:
 ```sql
 CREATE TABLE sync_queue (
   id TEXT PRIMARY KEY,
-  entity_type TEXT,  -- 'order' | 'ticket'
+  entity_type TEXT,   -- 'order' | 'ticket'
   entity_id TEXT,
-  status TEXT,       -- 'pending' | 'synced' | 'error'
+  action TEXT,        -- 'create' | 'update'
+  status TEXT,        -- 'pending' | 'synced' | 'error'
   attempts INTEGER DEFAULT 0,
   created_at TEXT
 );
@@ -230,13 +249,12 @@ CREATE TABLE sync_queue (
 
 ### Estrategia de sincronización
 
-1. **Siempre escribir en SQLite primero** (nunca esperar red).
-2. **Tras escribir**, intentar sync inmediato si hay red Y hay API configurada.
-3. **Si no hay API o falla** → queda en `sync_queue` con status `pending`.
-4. **Background sync** cada 2 minutos si hay red y hay pendientes.
-5. **Sync manual** desde pantalla de ajustes (botón "Sincronizar ahora").
-6. **Al abrir la app**, intentar sync de todo lo pendiente.
-7. **Sin API configurada**: todo queda en `pending` indefinidamente, sin errores para el usuario. La app funciona igual.
+1. Siempre escribir en SQLite primero.
+2. Tras escribir, intentar sync inmediato si hay red y API configurada.
+3. Sin API o si falla → queda en `sync_queue` con `pending`.
+4. Background sync cada 2 minutos.
+5. Sync manual desde Ajustes.
+6. Sin API configurada: todo permanece en `pending`, sin errores para el usuario.
 
 ---
 
@@ -245,31 +263,33 @@ CREATE TABLE sync_queue (
 ```
 app/
   (tabs)/
-    index.tsx          ← pantalla principal / selección productos
-    session.tsx        ← gestión de sesión del día
-    settings.tsx       ← ajustes, sync manual, precios
+    index.tsx          ← pantalla principal / selección de productos
+    session.tsx        ← gestión de sesión del día + historial de tickets
+    settings.tsx       ← ajustes, impresora RawBT, sync, precios feriante, locales
   ticket/
-    [id].tsx           ← revisión de ticket activo
+    [id].tsx           ← revisión/edición de ticket activo
+  session/
+    [id].tsx           ← detalle de sesión cerrada + reimpresión
   _layout.tsx
 components/
   ProductGrid.tsx      ← grid de productos táctil
   CartSummary.tsx      ← resumen del carrito
-  ModifierSheet.tsx    ← bottom sheet para variantes
+  ModifierSheet.tsx    ← bottom sheet para modifiers (remove/add/radio)
   PaymentModal.tsx     ← modal cobro + cambio
   TicketPreview.tsx    ← vista previa del ticket antes de imprimir
 stores/
   useCartStore.ts      ← Zustand: carrito activo
-  useSessionStore.ts   ← Zustand: sesión del día y precios
+  useSessionStore.ts   ← Zustand: sesión del día, precios feriante, testMode
   useTicketStore.ts    ← Zustand: ticket activo (múltiples orders)
 services/
   db.ts               ← expo-sqlite: init, migrations, CRUD
   sync.ts             ← lógica de sync (preparada para API futura)
-  printer.ts          ← ESC/POS: conexión BT, formato, impresión
-  escpos.ts           ← helpers de formato ESC/POS
+  printer.ts          ← impresión vía RawBT Intent + funciones de diagnóstico
+  escpos.ts           ← generación de bytes ESC/POS y string commands (legado)
 lib/
-  types.ts            ← todos los tipos TypeScript (ver arriba)
-  constants.ts        ← menú inicial, modifiers
-  utils.ts            ← formatPrice, calcChange, etc.
+  types.ts            ← todos los tipos TypeScript
+  constants.ts        ← menú inicial, modifiers, DEFAULT_FERIANTE_PRICES
+  utils.ts            ← formatPrice, calcChange, generateId, currentTime, etc.
 ```
 
 ---
@@ -278,12 +298,13 @@ lib/
 
 ```json
 {
-  "expo": "~51.0.0",
-  "expo-sqlite": "^14.0.0",
-  "expo-router": "~3.5.0",
-  "zustand": "^4.5.0",
-  "react-native-thermal-printer": "^2.2.0",
-  "react-native-paper": "^5.12.0"
+  "expo": "~52.0.0",
+  "expo-sqlite": "~14.0.0",
+  "expo-router": "~4.0.0",
+  "expo-intent-launcher": "~12.0.2",
+  "zustand": "^5.0.12",
+  "react-native-thermal-printer": "(instalado pero sin usar — reservado)",
+  "react-native-paper": "^5.15.0"
 }
 ```
 
@@ -295,9 +316,10 @@ lib/
 - Todos los accesos a BD son async/await con try/catch.
 - Los stores de Zustand son la única fuente de verdad en runtime.
 - SQLite es la fuente de verdad persistente en el dispositivo.
-- Nunca bloquear UI esperando red — todo lo que dependa de red es fire-and-forget con manejo de error silencioso (se encola).
+- Nunca bloquear UI esperando red — todo lo que dependa de red es fire-and-forget silencioso.
 - Componentes de UI: `react-native-paper` para consistencia táctil.
-- Botones del flujo de venta (COBRAR / AÑADIR OTRO / IMPRIMIR) deben ser grandes y claramente distintos visualmente.
+- Botones del flujo de venta (COBRAR / AÑADIR OTRO / IMPRIMIR) grandes y visualmente distintos.
+- Las funciones públicas de `services/` devuelven tipos resultado `{ ok, error? }` — nunca lanzan.
 
 ---
 
