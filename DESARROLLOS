@@ -1,0 +1,65 @@
+
+PROMPT PARA  IMPRIMER RESUMEN
+Añade funcionalidad de impresión de resumen de sesión. Cambios necesarios:
+
+1. UI (app/session/[id].tsx)
+   Añade un botón "IMPRIMIR RESUMEN" en la pantalla de detalle de sesión,
+   visualmente consistente con los botones existentes.
+   Al pulsarlo llama a la nueva función printSessionSummary(session).
+
+2. IMPRESIÓN (services/printer.ts)
+   Crea la función printSessionSummary(session: Session) que:
+   - Genera los bytes ESC/POS del resumen
+   - Los envía a RawBT via Intent igual que printTicket()
+   - Devuelve { ok, error? }
+
+3. FORMATO RESUMEN (services/escpos.ts)
+   Crea buildSessionSummaryBuffer(session, tickets, locationName) → Uint8Array
+
+   CABECERA:
+   - 2cm en blanco al inicio
+   - Nombre del local en DOBLE ANCHO centrado (ESC ! 0x20)
+   - Fecha de la sesión en fuente normal centrada
+   - Separador ====
+
+   CUERPO — agrupación de productos:
+   Recorre todos los OrderItems de todos los Orders de todos los Tickets
+   de la sesión. Agrupa por estas claves combinadas:
+   · productId
+   · priceProfile ('normal' | 'feriante' | 'invitacion')
+   · selectedModifiers relevantes (solo: sin_gluten, y modifiers 
+     de tipo 'add' o 'remove' que afecten a la carne — búscalos 
+     en lib/constants.ts por su tipo y priceAdd)
+
+   Cada grupo único ocupa una línea:
+   "x3  FAT FERIANTE         19.50"
+   - Cantidad en fuente normal
+   - Nombre producto en DOBLE ANCHO (ESC ! 0x20)
+   - Si priceProfile es 'feriante' añade "FERIANTE" tras el nombre
+   - Si priceProfile es 'invitacion' añade "INVITACION" tras el nombre
+   - Precio total del grupo (unitPrice * qty) alineado a la derecha 
+     en fuente normal
+   - Si el grupo tiene modificadores relevantes, imprímelos en fuente 
+     normal indentados debajo de la línea del producto
+
+   Orden de impresión de grupos: mismo orden fijo de productos 
+   que ya se usa en los tickets individuales (burgers → sides → drinks → custom)
+   Dentro del mismo producto, primero los sin modificadores, 
+   luego los que tienen modificadores.
+
+   PIE:
+   - Separador ====
+   - "TOTAL" + precio total de la sesión alineado a la derecha 
+     en DOBLE ANCHO
+   - Separador ====
+   - 3 saltos de línea al final
+
+   REGLAS:
+   - Aplica sanitizeForPrinter a todos los textos
+   - Tickets en modo prueba (isTest) no se incluyen en el resumen
+   - priceProfile 'invitacion' se incluye con precio 0.00 pero se muestra
+
+RESTRICCIONES:
+- No cambies la lógica de tickets individuales
+- TypeScript estricto, sin any
+- Las funciones públicas devuelven { ok, error? }, nunca lanzan

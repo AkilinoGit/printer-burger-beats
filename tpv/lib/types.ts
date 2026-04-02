@@ -65,6 +65,7 @@ export interface Order {
   ticketId: string;
   clientName: string;
   priceProfile: PriceProfile;
+  takeAway?: boolean;
   items: OrderItem[];
   amountPaid: number | null;
   change: number | null;

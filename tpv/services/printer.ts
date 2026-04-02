@@ -8,11 +8,10 @@
 // Install requirement: RawBT must be installed on the device.
 //   Play Store: https://play.google.com/store/apps/details?id=ru.a402d.rawbtprinter
 //
-// Intent API (method 1 — android.intent.action.SEND):
-//   Action : android.intent.action.SEND
-//   Extra  : android.intent.extra.TEXT → Base64-encoded ESC/POS bytes
-//   Type   : application/octet-stream
-//   Package: ru.a402d.rawbtprinter
+// Intent API (android.intent.action.VIEW with rawbt:base64, scheme):
+//   Action  : android.intent.action.VIEW
+//   Data    : rawbt:base64,<base64-encoded ESC/POS bytes>
+//   Package : ru.a402d.rawbtprinter
 
 import * as IntentLauncher from 'expo-intent-launcher';
 import type { Ticket } from '../lib/types';

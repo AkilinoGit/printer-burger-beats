@@ -15,9 +15,13 @@ interface CartState {
   clientName: string;
   items: OrderItem[];
   priceProfile: PriceProfile;
+  takeAway: boolean;
 
   // --- client name ---
   setClientName: (name: string) => void;
+
+  /** Toggle the take-away flag for the current order. */
+  toggleTakeAway: () => void;
 
   /**
    * Add a product to the cart. Resolves the effective price from useSessionStore.
@@ -58,8 +62,11 @@ export const useCartStore = create<CartState>((set, get) => ({
   clientName: '',
   items: [],
   priceProfile: 'normal',
+  takeAway: false,
 
   setClientName: (name) => set({ clientName: name }),
+
+  toggleTakeAway: () => set((s) => ({ takeAway: !s.takeAway })),
 
   addProduct: (product, selectedModifiers, customLabel) => {
     const sessionPrice = useSessionStore
@@ -159,5 +166,5 @@ export const useCartStore = create<CartState>((set, get) => ({
     return Math.round(sum * 100) / 100;
   },
 
-  clearCart: () => set({ clientName: '', items: [], priceProfile: 'normal' }),
+  clearCart: () => set({ clientName: '', items: [], priceProfile: 'normal', takeAway: false }),
 }));

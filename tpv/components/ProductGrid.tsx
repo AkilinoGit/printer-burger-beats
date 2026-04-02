@@ -6,6 +6,7 @@ import { formatPrice } from '../lib/utils';
 import type { PriceProfile, Product } from '../lib/types';
 import { useCartStore } from '../stores/useCartStore';
 
+
 interface Props {
   products: Product[];
   onSelect: (product: Product) => void;
@@ -29,8 +30,10 @@ const CATEGORY_COLOR: Record<Category, string> = {
 };
 
 export default function ProductGrid({ products, onSelect, onLongPress }: Props): React.JSX.Element {
-  const priceProfile  = useCartStore((s) => s.priceProfile);
+  const priceProfile    = useCartStore((s) => s.priceProfile);
   const setPriceProfile = useCartStore((s) => s.setPriceProfile);
+  const takeAway        = useCartStore((s) => s.takeAway);
+  const toggleTakeAway  = useCartStore((s) => s.toggleTakeAway);
 
   const byCategory = CATEGORY_ORDER.reduce<Record<Category, Product[]>>(
     (acc, cat) => {
@@ -86,6 +89,13 @@ export default function ProductGrid({ products, onSelect, onLongPress }: Props):
             color="#43A047"
             active={priceProfile === 'invitacion'}
             onPress={() => handleOfertaPress('invitacion')}
+          />
+          <OfertaTile
+            label="PARA LLEVAR"
+            icon="bag-personal"
+            color="#F57C00"
+            active={takeAway}
+            onPress={toggleTakeAway}
           />
         </View>
       </View>

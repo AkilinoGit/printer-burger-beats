@@ -65,16 +65,18 @@ const SALSA_RADIO_TEKENOS: Modifier = {
   ],
 };
 
+const SIN_GLUTEN: Modifier = { id: 'mod_sin_gluten', label: 'Sin Gluten', type: 'remove', priceAdd: 0 };
+
 const MOD_FAT_FURIOUS: Modifier[] = [
-  SIN_QUESO, SIN_CEB_CRISPY, SIN_SALSA, SIN_CARNE_MECH, SIN_UNA_CARNE, EXTRA_CARNE,
+  SIN_GLUTEN, SIN_QUESO, SIN_CEB_CRISPY, SIN_SALSA, SIN_CARNE_MECH, SIN_UNA_CARNE, EXTRA_CARNE,
 ];
 
 const MOD_BEN_MUERDE: Modifier[] = [
-  SIN_QUESO, SIN_CEBOLLA, SIN_SALSA, SIN_BACON, SIN_UNA_CARNE, EXTRA_BACON,
+  SIN_GLUTEN, SIN_QUESO, SIN_CEBOLLA, SIN_SALSA, SIN_BACON, SIN_UNA_CARNE, EXTRA_BACON,
 ];
 
 const MOD_DOBLE_SUBWOOFER: Modifier[] = [
-  SIN_QUESO, SIN_VERDURA, SIN_SALSA, SIN_TOMATE, SIN_LECHUGA, SIN_CEBOLLA, SIN_UNA_CARNE, EXTRA_BACON,
+  SIN_GLUTEN, SIN_QUESO, SIN_VERDURA, SIN_SALSA, SIN_TOMATE, SIN_LECHUGA, SIN_CEBOLLA, SIN_UNA_CARNE, EXTRA_BACON,
 ];
 
 const MOD_PATATAS: Modifier[] = [
@@ -85,6 +87,7 @@ const MOD_PATATAS: Modifier[] = [
 ];
 
 const MOD_BURGER_NINO: Modifier[] = [
+  SIN_GLUTEN,
   SALSA_RADIO_NINO,
   { id: 'nino-bacon',   label: 'Bacon',   type: 'add', priceAdd: 1.00 },
   { id: 'nino-verdura', label: 'Verdura', type: 'add', priceAdd: 0.50 },

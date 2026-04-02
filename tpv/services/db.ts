@@ -19,7 +19,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 const DB_NAME = 'tpv_v12.db';
-const SCHEMA_VERSION = 13;
+const SCHEMA_VERSION = 15;
 
 let _db: SQLite.SQLiteDatabase | null = null;
 let _initPromise: Promise<void> | null = null;
@@ -90,6 +90,12 @@ export async function initDb(): Promise<void> {
     }
     if (currentVersion < 13) {
       await migrate_v13(db); // guarantee price_profile exists on devices already at v12
+    }
+    if (currentVersion < 14) {
+      await migrate_v14(db); // add take_away column to orders
+    }
+    if (currentVersion < 15) {
+      await migrate_v15(db); // insert mod_sin_gluten modifier for all burger products
     }
     await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
   })();
@@ -276,6 +282,22 @@ async function migrate_v13(db: SQLite.SQLiteDatabase): Promise<void> {
   } catch { /* column already exists — OK */ }
 }
 
+async function migrate_v14(db: SQLite.SQLiteDatabase): Promise<void> {
+  try {
+    await db.execAsync(`ALTER TABLE orders ADD COLUMN take_away INTEGER NOT NULL DEFAULT 0`);
+  } catch { /* column already exists — OK */ }
+}
+
+async function migrate_v15(db: SQLite.SQLiteDatabase): Promise<void> {
+  const burgerIds = ['fat-furious', 'ben-muerde', 'doble-subwoofer', 'burger-nino'];
+  for (const productId of burgerIds) {
+    await db.runAsync(
+      `INSERT OR IGNORE INTO modifiers (id, product_id, label, type) VALUES (?, ?, ?, ?)`,
+      ['mod_sin_gluten_' + productId, productId, 'Sin Gluten', 'remove'],
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Session helpers
 // ---------------------------------------------------------------------------
@@ -409,6 +431,7 @@ type OrderRow = {
   ticket_id: string;
   client_name: string;
   price_profile: string;
+  take_away: number | null;
   amount_paid: number | null;
   change: number | null;
   total: number;
@@ -506,6 +529,7 @@ function mapOrder(row: OrderRow, items: OrderItem[]): Order {
     ticketId: row.ticket_id,
     clientName: row.client_name,
     priceProfile: (row.price_profile ?? 'normal') as PriceProfile,
+    takeAway: (row.take_away ?? 0) === 1,
     items,
     amountPaid: row.amount_paid,
     change: row.change,
@@ -798,8 +822,8 @@ export async function getTicketsBySession(sessionId: string): Promise<Ticket[]> 
 export async function insertOrder(order: Omit<Order, 'items'>): Promise<void> {
   const db = await getDb();
   await db.runAsync(
-    'INSERT INTO orders (id, ticket_id, client_name, price_profile, amount_paid, change, total, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-    [order.id, order.ticketId, order.clientName, order.priceProfile, order.amountPaid, order.change, order.total, order.createdAt],
+    'INSERT INTO orders (id, ticket_id, client_name, price_profile, take_away, amount_paid, change, total, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [order.id, order.ticketId, order.clientName, order.priceProfile, order.takeAway ? 1 : 0, order.amountPaid, order.change, order.total, order.createdAt],
   );
 }
 
@@ -855,8 +879,8 @@ export async function saveOrderWithItems(order: Order): Promise<void> {
   const db = await getDb();
   await db.withExclusiveTransactionAsync(async (txn) => {
     await txn.runAsync(
-      'INSERT INTO orders (id, ticket_id, client_name, price_profile, amount_paid, change, total, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      [order.id, order.ticketId, order.clientName, order.priceProfile, order.amountPaid, order.change, order.total, order.createdAt],
+      'INSERT INTO orders (id, ticket_id, client_name, price_profile, take_away, amount_paid, change, total, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [order.id, order.ticketId, order.clientName, order.priceProfile, order.takeAway ? 1 : 0, order.amountPaid, order.change, order.total, order.createdAt],
     );
     for (const item of order.items) {
       await txn.runAsync(
@@ -904,8 +928,8 @@ export async function updateTicketWithOrders(ticket: Ticket): Promise<void> {
     // 2. Re-insert orders and their items
     for (const order of ticket.orders) {
       await txn.runAsync(
-        'INSERT INTO orders (id, ticket_id, client_name, price_profile, amount_paid, change, total, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-        [order.id, ticket.id, order.clientName, order.priceProfile ?? 'normal', order.amountPaid, order.change, order.total, order.createdAt],
+        'INSERT INTO orders (id, ticket_id, client_name, price_profile, take_away, amount_paid, change, total, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [order.id, ticket.id, order.clientName, order.priceProfile ?? 'normal', order.takeAway ? 1 : 0, order.amountPaid, order.change, order.total, order.createdAt],
       );
       for (const item of order.items) {
         await txn.runAsync(

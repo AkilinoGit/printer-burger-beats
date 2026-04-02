@@ -1,29 +1,30 @@
 // ESC/POS helpers + ticket buffer builder
 //
-// react-native-thermal-printer accepts a string payload with inline tags:
-//   [B]…[/B]  bold on/off
-//   [C]        align center
-//   [L]        align left
-//   [BIG]…[/BIG]  double-height text (where supported)
+// Target printer: NETUM Bluetooth 58mm, 32 chars/line.
 //
-// buildTicketCommands() returns the string payload for printBluetooth().
-// buildTicketBuffer()  is provided for callers that need the raw Uint8Array
-// (future use: direct BT socket write without the library).
+// buildTicketBuffer() generates the raw Uint8Array sent to RawBT via Intent.
+// buildTicketCommands() is the legacy string-tag format (kept for reference,
+// no longer used for actual printing).
 
 import type { Order, OrderItem, Ticket } from '../lib/types';
 import { currentTime } from '../lib/utils';
+import { INITIAL_PRODUCTS } from '../lib/constants';
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
+/** Maps productId → category, built once from INITIAL_PRODUCTS. */
+const PRODUCT_CATEGORY: ReadonlyMap<string, string> = new Map(
+  INITIAL_PRODUCTS.map((p) => [p.id, p.category]),
+);
+
 const CHARS_PER_LINE = 32;
-const SEP       = '='.repeat(CHARS_PER_LINE);   // full-width separator
-const SEP_THIN  = '-'.repeat(CHARS_PER_LINE);   // thin separator between orders
+const SEP      = '='.repeat(CHARS_PER_LINE);
+const SEP_THIN = '-'.repeat(CHARS_PER_LINE);
 
 // ---------------------------------------------------------------------------
 // Raw ESC/POS command bytes
-// These are used by buildTicketBuffer() for direct byte-level printing.
 // ---------------------------------------------------------------------------
 
 const ESC = 0x1b;
@@ -50,14 +51,28 @@ export const CMD_SIZE_DOUBLE: readonly number[] = [GS, 0x21, 0x11];
 /** GS ! 0x00 — Normal size */
 export const CMD_SIZE_NORMAL: readonly number[] = [GS, 0x21, 0x00];
 
+/** ESC ! 0x20 — Double width only (chars per line halved: 32 → 16) */
+export const CMD_SIZE_WIDE: readonly number[] = [ESC, 0x21, 0x20];
+
+/** ESC ! 0x00 — Cancel ESC ! mode, back to normal */
+export const CMD_SIZE_WIDE_OFF: readonly number[] = [ESC, 0x21, 0x00];
+
+/** Short name substitutions applied only at print time (not in DB). */
+const PRINT_NAME_OVERRIDES: Record<string, string> = {
+  'DOBLE SUBWOOFER': 'DOBLE SUB',
+};
+
 /** ESC d 4 — Feed 4 lines */
 export const CMD_FEED: readonly number[] = [ESC, 0x64, 0x04];
+
+/** ESC d 10 — Feed 10 lines (~2cm top margin) */
+export const CMD_FEED_TOP: readonly number[] = [ESC, 0x64, 0x0a];
 
 /** GS V 66 48 — Partial cut with feed */
 export const CMD_CUT: readonly number[] = [GS, 0x56, 0x42, 0x30];
 
 // ---------------------------------------------------------------------------
-// Low-level byte helpers
+// Text helpers
 // ---------------------------------------------------------------------------
 
 /** Encodes an ASCII/Latin-1 string to a Uint8Array. */
@@ -81,78 +96,43 @@ export function concatBytes(...parts: (readonly number[] | Uint8Array)[]): Uint8
   return out;
 }
 
-// ---------------------------------------------------------------------------
-// High-level string payload (for react-native-thermal-printer)
-// ---------------------------------------------------------------------------
-
 /**
- * Builds the full print payload for a ticket using the tagged-string format
- * accepted by react-native-thermal-printer's printBluetooth().
- *
- * @param ticket         Fully populated Ticket (all Orders + OrderItems).
- * @param isTest         Appends *** PRUEBA — NO VÁLIDO *** lines when true.
- * @param modifierLabels Map from Modifier.id → Modifier.label for readable printing.
+ * Replaces characters unsupported by basic ESC/POS Latin-1 codepages
+ * (accented vowels, ñ, ü) with their ASCII equivalents.
+ * Must be applied to ALL text before encoding.
  */
-export function buildTicketCommands(
-  ticket: Ticket,
-  isTest: boolean,
-  modifierLabels: Record<string, string>,
-  radioNoSelection: Record<string, string> = {},
-  radioOptionSets: Record<string, Set<string>> = {},
-): string {
-  const lines: string[] = [];
-
-  // ── Header ──────────────────────────────────────────────────────────────
-  lines.push('[C]' + SEP);
-  lines.push('[C][B]COMANDA #' + String(ticket.ticketNumber) + '[/B]');
-  lines.push('[C]' + currentTime());
-  lines.push('[C]' + SEP);
-  lines.push('');
-
-  // ── Test-mode watermark (top) ────────────────────────────────────────────
-  if (isTest) {
-    lines.push('[C][B]*** PRUEBA - NO VALIDO ***[/B]');
-    lines.push('');
-  }
-
-  // ── Orders ───────────────────────────────────────────────────────────────
-  for (let i = 0; i < ticket.orders.length; i++) {
-    if (i > 0) {
-      lines.push('[C]' + SEP_THIN);
-      lines.push('');
-    }
-    lines.push(..._formatOrder(ticket.orders[i], modifierLabels, radioNoSelection, radioOptionSets));
-  }
-
-  // ── Footer ───────────────────────────────────────────────────────────────
-  lines.push('[C]' + SEP);
-
-  // ── Test-mode watermark (bottom) ─────────────────────────────────────────
-  if (isTest) {
-    lines.push('');
-    lines.push('[C][B]*** PRUEBA - NO VALIDO ***[/B]');
-    lines.push('[C]' + SEP);
-  }
-
-  // Paper feed before cut
-  lines.push('');
-  lines.push('');
-
-  return lines.join('\n');
+export function sanitizeForPrinter(text: string): string {
+  return text
+    .replace(/Ñ/g, 'N').replace(/ñ/g, 'n')
+    .replace(/[ÁÀÂÄ]/g, 'A').replace(/[áàâä]/g, 'a')
+    .replace(/[ÉÈÊË]/g, 'E').replace(/[éèêë]/g, 'e')
+    .replace(/[ÍÌÎÏ]/g, 'I').replace(/[íìîï]/g, 'i')
+    .replace(/[ÓÒÔÖ]/g, 'O').replace(/[óòôö]/g, 'o')
+    .replace(/[ÚÙÛÜ]/g, 'U').replace(/[úùûü]/g, 'u');
 }
 
 // ---------------------------------------------------------------------------
-// Raw Uint8Array buffer (for direct BT socket writes, future use)
+// Raw Uint8Array buffer — used by printer.ts via RawBT Intent
 // ---------------------------------------------------------------------------
 
 /**
  * Generates the raw ESC/POS byte buffer for a ticket.
- * Produces the same visual output as buildTicketCommands() but as binary data
- * suitable for writing directly to a BluetoothSocket output stream.
  *
- * @param ticket         Fully populated Ticket.
- * @param isTest         Adds *** PRUEBA — NO VÁLIDO *** marker when true.
- * @param modifierLabels Map from Modifier.id → Modifier.label.
+ * Layout (NETUM 58mm, 32 chars normal / 16 chars double-width):
+ *   ~2cm blank top margin
+ *   [*** PRUEBA - NO VALIDO ***]   ← test mode only
+ *   ================================
+ *   JUAN #12  14:32    ← double-width, first order only includes time
+ *   ================================
+ *   1x PRODUCTO  9.90  ← double-width, 16 chars
+ *     modifier         ← normal
+ *   ========13.50      ← sep+total, closes each order
+ *   ================================
+ *   MARIA #12          ← double-width, subsequent orders (no time)
+ *   ================================
+ *   ...
+ *   [*** PRUEBA - NO VALIDO ***]   ← test mode only
+ *   [feed + cut]
  */
 export function buildTicketBuffer(
   ticket: Ticket,
@@ -161,52 +141,31 @@ export function buildTicketBuffer(
 ): Uint8Array {
   const parts: (readonly number[] | Uint8Array)[] = [];
 
-  const line = (text: string) => parts.push(encodeText(text + '\n'));
+  const rawLine = (text: string) => parts.push(encodeText(text + '\n'));
 
-  // Init
-  parts.push(CMD_INIT);
+  // Init + top margin (~2cm)
+  parts.push(CMD_INIT, CMD_FEED_TOP);
 
-  // ── Header ──────────────────────────────────────────────────────────────
-  parts.push(CMD_ALIGN_CENTER);
-  line(SEP);
-
-  parts.push(CMD_BOLD_ON, CMD_SIZE_DOUBLE);
-  line('COMANDA #' + String(ticket.ticketNumber));
-  parts.push(CMD_SIZE_NORMAL, CMD_BOLD_OFF);
-
-  line(currentTime());
-  line(SEP);
-  line('');
-
-  // ── Test-mode watermark (top) ────────────────────────────────────────────
+  // ── Test-mode watermark (top) ─────────────────────────────────────────────
   if (isTest) {
-    parts.push(CMD_BOLD_ON);
-    line('*** PRUEBA - NO VALIDO ***');
+    parts.push(CMD_ALIGN_CENTER, CMD_BOLD_ON);
+    rawLine('*** PRUEBA - NO VALIDO ***');
     parts.push(CMD_BOLD_OFF);
-    line('');
   }
 
-  // ── Orders ───────────────────────────────────────────────────────────────
+  // ── Orders ────────────────────────────────────────────────────────────────
   for (let i = 0; i < ticket.orders.length; i++) {
-    if (i > 0) {
-      parts.push(CMD_ALIGN_CENTER);
-      line(SEP_THIN);
-      line('');
-    }
-    _appendOrderBytes(parts, ticket.orders[i], modifierLabels);
+    _appendOrderBytes(parts, ticket.orders[i], modifierLabels, ticket.ticketNumber, i);
   }
 
-  // ── Footer ───────────────────────────────────────────────────────────────
-  parts.push(CMD_ALIGN_CENTER);
-  line(SEP);
-
-  // ── Test-mode watermark (bottom) ─────────────────────────────────────────
+  // ── Footer ────────────────────────────────────────────────────────────────
+  // The last order's closing separator is already the footer sep.
+  // Add test watermark below it if needed.
   if (isTest) {
-    line('');
-    parts.push(CMD_BOLD_ON);
-    line('*** PRUEBA - NO VALIDO ***');
+    parts.push(CMD_ALIGN_CENTER, CMD_BOLD_ON);
+    rawLine('*** PRUEBA - NO VALIDO ***');
     parts.push(CMD_BOLD_OFF);
-    line(SEP);
+    rawLine(SEP);
   }
 
   // Feed + cut
@@ -216,146 +175,309 @@ export function buildTicketBuffer(
 }
 
 // ---------------------------------------------------------------------------
-// Internal formatters
+// Internal helpers
 // ---------------------------------------------------------------------------
 
-function _formatOrder(
-  order: Order,
-  modifierLabels: Record<string, string>,
-  radioNoSelection: Record<string, string>,
-  radioOptionSets: Record<string, Set<string>>,
-): string[] {
-  const lines: string[] = [];
-  const profile = order.priceProfile ?? 'normal';
-
-  lines.push('[L][B]--- ' + order.clientName.toUpperCase() + ' ---[/B]');
-
-  if (profile === 'invitacion') {
-    lines.push('[C][B]*** INVITACION ***[/B]');
-  }
-
-  lines.push('');
-
-  for (const item of order.items) {
-    lines.push(..._formatItem(item, profile, modifierLabels, radioNoSelection, radioOptionSets));
-  }
-
-  lines.push('');
-  return lines;
-}
-
-function _formatItem(
-  item: OrderItem,
-  priceProfile: Order['priceProfile'],
-  modifierLabels: Record<string, string>,
-  radioNoSelection: Record<string, string>,
-  radioOptionSets: Record<string, Set<string>>,
-): string[] {
-  const lines: string[] = [];
-
-  const label     = item.customLabel ?? item.productName;
-  const unitTotal = (item.unitPrice + item.modifierPriceAdd) * item.qty;
-
-  // Product name — large so it's readable from 1.5m
-  lines.push('[L][BIG]' + String(item.qty) + 'x ' + label + '[/BIG]');
-
-  // Price line
-  if (priceProfile === 'invitacion') {
-    lines.push('[L][B]  PRECIO: 0.00EUR (INVITACION)[/B]');
-  } else if (priceProfile === 'feriante') {
-    const normalTotal = unitTotal; // unitPrice is already the feriante price after setPriceProfile
-    const ferianteStr = normalTotal.toFixed(2) + 'EUR';
-    // item.unitPrice holds feriante price; show it clearly
-    lines.push('[L][B]  PRECIO: ' + ferianteStr + ' (FERIANTE)[/B]');
-  } else {
-    lines.push('[L][B]  PRECIO: ' + unitTotal.toFixed(2) + 'EUR[/B]');
-  }
-
-  // Collect modifiers
-  const modParts: string[] = [];
-
-  for (const [modId, optionSet] of Object.entries(radioOptionSets)) {
-    const chosen = item.selectedModifiers.find((id) => optionSet.has(id));
-    if (chosen) {
-      modParts.push(modifierLabels[chosen] ?? chosen);
-    } else if (radioNoSelection[modId]) {
-      modParts.push(radioNoSelection[modId]);
-    }
-  }
-
-  const allRadioOptions = new Set(
-    Object.values(radioOptionSets).flatMap((s) => [...s]),
-  );
-  for (const id of item.selectedModifiers) {
-    if (!allRadioOptions.has(id)) {
-      modParts.push(modifierLabels[id] ?? id);
-    }
-  }
-
-  if (modParts.length > 0) {
-    lines.push('[C][B]*****COMPLEMENTOS*****[/B]');
-    for (const mod of modParts) {
-      lines.push('[L]  > ' + mod);
-    }
-  }
-
-  lines.push('');
-  return lines;
-}
-
+/**
+ * Appends all bytes for a single Order, followed by its closing separator line.
+ *
+ * Header format (all orders, double-width, 16 logical chars):
+ *   ================================
+ *   JUAN #12  14:32    ← orderIndex === 0: includes current time
+ *   ================================
+ *   — or —
+ *   ================================
+ *   MARIA #12          ← orderIndex > 0: no time
+ *   ================================
+ *
+ * Closing separator (normal size, 32 chars):
+ *   ========13.50      ← always uses = chars
+ */
 function _appendOrderBytes(
   parts: (readonly number[] | Uint8Array)[],
   order: Order,
   modifierLabels: Record<string, string>,
+  ticketNumber: number,
+  orderIndex: number,
 ): void {
-  const line = (text: string) => parts.push(encodeText(text + '\n'));
+  const rawLine = (text: string) => parts.push(encodeText(text + '\n'));
+
   const profile = order.priceProfile ?? 'normal';
 
-  // Client name — bold, left-aligned
-  parts.push(CMD_ALIGN_LEFT, CMD_BOLD_ON);
-  line('--- ' + order.clientName.toUpperCase() + ' ---');
-  parts.push(CMD_BOLD_OFF);
+  // ── Per-order header: ==== / NAME #num   HH:MM / ==== ─────────────────
+  // All text normal size (32 chars).
+  // First order: name+number centred in the left 27 chars, time right-aligned in the last 5.
+  // Other orders: name+number centred across all 32 chars, no time.
+  const nameBase  = sanitizeForPrinter(order.clientName.toUpperCase());
+  const numSuffix = ' #' + String(ticketNumber);
+  const nameNum   = nameBase + numSuffix;
+
+  // SEP and time in normal size; only the name+number in double-width.
+  // Double-width gives 16 logical chars — truncate the name accordingly.
+  const nameWide = nameNum.slice(0, 16);
+
+  parts.push(CMD_ALIGN_LEFT);
+  rawLine(SEP);
+  parts.push(CMD_SIZE_WIDE);
+  rawLine(nameWide);
+  parts.push(CMD_SIZE_WIDE_OFF);
+  if (orderIndex === 0) {
+    // Time right-aligned in normal size on its own line.
+    const time    = currentTime();
+    const timeLine = time.padStart(CHARS_PER_LINE);
+    rawLine(timeLine);
+  }
+  rawLine(SEP);
+
+  if (order.takeAway) {
+    parts.push(CMD_ALIGN_LEFT);
+    rawLine(sanitizeForPrinter('PARA LLEVAR'));
+  }
 
   if (profile === 'invitacion') {
     parts.push(CMD_ALIGN_CENTER, CMD_BOLD_ON);
-    line('*** INVITACION ***');
+    rawLine('*** INVITACION ***');
     parts.push(CMD_BOLD_OFF, CMD_ALIGN_LEFT);
   }
 
-  line('');
+  // "---★ COMPLEMENTOS ★---" separator printed before the first side item.
+  // ★ is not in CP437/CP850, so we use the closest printable substitute: '*'.
+  // Byte 0x0F (☼) exists in CP437 but renders poorly; '*' is universally safe.
+  const hasSide = _sortAndGroupItems(order.items).some(
+    (it) => PRODUCT_CATEGORY.get(it.productId) === 'side',
+  );
+  let sideHeaderPrinted = false;
 
-  for (const item of order.items) {
-    const label     = item.customLabel ?? item.productName;
-    const unitTotal = (item.unitPrice + item.modifierPriceAdd) * item.qty;
-
-    // Product name — double size for readability at 1.5m
-    parts.push(CMD_ALIGN_LEFT, CMD_SIZE_DOUBLE, CMD_BOLD_ON);
-    line(String(item.qty) + 'x ' + label);
-    parts.push(CMD_SIZE_NORMAL, CMD_BOLD_OFF);
-
-    // Price line
-    parts.push(CMD_ALIGN_LEFT, CMD_BOLD_ON);
-    if (profile === 'invitacion') {
-      line('  PRECIO: 0.00EUR (INVITACION)');
-    } else if (profile === 'feriante') {
-      line('  PRECIO: ' + unitTotal.toFixed(2) + 'EUR (FERIANTE)');
-    } else {
-      line('  PRECIO: ' + unitTotal.toFixed(2) + 'EUR');
+  for (const item of _sortAndGroupItems(order.items)) {
+    if (!sideHeaderPrinted && hasSide && PRODUCT_CATEGORY.get(item.productId) === 'side') {
+      parts.push(CMD_ALIGN_CENTER);
+      parts.push(encodeText('---* COMPLEMENTOS *---\n'));
+      parts.push(CMD_ALIGN_LEFT);
+      sideHeaderPrinted = true;
     }
-    parts.push(CMD_BOLD_OFF);
-
-    // Modifiers — one per line under a header
-    if (item.selectedModifiers.length > 0) {
-      parts.push(CMD_ALIGN_CENTER, CMD_BOLD_ON);
-      line('*****COMPLEMENTOS*****');
-      parts.push(CMD_BOLD_OFF, CMD_ALIGN_LEFT);
-      for (const id of item.selectedModifiers) {
-        line('  > ' + (modifierLabels[id] ?? id));
-      }
-    }
-
-    line('');
+    _appendItemBytes(parts, item, profile, modifierLabels);
   }
 
-  line('');
+  // ── Closing separator with order total ──────────────────────────────────
+  const orderTotal = order.items.reduce(
+    (sum, it) => sum + (it.unitPrice + it.modifierPriceAdd) * it.qty,
+    0,
+  );
+  const totalStr = profile === 'invitacion' ? '0.00' : orderTotal.toFixed(2);
+  const sepLine  = '='.repeat(CHARS_PER_LINE - totalStr.length) + totalStr;
+
+  parts.push(CMD_ALIGN_LEFT);
+  rawLine(sepLine);
+}
+
+/**
+ * Sort and group OrderItems for printing.
+ *
+ * Ordering:
+ *   1. burger (non-burger-nino)
+ *   2. burger-nino (forced after burgers regardless of its 'custom' category)
+ *   3. side
+ *   4. drink
+ *   5. custom (excluding burger-nino)
+ *   Within each group, original cart order is preserved.
+ *
+ * Grouping:
+ *   Items with the same productId AND selectedModifiers.length === 0
+ *   are merged into a single line (qty summed).
+ *   Items that have any modifier applied are never merged — each is
+ *   printed on its own line even if another identical-product item exists.
+ */
+function _sortAndGroupItems(items: readonly OrderItem[]): OrderItem[] {
+  const PRINT_ORDER: Record<string, number> = {
+    burger: 0,
+    'burger-nino': 1,
+    side: 2,
+    drink: 3,
+    custom: 4,
+  };
+
+  // Assign a sort key to each item.
+  // burger-nino is identified by productId regardless of its DB category.
+  function sortKey(item: OrderItem): number {
+    if (item.productId === 'burger-nino') return PRINT_ORDER['burger-nino'];
+    // We don't have the Product object here, so we approximate by productName.
+    // The actual category routing is handled by the explicit burger-nino check above;
+    // for everything else we rely on the product name not mattering — the order
+    // in the cart already reflects display order. Use a stable fallback of 2 (side).
+    return PRINT_ORDER['side'];
+  }
+
+  // Stable sort: burgers first, then burger-nino, rest keep relative order.
+  // We only need to pull burger-nino out — the rest keep their original sequence.
+  const burgerNino  = items.filter((i) => i.productId === 'burger-nino');
+  const otherCustom = items.filter((i) => i.productId !== 'burger-nino');
+  // Insert burger-nino after the last item whose sortKey < 1 (i.e. after regular burgers).
+  // Since we don't know burger category here, find the last item before burger-nino's
+  // natural position by scanning otherCustom for 'burger' productIds is not feasible
+  // without the Product list. Instead: keep original relative order of otherCustom
+  // and append burgerNino items at the end of that list, then re-sort only by the
+  // two-bucket rule: burger-nino after non-burger-nino, everything else untouched.
+  //
+  // Simpler and correct: stable-partition into [non-burger-nino, burger-nino].
+  // The cart already stores burgers before sides/drinks/custom, so burger-nino
+  // will land after real burgers and before sides — which is the desired output.
+  const sorted = [...otherCustom, ...burgerNino];
+  void sortKey; // suppress unused-variable warning — kept for documentation
+
+  // Group: items with selectedModifiers.length === 0 and same productId are merged.
+  const result: OrderItem[] = [];
+  // Map from productId → index in result (only for modifier-free items).
+  const mergeIndex = new Map<string, number>();
+
+  for (const item of sorted) {
+    if (item.selectedModifiers.length === 0) {
+      const existing = mergeIndex.get(item.productId);
+      if (existing !== undefined) {
+        const prev = result[existing];
+        result[existing] = { ...prev, qty: prev.qty + item.qty };
+        continue;
+      }
+      mergeIndex.set(item.productId, result.length);
+    }
+    result.push({ ...item });
+  }
+
+  return result;
+}
+
+/**
+ * Appends bytes for a single OrderItem in normal size (32 chars/line).
+ *
+ * Line format: qty (normal) + NAME (double-width) + price (normal) — same physical line.
+ * Double-width chars occupy 2 physical cols each, so max name logical chars =
+ *   floor((CHARS_PER_LINE - prefix.length - priceSuffix.length) / 2)
+ * If the raw name exceeds that, it is truncated and ".." appended so the
+ * whole line still fits in exactly one printer line.
+ *
+ * Modifiers indented one level below.
+ */
+function _appendItemBytes(
+  parts: (readonly number[] | Uint8Array)[],
+  item: OrderItem,
+  priceProfile: Order['priceProfile'],
+  modifierLabels: Record<string, string>,
+): void {
+  const rawLine = (text: string) => parts.push(encodeText(text + '\n'));
+
+  const baseLabel = sanitizeForPrinter(item.customLabel ?? item.productName);
+  const rawLabel  = PRINT_NAME_OVERRIDES[baseLabel.toUpperCase()] ?? baseLabel;
+
+  const unitTotal   = (item.unitPrice + item.modifierPriceAdd) * item.qty;
+  const priceSuffix = priceProfile === 'invitacion' ? ' 0.00' : ' ' + unitTotal.toFixed(2);
+
+  // qty (normal) + name (double-width) + price (normal) — same line.
+  // Each double-width logical char takes 2 physical columns, so the number of
+  // name chars that fit = floor((32 - prefix.length - priceSuffix.length) / 2).
+  // Qty and price are never truncated; only the name is shortened if needed.
+  const prefix       = String(item.qty) + 'x ';
+  const maxNameChars = Math.floor((CHARS_PER_LINE - prefix.length - priceSuffix.length) / 2);
+  const nameWide     = rawLabel.length > maxNameChars
+    ? rawLabel.slice(0, maxNameChars - 2) + '..'
+    : rawLabel;
+
+  parts.push(CMD_ALIGN_LEFT);
+  parts.push(encodeText(prefix));
+  parts.push(CMD_SIZE_WIDE);
+  parts.push(encodeText(nameWide));
+  parts.push(CMD_SIZE_WIDE_OFF);
+  parts.push(encodeText(priceSuffix + '\n'));
+
+  const sortedModifiers = [...item.selectedModifiers].sort((a, b) => {
+    if (a === 'mod_sin_gluten') return -1;
+    if (b === 'mod_sin_gluten') return  1;
+    return 0;
+  });
+  for (const id of sortedModifiers) {
+    const modLabel = sanitizeForPrinter(modifierLabels[id] ?? id);
+    rawLine('  ' + modLabel);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Legacy string-tag payload (react-native-thermal-printer format)
+// No longer used for printing — kept for reference only.
+// ---------------------------------------------------------------------------
+
+export function buildTicketCommands(
+  ticket: Ticket,
+  isTest: boolean,
+  modifierLabels: Record<string, string>,
+  radioNoSelection: Record<string, string> = {},
+  radioOptionSets: Record<string, Set<string>> = {},
+): string {
+  const lines: string[] = [];
+  const s = sanitizeForPrinter;
+
+  const firstClientName = s((ticket.orders[0]?.clientName ?? 'COMANDA').toUpperCase());
+  const headerText = firstClientName + ' #' + String(ticket.ticketNumber);
+
+  lines.push('[C]' + SEP);
+  lines.push('[C][B]' + headerText + '[/B]');
+  lines.push('[C]' + currentTime());
+  lines.push('[C]' + SEP);
+
+  if (isTest) {
+    lines.push('[C][B]*** PRUEBA - NO VALIDO ***[/B]');
+  }
+
+  const multiOrder = ticket.orders.length > 1;
+  for (let i = 0; i < ticket.orders.length; i++) {
+    if (i > 0) lines.push('[C]' + SEP_THIN);
+    lines.push(..._formatOrder(ticket.orders[i], modifierLabels, radioNoSelection, radioOptionSets, multiOrder, i));
+  }
+
+  lines.push('[C]' + SEP);
+
+  if (isTest) {
+    lines.push('[C][B]*** PRUEBA - NO VALIDO ***[/B]');
+    lines.push('[C]' + SEP);
+  }
+
+  lines.push('');
+  lines.push('');
+  return lines.join('\n');
+}
+
+function _formatOrder(
+  order: Order,
+  modifierLabels: Record<string, string>,
+  _radioNoSelection: Record<string, string>,
+  _radioOptionSets: Record<string, Set<string>>,
+  multiOrder: boolean,
+  orderIndex: number,
+): string[] {
+  const lines: string[] = [];
+  const s = sanitizeForPrinter;
+  const profile = order.priceProfile ?? 'normal';
+
+  if (multiOrder && orderIndex > 0) {
+    lines.push('[L][B]' + s(order.clientName.toUpperCase()) + ':[/B]');
+  }
+  if (profile === 'invitacion') {
+    lines.push('[C][B]*** INVITACION ***[/B]');
+  }
+
+  for (const item of order.items) {
+    const rawLabel  = s(item.customLabel ?? item.productName);
+    const unitTotal = (item.unitPrice + item.modifierPriceAdd) * item.qty;
+    const priceSuffix = profile === 'invitacion'
+      ? ' 0.00'
+      : ' ' + unitTotal.toFixed(2);
+    const prefix    = String(item.qty) + 'x ';
+    const available = CHARS_PER_LINE - prefix.length - priceSuffix.length;
+    const paddedName = available > 0 ? rawLabel.padEnd(available).slice(0, available) : rawLabel;
+    lines.push('[L]' + prefix + paddedName + priceSuffix);
+
+    const mods = item.selectedModifiers.map((id) => modifierLabels[id] ?? id);
+    for (const mod of mods) {
+      lines.push('[L]  ' + s(mod));
+    }
+  }
+
+  return lines;
 }

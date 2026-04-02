@@ -23,6 +23,7 @@ interface TicketState {
     items: Omit<OrderItem, 'orderId'>[];
     total: number;
     priceProfile: PriceProfile;
+    takeAway?: boolean;
     amountPaid?: number;
     change?: number;
   }) => Order;
@@ -68,7 +69,7 @@ export const useTicketStore = create<TicketState>((set, get) => ({
     return ticket;
   },
 
-  addOrder: ({ clientName, items, total, priceProfile, amountPaid, change }) => {
+  addOrder: ({ clientName, items, total, priceProfile, takeAway, amountPaid, change }) => {
     const ticket = get().activeTicket;
     if (!ticket) {
       throw new Error('addOrder called with no active ticket');
@@ -83,6 +84,7 @@ export const useTicketStore = create<TicketState>((set, get) => ({
       ticketId: ticket.id,
       clientName,
       priceProfile,
+      takeAway: takeAway ?? false,
       items: stampedItems,
       amountPaid: amountPaid ?? null,
       change: change ?? null,
