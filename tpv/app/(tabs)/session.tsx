@@ -286,14 +286,12 @@ const ALL_LOCATIONS = '__all__';
 export default function SessionScreen(): React.JSX.Element {
   const router = useRouter();
 
-  const {
-    activeSession,
-    activeLocation,
-    setActiveSession,
-    setActiveLocation,
-    setProducts,
-    closeCurrentSession,
-  } = useSessionStore();
+  const activeSession      = useSessionStore((s) => s.activeSession);
+  const activeLocation     = useSessionStore((s) => s.activeLocation);
+  const setActiveSession   = useSessionStore((s) => s.setActiveSession);
+  const setActiveLocation  = useSessionStore((s) => s.setActiveLocation);
+  const setProducts        = useSessionStore((s) => s.setProducts);
+  const closeCurrentSession = useSessionStore((s) => s.closeCurrentSession);
 
   // ── local state ───────────────────────────────────────────────────────────
   const [locations, setLocations]               = useState<Location[]>([]);

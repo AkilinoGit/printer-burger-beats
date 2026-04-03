@@ -244,30 +244,32 @@ export default function TicketScreen(): React.JSX.Element {
   const hasSession = activeSession !== null;
   const isBusy     = actionState !== 'idle';
 
-const previewTicket: import('../../lib/types').Ticket | null = hasItems ? {
-  id: activeTicket?.id ?? 'preview',
-  sessionId: activeSession?.id ?? '',
-  ticketNumber: pendingPrintTickets[0]?.ticketNumber ?? activeTicket?.ticketNumber ?? 1,
-  printedAt: null,
-  syncStatus: 'pending',
-  createdAt: new Date().toISOString(),
-  editedAt: null,
-  editCount: 0,
-  orders: [
-    // ← añadir los orders de los tickets pendientes
-    ...pendingPrintTickets.flatMap((t) => t.orders),
-    {
-      id: 'preview-order',
-      ticketId: activeTicket?.id ?? 'preview',
-      clientName,
-      items: cartItems,
-      amountPaid: null,
-      change: null,
-      total: cartTotal,
-      createdAt: new Date().toISOString(),
-    },
-  ],
-} : activeTicket;
+const previewTicket = useMemo<import('../../lib/types').Ticket | null>(() => {
+  if (!hasItems) return activeTicket;
+  return {
+    id: activeTicket?.id ?? 'preview',
+    sessionId: activeSession?.id ?? '',
+    ticketNumber: pendingPrintTickets[0]?.ticketNumber ?? activeTicket?.ticketNumber ?? 1,
+    printedAt: null,
+    syncStatus: 'pending',
+    createdAt: activeTicket?.createdAt ?? new Date().toISOString(),
+    editedAt: null,
+    editCount: 0,
+    orders: [
+      ...pendingPrintTickets.flatMap((t) => t.orders),
+      {
+        id: 'preview-order',
+        ticketId: activeTicket?.id ?? 'preview',
+        clientName,
+        items: cartItems,
+        amountPaid: null,
+        change: null,
+        total: cartTotal,
+        createdAt: activeTicket?.createdAt ?? new Date().toISOString(),
+      },
+    ],
+  };
+}, [hasItems, activeTicket, activeSession?.id, pendingPrintTickets, clientName, cartItems, cartTotal]);
 
   // ── helpers (new-ticket mode) ─────────────────────────────────────────────
   async function ensureTicket(): Promise<string> {

@@ -9,7 +9,7 @@
  * El modal NO realiza ninguna acción — es puramente visual.
  */
 
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   Modal,
   Platform,
@@ -114,9 +114,10 @@ export default function TicketPreview({
 }: Props): React.JSX.Element {
   const [visible, setVisible] = useState(false);
 
-  const lines = ticket
-    ? buildPreviewLines(ticket, isTest, modifierLabels)
-    : [];
+  const lines = useMemo(
+    () => ticket ? buildPreviewLines(ticket, isTest, modifierLabels) : [],
+    [ticket, isTest, modifierLabels],
+  );
 
   return (
     <>

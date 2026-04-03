@@ -13,7 +13,7 @@ import {
 } from 'react-native-paper';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 
-import { getLocations, getProducts, getSessions, getTicketsBySession, markTicketPrinted } from '../../services/db';
+import { getLocations, getSessions, getTicketsBySession, markTicketPrinted } from '../../services/db';
 import { printTicket } from '../../services/printer';
 import { formatPrice } from '../../lib/utils';
 import { useSessionStore } from '../../stores/useSessionStore';
@@ -239,13 +239,6 @@ export default function SessionDetailScreen(): React.JSX.Element {
   }, [id]);
 
   useEffect(() => { void loadData(); }, [loadData]);
-
-  // If modifier maps are empty (first load before products), reload them
-  useEffect(() => {
-    if (storeProducts.length === 0) {
-      getProducts().catch(() => {/* silently ignore */});
-    }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── reprint ───────────────────────────────────────────────────────────────
   async function handleReprint(ticket: Ticket): Promise<void> {
