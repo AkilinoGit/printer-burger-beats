@@ -19,7 +19,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 const DB_NAME = 'tpv_v12.db';
-const SCHEMA_VERSION = 15;
+const SCHEMA_VERSION = 16;
 
 let _db: SQLite.SQLiteDatabase | null = null;
 let _initPromise: Promise<void> | null = null;
@@ -96,6 +96,9 @@ export async function initDb(): Promise<void> {
     }
     if (currentVersion < 15) {
       await migrate_v15(db); // insert mod_sin_gluten modifier for all burger products
+    }
+    if (currentVersion < 16) {
+      await migrate_v16(db); // add indexes on FK columns and sync_queue status
     }
     await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
   })();
@@ -296,6 +299,15 @@ async function migrate_v15(db: SQLite.SQLiteDatabase): Promise<void> {
       ['mod_sin_gluten_' + productId, productId, 'Sin Gluten', 'remove'],
     );
   }
+}
+
+async function migrate_v16(db: SQLite.SQLiteDatabase): Promise<void> {
+  await db.execAsync(`
+    CREATE INDEX IF NOT EXISTS idx_orders_ticket ON orders(ticket_id);
+    CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
+    CREATE INDEX IF NOT EXISTS idx_tickets_session ON tickets(session_id);
+    CREATE INDEX IF NOT EXISTS idx_sync_queue_status ON sync_queue(status);
+  `);
 }
 
 // ---------------------------------------------------------------------------
