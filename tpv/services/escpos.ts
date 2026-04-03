@@ -20,8 +20,8 @@ const PRODUCT_CATEGORY: ReadonlyMap<string, string> = new Map(
 );
 
 const CHARS_PER_LINE = 32;
-const SEP      = '='.repeat(CHARS_PER_LINE);
 const SEP_THIN = '-'.repeat(CHARS_PER_LINE);
+const PRICE_FIELD = 5; // fixed-width price column: "99.99"
 
 // ---------------------------------------------------------------------------
 // Raw ESC/POS command bytes
@@ -165,7 +165,6 @@ export function buildTicketBuffer(
     parts.push(CMD_ALIGN_CENTER, CMD_BOLD_ON);
     rawLine('*** PRUEBA - NO VALIDO ***');
     parts.push(CMD_BOLD_OFF);
-    rawLine(SEP);
   }
 
   // Feed + cut
@@ -204,30 +203,27 @@ function _appendOrderBytes(
 
   const profile = order.priceProfile ?? 'normal';
 
-  // ── Per-order header: ==== / NAME #num   HH:MM / ==== ─────────────────
-  // All text normal size (32 chars).
-  // First order: name+number centred in the left 27 chars, time right-aligned in the last 5.
-  // Other orders: name+number centred across all 32 chars, no time.
+  // Blank line between consecutive orders in the same ticket.
+  if (orderIndex > 0) {
+    parts.push(encodeText('\n'));
+  }
+
+  // ── Per-order header: NAME #num (centred, double-width) + time (centred) ──
   const nameBase  = sanitizeForPrinter(order.clientName.toUpperCase());
   const numSuffix = ' #' + String(ticketNumber);
   const nameNum   = nameBase + numSuffix;
 
-  // SEP and time in normal size; only the name+number in double-width.
   // Double-width gives 16 logical chars — truncate the name accordingly.
   const nameWide = nameNum.slice(0, 16);
 
-  parts.push(CMD_ALIGN_LEFT);
-  rawLine(SEP);
+  parts.push(CMD_ALIGN_CENTER);
   parts.push(CMD_SIZE_WIDE);
   rawLine(nameWide);
   parts.push(CMD_SIZE_WIDE_OFF);
   if (orderIndex === 0) {
-    // Time right-aligned in normal size on its own line.
-    const time    = currentTime();
-    const timeLine = time.padStart(CHARS_PER_LINE);
-    rawLine(timeLine);
+    const time = currentTime();
+    rawLine(time);
   }
-  rawLine(SEP);
 
   if (order.takeAway) {
     parts.push(CMD_ALIGN_LEFT);
@@ -264,7 +260,7 @@ function _appendOrderBytes(
     0,
   );
   const totalStr = profile === 'invitacion' ? '0.00' : orderTotal.toFixed(2);
-  const sepLine  = '='.repeat(CHARS_PER_LINE - totalStr.length) + totalStr;
+  const sepLine  = '-'.repeat(CHARS_PER_LINE - totalStr.length) + totalStr;
 
   parts.push(CMD_ALIGN_LEFT);
   rawLine(sepLine);
@@ -367,25 +363,31 @@ function _appendItemBytes(
   const baseLabel = sanitizeForPrinter(item.customLabel ?? item.productName);
   const rawLabel  = PRINT_NAME_OVERRIDES[baseLabel.toUpperCase()] ?? baseLabel;
 
-  const unitTotal   = (item.unitPrice + item.modifierPriceAdd) * item.qty;
-  const priceSuffix = priceProfile === 'invitacion' ? ' 0.00' : ' ' + unitTotal.toFixed(2);
+  const unitTotal  = (item.unitPrice + item.modifierPriceAdd) * item.qty;
+  const priceStr   = priceProfile === 'invitacion' ? '0.00' : unitTotal.toFixed(2);
+  // Price always occupies PRICE_FIELD chars, right-aligned, preceded by a space.
+  const priceBlock = ' ' + priceStr.padStart(PRICE_FIELD); // e.g. " 99.99" (6 chars)
 
-  // qty (normal) + name (double-width) + price (normal) — same line.
-  // Each double-width logical char takes 2 physical columns, so the number of
-  // name chars that fit = floor((32 - prefix.length - priceSuffix.length) / 2).
-  // Qty and price are never truncated; only the name is shortened if needed.
+  // Physical columns: prefix(normal) + name*2(double-wide) + filler(normal) + priceBlock(normal) = 32
+  // Max name logical chars = floor((32 - prefix.length - priceBlock.length) / 2)
   const prefix       = String(item.qty) + 'x ';
-  const maxNameChars = Math.floor((CHARS_PER_LINE - prefix.length - priceSuffix.length) / 2);
+  const maxNameChars = Math.floor((CHARS_PER_LINE - prefix.length - priceBlock.length) / 2);
   const nameWide     = rawLabel.length > maxNameChars
-    ? rawLabel.slice(0, maxNameChars - 2) + '..'
+    ? rawLabel.slice(0, maxNameChars - 1) + '.'
     : rawLabel;
+
+  // Filler: remaining normal-width cols between the double-wide name and the price block.
+  // Physical cols used by name = nameWide.length * 2.
+  const usedCols   = prefix.length + nameWide.length * 2 + priceBlock.length;
+  const fillerLen  = CHARS_PER_LINE - usedCols;
+  const filler     = fillerLen > 0 ? '-'.repeat(fillerLen) : '';
 
   parts.push(CMD_ALIGN_LEFT);
   parts.push(encodeText(prefix));
   parts.push(CMD_SIZE_WIDE);
   parts.push(encodeText(nameWide));
   parts.push(CMD_SIZE_WIDE_OFF);
-  parts.push(encodeText(priceSuffix + '\n'));
+  parts.push(encodeText(filler + priceBlock + '\n'));
 
   const sortedModifiers = [...item.selectedModifiers].sort((a, b) => {
     if (a === 'mod_sin_gluten') return -1;
@@ -416,10 +418,10 @@ export function buildTicketCommands(
   const firstClientName = s((ticket.orders[0]?.clientName ?? 'COMANDA').toUpperCase());
   const headerText = firstClientName + ' #' + String(ticket.ticketNumber);
 
-  lines.push('[C]' + SEP);
+  lines.push('[C]' + SEP_THIN);
   lines.push('[C][B]' + headerText + '[/B]');
   lines.push('[C]' + currentTime());
-  lines.push('[C]' + SEP);
+  lines.push('[C]' + SEP_THIN);
 
   if (isTest) {
     lines.push('[C][B]*** PRUEBA - NO VALIDO ***[/B]');
@@ -431,11 +433,11 @@ export function buildTicketCommands(
     lines.push(..._formatOrder(ticket.orders[i], modifierLabels, radioNoSelection, radioOptionSets, multiOrder, i));
   }
 
-  lines.push('[C]' + SEP);
+  lines.push('[C]' + SEP_THIN);
 
   if (isTest) {
     lines.push('[C][B]*** PRUEBA - NO VALIDO ***[/B]');
-    lines.push('[C]' + SEP);
+    lines.push('[C]' + SEP_THIN);
   }
 
   lines.push('');

@@ -287,7 +287,7 @@ const previewTicket = useMemo<import('../../lib/types').Ticket | null>(() => {
     overrideChange?: number,
   ): Promise<Order> {
     const order = addOrder({
-      clientName: clientName.trim() || 'COMENSAL',
+      clientName: clientName.trim() || 'PEDIDO',
       items: cartItems,
       total: cartTotal,
       priceProfile,

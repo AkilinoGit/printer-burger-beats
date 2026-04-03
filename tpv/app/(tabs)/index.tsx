@@ -142,7 +142,7 @@ export default function HomeScreen(): React.JSX.Element {
           autoCapitalize="words"
           returnKeyType="done"
           dense
-          placeholder="COMENSAL"
+          placeholder="PEDIDO"
           right={
             clientName.length > 0
               ? <TextInput.Icon icon="close-circle" onPress={() => setClientName('')} />
