@@ -1,5 +1,5 @@
 import React from 'react';
-import { Modal, StyleSheet, TouchableWithoutFeedback, View } from 'react-native';
+import { Modal, ScrollView, StyleSheet, TouchableWithoutFeedback, View } from 'react-native';
 import {
   ActivityIndicator,
   Banner,
@@ -195,8 +195,8 @@ export default function NewTicketScreen({
         )}
       </Surface>
 
-      <View style={styles.scroll}>
-        <View style={styles.scrollContent}>
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        <View>
           {/* Client header */}
           <Surface style={styles.editOrderCard} elevation={1}>
             <View style={styles.editOrderHeader}>
@@ -270,7 +270,7 @@ export default function NewTicketScreen({
             </View>
           )}
         </View>
-      </View>
+      </ScrollView>
 
       {testMode && (
         <View style={styles.previewRow}>

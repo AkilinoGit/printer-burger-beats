@@ -253,6 +253,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.25,
     shadowRadius: 12,
     elevation: 12,
+    flexDirection: 'column',
   },
 
   // ── card header ───────────────────────────────────────────────────────────
@@ -299,7 +300,7 @@ const styles = StyleSheet.create({
 
   // ── scroll / receipt ──────────────────────────────────────────────────────
   scroll: {
-    flexGrow: 0,
+    flex: 1,
   },
   scrollContent: {
     paddingVertical: 16,
