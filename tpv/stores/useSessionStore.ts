@@ -4,7 +4,6 @@ import type { Location, Product, Session } from '../lib/types';
 import { DEFAULT_FERIANTE_PRICES } from '../lib/constants';
 import { closeSession, getActiveSession, getNextTicketNumber, getProducts, initDb } from '../services/db';
 
-const TEST_MODE_KEY       = 'tpv:testMode';
 const FERIANTE_PRICES_KEY = 'tpv:feriantePrices';
 
 interface SessionState {
@@ -13,7 +12,6 @@ interface SessionState {
   activeSession: Session | null;
   products: Product[];
   isLoadingProducts: boolean;
-  testMode: boolean;
   feriantePrices: Record<string, number>;
   /** Last ticket number used in the active session. Incremented in-memory — no DB query needed. */
   lastTicketNumber: number;
@@ -55,12 +53,6 @@ interface SessionState {
   /** Returns the next ticket number and increments the in-memory counter. No DB query. */
   nextTicketNumber: () => number;
 
-  // --- test mode ---
-  /** Load persisted test-mode value from AsyncStorage. Call once on app start. */
-  loadTestMode: () => Promise<void>;
-  /** Toggle test mode and persist the new value. */
-  setTestMode: (enabled: boolean) => Promise<void>;
-
   // --- feriante prices ---
   /** Load persisted feriante prices from AsyncStorage. Call once on app start. */
   loadFeriantePrices: () => Promise<void>;
@@ -73,7 +65,6 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   activeSession: null,
   products: [],
   isLoadingProducts: true,
-  testMode: false,
   feriantePrices: DEFAULT_FERIANTE_PRICES,
   lastTicketNumber: 0,
 
@@ -141,24 +132,6 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const next = get().lastTicketNumber + 1;
     set({ lastTicketNumber: next });
     return next;
-  },
-
-  loadTestMode: async () => {
-    try {
-      const stored = await AsyncStorage.getItem(TEST_MODE_KEY);
-      set({ testMode: stored === 'true' });
-    } catch {
-      // silently ignore — defaults to false
-    }
-  },
-
-  setTestMode: async (enabled) => {
-    set({ testMode: enabled });
-    try {
-      await AsyncStorage.setItem(TEST_MODE_KEY, enabled ? 'true' : 'false');
-    } catch {
-      // silently ignore
-    }
   },
 
   loadFeriantePrices: async () => {

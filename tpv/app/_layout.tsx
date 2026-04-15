@@ -9,20 +9,18 @@ const AUTO_CLOSE_CHECK_MS = 5 * 60 * 1000; // 5 minutes
 
 export default function RootLayout(): React.JSX.Element {
   const [dbReady, setDbReady] = useState(false);
-  const loadTestMode   = useSessionStore((s) => s.loadTestMode);
   const initSession    = useSessionStore((s) => s.initSession);
   const closeCurrentSession = useSessionStore((s) => s.closeCurrentSession);
 
   useEffect(() => {
     initDb()
-      .then(() => loadTestMode())
       .then(() => initSession())
       .then(() => setDbReady(true))
       .catch((err) => {
         console.error('[DB] init failed:', err);
         setDbReady(true);
       });
-  }, [loadTestMode, initSession]);
+  }, [initSession]);
 
   // Background check: auto-close expired sessions every 5 minutes
   useEffect(() => {

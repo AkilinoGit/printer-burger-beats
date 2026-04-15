@@ -10,10 +10,8 @@ import {
   Button,
   Dialog,
   Divider,
-  Icon,
   Portal,
   Surface,
-  Switch,
   Text,
   TextInput,
 } from 'react-native-paper';
@@ -25,7 +23,6 @@ import {
   insertLocation,
   updateLocation,
 } from '../../services/db';
-import { diagMethod1, diagMethod2, openRawBT, printTicket, type DiagResult } from '../../services/printer';
 import { DEFAULT_FERIANTE_PRICES } from '../../lib/constants';
 import type { Location } from '../../lib/types';
 
@@ -34,8 +31,6 @@ import type { Location } from '../../lib/types';
 // ---------------------------------------------------------------------------
 
 export default function SettingsScreen(): React.JSX.Element {
-  const testMode          = useSessionStore((s) => s.testMode);
-  const setTestMode       = useSessionStore((s) => s.setTestMode);
   const products          = useSessionStore((s) => s.products);
   const feriantePrices    = useSessionStore((s) => s.feriantePrices);
   const setFeriantePrices = useSessionStore((s) => s.setFeriantePrices);
@@ -46,11 +41,6 @@ export default function SettingsScreen(): React.JSX.Element {
   const [syncing, setSyncing]               = useState(false);
   const [loadingData, setLoadingData]       = useState(true);
 
-  // Printer
-  const [printerError, setPrinterError]     = useState('');
-  const [testPrinting, setTestPrinting]     = useState(false);
-  const [diagRunning, setDiagRunning]       = useState(false);
-  const [diagResults, setDiagResults]       = useState<DiagResult[]>([]);
   // Feriante prices
   const ferianteProductIds = Object.keys(DEFAULT_FERIANTE_PRICES);
   const ferianteProducts   = products.filter((p) => ferianteProductIds.includes(p.id));
@@ -121,65 +111,6 @@ export default function SettingsScreen(): React.JSX.Element {
     }
   }
 
-  // ── rawbt printer ─────────────────────────────────────────────────────────
-  async function handleOpenRawBT(): Promise<void> {
-    setPrinterError('');
-    const result = await openRawBT();
-    if (!result.ok) {
-      setPrinterError(result.error ?? 'No se pudo abrir RawBT.');
-    }
-  }
-
-  async function handleTestPrint(): Promise<void> {
-    setPrinterError('');
-    setTestPrinting(true);
-    try {
-      // Build a minimal test ticket in memory — nothing is persisted.
-      const now = new Date().toISOString();
-      const testTicket = {
-        id: 'test',
-        sessionId: 'test',
-        ticketNumber: 0,
-        orders: [{
-          id: 'test-order',
-          ticketId: 'test',
-          clientName: 'PRUEBA',
-          priceProfile: 'normal' as const,
-          items: [],
-          amountPaid: null,
-          change: null,
-          total: 0,
-          createdAt: now,
-        }],
-        printedAt: null,
-        editedAt: null,
-        editCount: 0,
-        syncStatus: 'pending' as const,
-        createdAt: now,
-      };
-      const result = await printTicket(testTicket, true, {});
-      if (!result.ok) {
-        setPrinterError(result.error ?? 'No se pudo imprimir.');
-      }
-    } finally {
-      setTestPrinting(false);
-    }
-  }
-
-  async function handleDiag(): Promise<void> {
-    setDiagResults([]);
-    setDiagRunning(true);
-    // Minimal ESC/POS payload: just "TEST\n" to keep the base64 short
-    const testBytes = new Uint8Array([0x54, 0x45, 0x53, 0x54, 0x0a]); // "TEST\n"
-    let binary = '';
-    for (let i = 0; i < testBytes.length; i++) binary += String.fromCharCode(testBytes[i]);
-    const b64 = btoa(binary);
-    const r1 = await diagMethod1(b64);
-    const r2 = await diagMethod2(b64);
-    setDiagResults([r1, r2]);
-    setDiagRunning(false);
-  }
-
   // ── location management ───────────────────────────────────────────────────
   function openAddLocation(): void {
     setEditingLocation(null);
@@ -235,101 +166,6 @@ export default function SettingsScreen(): React.JSX.Element {
 
   return (
     <ScrollView style={styles.root} contentContainerStyle={styles.scrollContent}>
-
-      {/* ── TEST MODE ─────────────────────────────────────────────────────── */}
-      <Text variant="labelLarge" style={styles.sectionLabel}>MODO DE TRABAJO</Text>
-      <Surface style={styles.card} elevation={1}>
-        <View style={styles.switchRow}>
-          <View style={styles.switchRowText}>
-            <Text style={styles.switchTitle}>Modo prueba</Text>
-            <Text style={styles.switchSubtitle}>
-              Los tickets se imprimen con "*** PRUEBA — NO VÁLIDO ***" y no se guardan en la base de datos.
-            </Text>
-          </View>
-          <Switch
-            value={testMode}
-            onValueChange={(v) => void setTestMode(v)}
-            color="#FF6F00"
-          />
-        </View>
-        {testMode && (
-          <View style={styles.testWarning}>
-            <Icon source="alert" size={16} color="#fff" />
-            <Text style={styles.testWarningText}>
-              MODO PRUEBA ACTIVO — nada se guardará
-            </Text>
-          </View>
-        )}
-      </Surface>
-
-      {/* ── RAWBT PRINTER ─────────────────────────────────────────────────── */}
-      <Text variant="labelLarge" style={styles.sectionLabel}>IMPRESORA BLUETOOTH</Text>
-      <Surface style={styles.card} elevation={1}>
-        <View style={styles.printerRow}>
-          <Icon source="printer-check" size={24} color="#43A047" />
-          <View style={styles.printerStatusText}>
-            <Text style={styles.printerStatusLabel}>Listo</Text>
-            <Text style={styles.printerAddress}>
-              La impresión se realiza a través de RawBT
-            </Text>
-          </View>
-        </View>
-
-        {!!printerError && (
-          <Text style={styles.btError}>{printerError}</Text>
-        )}
-
-        {diagResults.length > 0 && (
-          <View style={styles.diagBox}>
-            {diagResults.map((r) => (
-              <View key={r.method} style={styles.diagRow}>
-                <Text style={[styles.diagBadge, r.ok ? styles.diagOk : styles.diagFail]}>
-                  {r.ok ? 'OK' : 'FAIL'}
-                </Text>
-                <View style={styles.diagText}>
-                  <Text style={styles.diagMethod}>{r.method}</Text>
-                  {r.error !== null && (
-                    <Text style={styles.diagError}>{r.error}</Text>
-                  )}
-                </View>
-              </View>
-            ))}
-          </View>
-        )}
-
-        <View style={styles.printerButtons}>
-          <Button
-            mode="contained"
-            icon="cog"
-            onPress={() => void handleOpenRawBT()}
-            buttonColor="#546E7A"
-            style={styles.printerBtn}
-          >
-            Configurar RawBT
-          </Button>
-          <Button
-            mode="outlined"
-            icon="printer"
-            onPress={() => void handleTestPrint()}
-            loading={testPrinting}
-            disabled={testPrinting || diagRunning}
-            style={styles.printerBtn}
-          >
-            Imprimir ticket de prueba
-          </Button>
-          <Button
-            mode="outlined"
-            icon="bug"
-            onPress={() => void handleDiag()}
-            loading={diagRunning}
-            disabled={diagRunning || testPrinting}
-            textColor="#F57C00"
-            style={[styles.printerBtn, { borderColor: '#F57C00' }]}
-          >
-            Test Intent (diagnóstico)
-          </Button>
-        </View>
-      </Surface>
 
       {/* ── SYNC ──────────────────────────────────────────────────────────── */}
       <Text variant="labelLarge" style={styles.sectionLabel}>SINCRONIZACIÓN</Text>
@@ -530,119 +366,6 @@ const styles = StyleSheet.create({
     marginHorizontal: 0,
   },
 
-  // ── test mode ──
-  switchRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 16,
-    gap: 12,
-  },
-  switchRowText: { flex: 1, gap: 4 },
-  switchTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111',
-  },
-  switchSubtitle: {
-    fontSize: 13,
-    color: '#666',
-    lineHeight: 18,
-  },
-  testWarning: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: '#FF6F00',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-  },
-  testWarningText: {
-    color: '#fff',
-    fontWeight: '800',
-    fontSize: 13,
-    letterSpacing: 0.5,
-  },
-
-  // ── printer ──
-  printerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 16,
-    gap: 12,
-  },
-  printerStatus: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    flex: 1,
-  },
-  printerStatusText: { gap: 2 },
-  printerStatusLabel: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#111',
-  },
-  printerAddress: {
-    fontSize: 12,
-    color: '#888',
-    fontFamily: 'monospace',
-  },
-  btError: {
-    color: '#E53935',
-    fontSize: 13,
-    paddingHorizontal: 16,
-    paddingBottom: 8,
-  },
-  printerButtons: {
-    paddingHorizontal: 16,
-    paddingBottom: 16,
-    gap: 8,
-  },
-  printerBtn: {
-    borderRadius: 8,
-  },
-  printerBtnTop: {
-    marginTop: 0,
-  },
-  diagBox: {
-    backgroundColor: '#1A1A2E',
-    marginHorizontal: 16,
-    marginBottom: 8,
-    borderRadius: 6,
-    padding: 10,
-    gap: 8,
-  },
-  diagRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 8,
-  },
-  diagBadge: {
-    fontSize: 10,
-    fontWeight: '800',
-    fontFamily: 'monospace',
-    paddingHorizontal: 5,
-    paddingVertical: 2,
-    borderRadius: 4,
-    overflow: 'hidden',
-    flexShrink: 0,
-  },
-  diagOk:   { backgroundColor: '#2E7D32', color: '#fff' },
-  diagFail: { backgroundColor: '#C62828', color: '#fff' },
-  diagText: { flex: 1, gap: 2 },
-  diagMethod: {
-    color: '#A8E6CF',
-    fontSize: 12,
-    fontFamily: 'monospace',
-    fontWeight: '700',
-  },
-  diagError: {
-    color: '#EF9A9A',
-    fontSize: 11,
-    fontFamily: 'monospace',
-    lineHeight: 16,
-  },
-
   // ── sync ──
   syncRow: {
     flexDirection: 'row',
@@ -747,4 +470,3 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
 });
-

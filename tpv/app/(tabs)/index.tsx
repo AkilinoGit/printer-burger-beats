@@ -29,7 +29,6 @@ export default function HomeScreen(): React.JSX.Element {
   const products          = useSessionStore((s) => s.products);
   const isLoadingProducts = useSessionStore((s) => s.isLoadingProducts);
   const loadProducts      = useSessionStore((s) => s.loadProducts);
-  const testMode          = useSessionStore((s) => s.testMode);
   const activeSession     = useSessionStore((s) => s.activeSession);
   const nextTicketNumber  = useSessionStore((s) => s.nextTicketNumber);
 
@@ -79,35 +78,6 @@ export default function HomeScreen(): React.JSX.Element {
   const hasItems = items.length > 0;
   const isBusy   = actionState !== 'idle';
 
-  const previewTicket = useMemo<import('../../lib/types').Ticket | null>(() => {
-    if (!hasItems) return activeTicket;
-    return {
-      id: activeTicket?.id ?? 'preview',
-      sessionId: activeSession?.id ?? '',
-      ticketNumber: activeTicket?.ticketNumber ?? 1,
-      printedAt: null,
-      syncStatus: 'pending',
-      createdAt: activeTicket?.createdAt ?? new Date().toISOString(),
-      editedAt: null,
-      editCount: 0,
-      orders: [
-        ...(activeTicket?.orders ?? []),
-        {
-          id: 'preview-order',
-          ticketId: activeTicket?.id ?? 'preview',
-          clientName,
-          priceProfile,
-          items,
-          amountPaid: null,
-          change: null,
-          total,
-          takeAway: cartTakeAway,
-          createdAt: new Date().toISOString(),
-        },
-      ],
-    };
-  }, [hasItems, activeTicket, activeSession?.id, clientName, priceProfile, items, total, cartTakeAway]);
-
   // ── helpers ───────────────────────────────────────────────────────────────
   async function ensureTicket(): Promise<string> {
     if (activeTicket) return activeTicket.id;
@@ -133,9 +103,7 @@ export default function HomeScreen(): React.JSX.Element {
       change:     overrideChange     ?? paidChange  ?? undefined,
     });
     const finalOrder: Order = { ...order, ticketId };
-    if (!testMode) {
-      await saveOrderWithItems(finalOrder);
-    }
+    await saveOrderWithItems(finalOrder);
     return finalOrder;
   }
 
@@ -185,13 +153,11 @@ export default function HomeScreen(): React.JSX.Element {
       log.info('TICKET', 'printing', { tickets: allTickets.length });
 
       const result = allTickets.length === 1
-        ? await printTicket(currentTicket, testMode, MODIFIER_LABELS, RADIO_NO_SELECTION, RADIO_OPTION_SETS)
-        : await printTickets(allTickets, testMode, MODIFIER_LABELS);
+        ? await printTicket(currentTicket, false, MODIFIER_LABELS, RADIO_NO_SELECTION, RADIO_OPTION_SETS)
+        : await printTickets(allTickets, false, MODIFIER_LABELS);
 
-      if (!testMode) {
-        for (const t of allTickets) {
-          await markTicketPrinted(t.id);
-        }
+      for (const t of allTickets) {
+        await markTicketPrinted(t.id);
       }
       markPrinted();
       doneAll();
@@ -258,11 +224,6 @@ export default function HomeScreen(): React.JSX.Element {
       style={styles.root}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      {/* Test-mode banner */}
-      <Banner visible={testMode} style={styles.testBanner} icon="alert">
-        <Text style={styles.testBannerText}>MODO PRUEBA — nada se guardará</Text>
-      </Banner>
-
       {/* Price profile banners */}
       <Banner visible={priceProfile === 'feriante'} style={styles.ferianteBanner} icon="tag-multiple">
         <Text style={styles.ferianteBannerText}>⚡ OFERTA FERIANTE activa</Text>
@@ -379,7 +340,6 @@ export default function HomeScreen(): React.JSX.Element {
         onRequestClose={() => setTicketVisible(false)}
       >
         <NewTicketScreen
-          testMode={testMode}
           activeTicket={activeTicket}
           pendingOrders={activeTicket?.orders ?? []}
           clientName={clientName}
@@ -390,7 +350,6 @@ export default function HomeScreen(): React.JSX.Element {
           actionState={actionState}
           isBusy={isBusy}
           hasItems={hasItems}
-          previewTicket={previewTicket}
           modifierLabels={MODIFIER_LABELS}
           products={products}
           paymentVisible={paymentVisible}

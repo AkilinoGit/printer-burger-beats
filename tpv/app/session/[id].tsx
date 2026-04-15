@@ -200,7 +200,6 @@ const rowStyles = StyleSheet.create({
 export default function SessionDetailScreen(): React.JSX.Element {
   const { id }   = useLocalSearchParams<{ id: string }>();
   const router   = useRouter();
-  const testMode = useSessionStore((s) => s.testMode);
   const storeProducts = useSessionStore((s) => s.products);
   const closeCurrentSession = useSessionStore((s) => s.closeCurrentSession);
 
@@ -244,14 +243,12 @@ export default function SessionDetailScreen(): React.JSX.Element {
   async function handleReprint(ticket: Ticket): Promise<void> {
     setReprintingId(ticket.id);
     try {
-      const result = await printTicket(ticket, testMode, modifierLabels, radioNoSelection, radioOptionSets);
+      const result = await printTicket(ticket, false, modifierLabels, radioNoSelection, radioOptionSets);
       if (!result.ok) {
         Alert.alert('Error de impresión', result.error ?? 'No se pudo conectar con la impresora');
         return;
       }
-      if (!testMode) {
-        await markTicketPrinted(ticket.id);
-      }
+      await markTicketPrinted(ticket.id);
     } finally {
       setReprintingId(null);
     }

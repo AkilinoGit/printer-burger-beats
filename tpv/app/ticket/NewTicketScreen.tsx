@@ -15,7 +15,6 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import PaymentModal from '../../components/PaymentModal';
-import TicketPreview from '../../components/TicketPreview';
 import ProductGrid from '../../components/ProductGrid';
 import ModifierSheet from '../../components/ModifierSheet';
 
@@ -110,7 +109,6 @@ const editItemStyles = StyleSheet.create({
 // ---------------------------------------------------------------------------
 
 export interface NewTicketProps {
-  testMode: boolean;
   activeTicket: Ticket | null;
   pendingOrders: Order[];
   clientName: string;
@@ -121,7 +119,6 @@ export interface NewTicketProps {
   actionState: 'idle' | 'saving' | 'printing';
   isBusy: boolean;
   hasItems: boolean;
-  previewTicket: Ticket | null;
   modifierLabels: Record<string, string>;
   products: Product[];
   paymentVisible: boolean;
@@ -139,8 +136,8 @@ export interface NewTicketProps {
 }
 
 export default function NewTicketScreen({
-  testMode, activeTicket, pendingOrders, clientName, cartItems, cartTotal,
-  paidAmount, paidChange, actionState, isBusy, hasItems, previewTicket, modifierLabels,
+  activeTicket, pendingOrders, clientName, cartItems, cartTotal,
+  paidAmount, paidChange, actionState, isBusy, hasItems, modifierLabels,
   paymentVisible, onCobrar, onPaymentConfirm, onPaymentDismiss,
   onAddAnother, onPrint,
   onIncrementItem, onDecrementItem, onRemoveItem,
@@ -181,10 +178,6 @@ export default function NewTicketScreen({
 
   return (
     <View style={styles.root}>
-      <Banner visible={testMode} style={styles.testBanner} icon="alert">
-        <Text style={styles.testBannerText}>MODO PRUEBA — nada se guardará</Text>
-      </Banner>
-
       {/* Ticket header */}
       <Surface style={styles.ticketHeader} elevation={1}>
         <Text style={styles.ticketHeaderText}>RESUMEN DEL PEDIDO</Text>
@@ -272,16 +265,6 @@ export default function NewTicketScreen({
         </View>
       </ScrollView>
 
-      {testMode && (
-        <View style={styles.previewRow}>
-          <TicketPreview
-            ticket={previewTicket}
-            isTest={testMode}
-            modifierLabels={modifierLabels}
-          />
-        </View>
-      )}
-
       <Surface style={styles.actions} elevation={5}>
         <Divider />
         <View style={[styles.actionsInner, { paddingBottom: 12 + insets.bottom }]}>
@@ -320,7 +303,7 @@ export default function NewTicketScreen({
               labelStyle={styles.btnLabel}
               icon={actionState === 'printing' ? undefined : 'printer'}
             >
-              {actionState === 'printing' ? <ActivityIndicator color="#fff" size={20} /> : testMode ? 'Imprimir prueba' : 'Imprimir'}
+              {actionState === 'printing' ? <ActivityIndicator color="#fff" size={20} /> : 'Imprimir'}
             </Button>
           </View>
         </View>

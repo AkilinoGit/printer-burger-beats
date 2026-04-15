@@ -140,7 +140,6 @@ export default function TicketScreen(): React.JSX.Element {
   const router  = useRouter();
 
   // ── stores ────────────────────────────────────────────────────────────────
-  const testMode = useSessionStore((s) => s.testMode);
   const products = useSessionStore((s) => s.products);
 
   const { labels: MODIFIER_LABELS, radioNoSelection: RADIO_NO_SELECTION, radioOptionSets: RADIO_OPTION_SETS } =
@@ -324,10 +323,10 @@ export default function TicketScreen(): React.JSX.Element {
       setEditOrders([]);
 
       if (refreshed) {
-        const result = await printTicket(refreshed, testMode, MODIFIER_LABELS, RADIO_NO_SELECTION, RADIO_OPTION_SETS);
+        const result = await printTicket(refreshed, false, MODIFIER_LABELS, RADIO_NO_SELECTION, RADIO_OPTION_SETS);
         if (!result.ok) {
           Alert.alert('Error de impresión', result.error ?? 'No se pudo conectar con la impresora');
-        } else if (!testMode) {
+        } else {
           await markTicketPrinted(refreshed.id);
         }
       }
