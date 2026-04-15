@@ -119,6 +119,7 @@ export const DEFAULT_FERIANTE_PRICES: Record<string, number> = {
   'doble-subwoofer': 10,
   'alitas': 6,
   'tekenos': 6,
+  'gyozas': 6,
   'patatas': 5,
 };
 

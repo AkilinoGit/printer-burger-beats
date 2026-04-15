@@ -824,6 +824,11 @@ export async function updateProductActive(id: string, isActive: boolean): Promis
   await db.runAsync('UPDATE products SET is_active = ? WHERE id = ?', [isActive ? 1 : 0, id]);
 }
 
+export async function updateProductBasePrice(id: string, basePrice: number): Promise<void> {
+  const db = await getDb();
+  await db.runAsync('UPDATE products SET base_price = ? WHERE id = ?', [basePrice, id]);
+}
+
 // ---------------------------------------------------------------------------
 // TICKETS
 // ---------------------------------------------------------------------------

@@ -16,6 +16,7 @@ import {
   SegmentedButtons,
   Surface,
   Text,
+  TextInput,
   TouchableRipple,
 } from 'react-native-paper';
 import { useRouter } from 'expo-router';
@@ -331,6 +332,7 @@ export default function SessionScreen(): React.JSX.Element {
   const setProducts         = useSessionStore((s) => s.setProducts);
   const closeCurrentSession = useSessionStore((s) => s.closeCurrentSession);
   const setLastTicketNumber = (n: number) => useSessionStore.setState({ lastTicketNumber: n });
+  const products            = useSessionStore((s) => s.products);
 
   // ── local state ───────────────────────────────────────────────────────────
   const [locations, setLocations]               = useState<Location[]>([]);
@@ -340,6 +342,10 @@ export default function SessionScreen(): React.JSX.Element {
   const [closing, setClosing]                   = useState(false);
   const [closeDialogVisible, setCloseDialogVisible] = useState(false);
   const [activeSummary, setActiveSummary]       = useState<{ ticketCount: number; total: number }>({ ticketCount: 0, total: 0 });
+
+  // Price dialog before opening session
+  const [priceDialogVisible, setPriceDialogVisible] = useState(false);
+  const [priceDraft, setPriceDraft] = useState<Record<string, string>>({});
 
   // New session selector
   const [selectedLocationId, setSelectedLocationId] = useState<string>('');
@@ -379,9 +385,21 @@ export default function SessionScreen(): React.JSX.Element {
   }, [activeSession?.id]));
 
   // ── open session ──────────────────────────────────────────────────────────
+  function handleOpenSessionPress(): void {
+    // Build draft from current product prices as defaults
+    const editable = products.filter((p) => p.isActive && !p.isCustom);
+    const draft: Record<string, string> = {};
+    for (const p of editable) {
+      draft[p.id] = String(p.basePrice);
+    }
+    setPriceDraft(draft);
+    setPriceDialogVisible(true);
+  }
+
   async function handleOpenSession(): Promise<void> {
     const loc = locations.find((l) => l.id === selectedLocationId);
     if (!loc) return;
+    setPriceDialogVisible(false);
     setOpening(true);
     try {
       const existing = await getActiveSession();
@@ -392,7 +410,15 @@ export default function SessionScreen(): React.JSX.Element {
         setActiveLocation(loc);
         return;
       }
-      const session = await insertSession(loc.id);
+      // Build priceOverrides: only include products whose price differs from basePrice
+      const overrides: Record<string, number> = {};
+      for (const p of products.filter((pr) => pr.isActive && !pr.isCustom)) {
+        const val = parseFloat(priceDraft[p.id]?.replace(',', '.') ?? '');
+        if (!isNaN(val) && val !== p.basePrice) {
+          overrides[p.id] = val;
+        }
+      }
+      const session = await insertSession(loc.id, overrides);
       setLastTicketNumber(0);
       setActiveSession(session);
       setActiveLocation(loc);
@@ -481,7 +507,7 @@ export default function SessionScreen(): React.JSX.Element {
                   <Button
                     mode="contained"
                     icon="play-circle"
-                    onPress={() => void handleOpenSession()}
+                    onPress={handleOpenSessionPress}
                     loading={opening}
                     disabled={opening || !selectedLocationId}
                     buttonColor="#43A047"
@@ -553,6 +579,45 @@ export default function SessionScreen(): React.JSX.Element {
 
       {/* ── Modals ─────────────────────────────────────────────────────────── */}
       <Portal>
+        {/* Price config dialog */}
+        <Dialog visible={priceDialogVisible} onDismiss={() => setPriceDialogVisible(false)}>
+          <Dialog.Title>Precios de la sesión</Dialog.Title>
+          <Dialog.ScrollArea style={styles.priceDialogScroll}>
+            <ScrollView>
+              {products
+                .filter((p) => p.isActive && !p.isCustom)
+                .map((p, idx, arr) => (
+                  <React.Fragment key={p.id}>
+                    <View style={styles.priceRow}>
+                      <Text style={styles.priceName}>{p.name}</Text>
+                      <TextInput
+                        value={priceDraft[p.id] ?? ''}
+                        onChangeText={(v) => setPriceDraft((prev) => ({ ...prev, [p.id]: v }))}
+                        mode="outlined"
+                        keyboardType="decimal-pad"
+                        style={styles.priceInput}
+                        right={<TextInput.Affix text="€" />}
+                      />
+                    </View>
+                    {idx < arr.length - 1 && <Divider />}
+                  </React.Fragment>
+                ))}
+            </ScrollView>
+          </Dialog.ScrollArea>
+          <Dialog.Actions>
+            <Button onPress={() => setPriceDialogVisible(false)}>Cancelar</Button>
+            <Button
+              mode="contained"
+              buttonColor="#43A047"
+              onPress={() => void handleOpenSession()}
+              loading={opening}
+              disabled={opening}
+            >
+              Abrir sesión
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
+
         <Dialog visible={closeDialogVisible} onDismiss={() => setCloseDialogVisible(false)}>
           <Dialog.Title>¿Cerrar sesión?</Dialog.Title>
           <Dialog.Content>
@@ -676,5 +741,28 @@ const styles = StyleSheet.create({
   // close dialog
   bold: {
     fontWeight: '700',
+  },
+
+  // price dialog
+  priceDialogScroll: {
+    maxHeight: 400,
+    paddingHorizontal: 0,
+  },
+  priceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 4,
+    gap: 12,
+  },
+  priceName: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111',
+  },
+  priceInput: {
+    width: 110,
+    backgroundColor: '#fff',
   },
 });

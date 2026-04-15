@@ -22,6 +22,7 @@ import {
   getPendingSyncEntries,
   insertLocation,
   updateLocation,
+  updateProductBasePrice,
 } from '../../services/db';
 import { DEFAULT_FERIANTE_PRICES } from '../../lib/constants';
 import type { Location } from '../../lib/types';
@@ -32,6 +33,7 @@ import type { Location } from '../../lib/types';
 
 export default function SettingsScreen(): React.JSX.Element {
   const products          = useSessionStore((s) => s.products);
+  const loadProducts      = useSessionStore((s) => s.loadProducts);
   const feriantePrices    = useSessionStore((s) => s.feriantePrices);
   const setFeriantePrices = useSessionStore((s) => s.setFeriantePrices);
 
@@ -41,38 +43,23 @@ export default function SettingsScreen(): React.JSX.Element {
   const [syncing, setSyncing]               = useState(false);
   const [loadingData, setLoadingData]       = useState(true);
 
-  // Feriante prices
-  const ferianteProductIds = Object.keys(DEFAULT_FERIANTE_PRICES);
-  const ferianteProducts   = products.filter((p) => ferianteProductIds.includes(p.id));
-  const [ferianteDraft, setFerianteDraft] = useState<Record<string, string>>(() =>
-    Object.fromEntries(ferianteProductIds.map((id) => [id, String(feriantePrices[id] ?? DEFAULT_FERIANTE_PRICES[id])]))
-  );
-  const [savingFeriante, setSavingFeriante] = useState(false);
+  // Base prices dialog
+  const [basePricesVisible, setBasePricesVisible] = useState(false);
+  const [baseDraft, setBaseDraft]                 = useState<Record<string, string>>({});
+  const [savingBase, setSavingBase]               = useState(false);
 
-  async function handleSaveFeriantePrices(): Promise<void> {
-    const parsed: Record<string, number> = {};
-    for (const id of ferianteProductIds) {
-      const val = parseFloat(ferianteDraft[id].replace(',', '.'));
-      if (isNaN(val) || val < 0) {
-        Alert.alert('Precio inválido', `El precio de "${ferianteDraft[id]}" no es válido.`);
-        return;
-      }
-      parsed[id] = val;
-    }
-    setSavingFeriante(true);
-    try {
-      await setFeriantePrices(parsed);
-    } finally {
-      setSavingFeriante(false);
-    }
-  }
+  // Feriante prices dialog
+  const ferianteProductIds = Object.keys(DEFAULT_FERIANTE_PRICES);
+  const [ferianteVisible, setFerianteVisible] = useState(false);
+  const [ferianteDraft, setFerianteDraft]     = useState<Record<string, string>>({});
+  const [savingFeriante, setSavingFeriante]   = useState(false);
 
   // Location management
   const [locationDialogVisible, setLocationDialogVisible] = useState(false);
   const [editingLocation, setEditingLocation] = useState<Location | null>(null);
-  const [locationName, setLocationName]     = useState('');
+  const [locationName, setLocationName]       = useState('');
   const [locationNameError, setLocationNameError] = useState('');
-  const [savingLocation, setSavingLocation] = useState(false);
+  const [savingLocation, setSavingLocation]   = useState(false);
 
   // ── load ──────────────────────────────────────────────────────────────────
   const loadData = useCallback(async () => {
@@ -95,8 +82,6 @@ export default function SettingsScreen(): React.JSX.Element {
   async function handleSync(): Promise<void> {
     setSyncing(true);
     try {
-      // API is not configured yet — just refresh the pending count
-      // When the API is ready, call runSync() from services/sync.ts here
       const pending = await getPendingSyncEntries();
       setPendingCount(pending.length);
       Alert.alert(
@@ -108,6 +93,70 @@ export default function SettingsScreen(): React.JSX.Element {
       );
     } finally {
       setSyncing(false);
+    }
+  }
+
+  // ── base prices ───────────────────────────────────────────────────────────
+  function openBasePrices(): void {
+    const draft: Record<string, string> = {};
+    for (const p of products.filter((pr) => pr.isActive && !pr.isCustom)) {
+      draft[p.id] = String(p.basePrice);
+    }
+    setBaseDraft(draft);
+    setBasePricesVisible(true);
+  }
+
+  async function handleSaveBasePrices(): Promise<void> {
+    const editableProducts = products.filter((p) => p.isActive && !p.isCustom);
+    for (const p of editableProducts) {
+      const val = parseFloat(baseDraft[p.id]?.replace(',', '.') ?? '');
+      if (isNaN(val) || val < 0) {
+        Alert.alert('Precio inválido', `El precio de "${p.name}" no es válido.`);
+        return;
+      }
+    }
+    setSavingBase(true);
+    try {
+      for (const p of editableProducts) {
+        const val = parseFloat(baseDraft[p.id].replace(',', '.'));
+        if (val !== p.basePrice) {
+          await updateProductBasePrice(p.id, val);
+        }
+      }
+      // Reload from SQLite so store reflects persisted prices
+      await loadProducts();
+      setBasePricesVisible(false);
+    } finally {
+      setSavingBase(false);
+    }
+  }
+
+  // ── feriante prices ───────────────────────────────────────────────────────
+  function openFeriantePrices(): void {
+    const draft: Record<string, string> = {};
+    for (const id of ferianteProductIds) {
+      draft[id] = String(feriantePrices[id] ?? DEFAULT_FERIANTE_PRICES[id]);
+    }
+    setFerianteDraft(draft);
+    setFerianteVisible(true);
+  }
+
+  async function handleSaveFeriantePrices(): Promise<void> {
+    const parsed: Record<string, number> = {};
+    for (const id of ferianteProductIds) {
+      const val = parseFloat(ferianteDraft[id]?.replace(',', '.') ?? '');
+      if (isNaN(val) || val < 0) {
+        Alert.alert('Precio inválido', `El precio de "${ferianteDraft[id]}" no es válido.`);
+        return;
+      }
+      parsed[id] = val;
+    }
+    setSavingFeriante(true);
+    try {
+      await setFeriantePrices(parsed);
+      setFerianteVisible(false);
+    } finally {
+      setSavingFeriante(false);
     }
   }
 
@@ -148,7 +197,6 @@ export default function SettingsScreen(): React.JSX.Element {
   }
 
   function handleSetDefault(_loc: Location): void {
-    // setDefaultLocation is not yet exposed by db.ts — will be added in a future prompt.
     Alert.alert(
       'No disponible',
       'El cambio de local por defecto se implementará junto con la API. Próximamente.',
@@ -164,8 +212,45 @@ export default function SettingsScreen(): React.JSX.Element {
     );
   }
 
+  const editableProducts = products.filter((p) => p.isActive && !p.isCustom);
+
   return (
     <ScrollView style={styles.root} contentContainerStyle={styles.scrollContent}>
+
+      {/* ── PRECIOS ───────────────────────────────────────────────────────── */}
+      <Text variant="labelLarge" style={styles.sectionLabel}>PRECIOS</Text>
+      <Surface style={styles.card} elevation={1}>
+        <View style={styles.priceActionRow}>
+          <View style={styles.priceActionText}>
+            <Text style={styles.priceActionTitle}>Precios por defecto</Text>
+            <Text style={styles.priceActionSubtitle}>Precio base de cada producto</Text>
+          </View>
+          <Button
+            mode="outlined"
+            icon="pencil"
+            onPress={openBasePrices}
+            style={styles.priceActionBtn}
+          >
+            Editar
+          </Button>
+        </View>
+        <Divider />
+        <View style={styles.priceActionRow}>
+          <View style={styles.priceActionText}>
+            <Text style={styles.priceActionTitle}>Oferta feriante</Text>
+            <Text style={styles.priceActionSubtitle}>Precios con descuento de feria</Text>
+          </View>
+          <Button
+            mode="outlined"
+            icon="tag-multiple"
+            onPress={openFeriantePrices}
+            style={styles.priceActionBtn}
+            textColor="#1E88E5"
+          >
+            Editar
+          </Button>
+        </View>
+      </Surface>
 
       {/* ── SYNC ──────────────────────────────────────────────────────────── */}
       <Text variant="labelLarge" style={styles.sectionLabel}>SINCRONIZACIÓN</Text>
@@ -201,44 +286,6 @@ export default function SettingsScreen(): React.JSX.Element {
         <Text style={styles.syncHint}>
           API no configurada. Los datos se sincronizarán automáticamente cuando esté disponible.
         </Text>
-      </Surface>
-
-      {/* ── FERIANTE PRICES ──────────────────────────────────────────────── */}
-      <Text variant="labelLarge" style={styles.sectionLabel}>PRECIOS FERIANTE</Text>
-      <Surface style={styles.card} elevation={1}>
-        {ferianteProductIds.map((id, idx) => {
-          const product = ferianteProducts.find((p) => p.id === id);
-          const name    = product?.name ?? id;
-          return (
-            <React.Fragment key={id}>
-              {idx > 0 && <Divider />}
-              <View style={styles.ferianteRow}>
-                <Text style={styles.ferianteName}>{name}</Text>
-                <TextInput
-                  value={ferianteDraft[id]}
-                  onChangeText={(v) => setFerianteDraft((prev) => ({ ...prev, [id]: v }))}
-                  mode="outlined"
-                  keyboardType="decimal-pad"
-                  dense
-                  style={styles.ferianteInput}
-                  right={<TextInput.Affix text="€" />}
-                />
-              </View>
-            </React.Fragment>
-          );
-        })}
-        <Divider />
-        <Button
-          mode="contained"
-          icon="content-save"
-          onPress={() => void handleSaveFeriantePrices()}
-          loading={savingFeriante}
-          disabled={savingFeriante}
-          buttonColor="#1E88E5"
-          style={styles.ferianteSaveBtn}
-        >
-          Guardar precios feriante
-        </Button>
       </Surface>
 
       {/* ── LOCATIONS ─────────────────────────────────────────────────────── */}
@@ -278,7 +325,6 @@ export default function SettingsScreen(): React.JSX.Element {
             </View>
           </React.Fragment>
         ))}
-
         {locations.length > 0 && <Divider />}
         <Button
           mode="text"
@@ -291,9 +337,87 @@ export default function SettingsScreen(): React.JSX.Element {
         </Button>
       </Surface>
 
-
       {/* ── DIALOGS ───────────────────────────────────────────────────────── */}
       <Portal>
+
+        {/* Base prices dialog */}
+        <Dialog visible={basePricesVisible} onDismiss={() => setBasePricesVisible(false)}>
+          <Dialog.Title>Precios por defecto</Dialog.Title>
+          <Dialog.ScrollArea style={styles.dialogScroll}>
+            <ScrollView>
+              {editableProducts.map((p, idx) => (
+                <React.Fragment key={p.id}>
+                  {idx > 0 && <Divider />}
+                  <View style={styles.priceRow}>
+                    <Text style={styles.priceName}>{p.name}</Text>
+                    <TextInput
+                      value={baseDraft[p.id] ?? ''}
+                      onChangeText={(v) => setBaseDraft((prev) => ({ ...prev, [p.id]: v }))}
+                      mode="outlined"
+                      keyboardType="decimal-pad"
+                      style={styles.priceInput}
+                      right={<TextInput.Affix text="€" />}
+                    />
+                  </View>
+                </React.Fragment>
+              ))}
+            </ScrollView>
+          </Dialog.ScrollArea>
+          <Dialog.Actions>
+            <Button onPress={() => setBasePricesVisible(false)}>Cancelar</Button>
+            <Button
+              mode="contained"
+              buttonColor="#43A047"
+              onPress={() => void handleSaveBasePrices()}
+              loading={savingBase}
+              disabled={savingBase}
+            >
+              Guardar
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
+
+        {/* Feriante prices dialog */}
+        <Dialog visible={ferianteVisible} onDismiss={() => setFerianteVisible(false)}>
+          <Dialog.Title>Oferta feriante</Dialog.Title>
+          <Dialog.ScrollArea style={styles.dialogScroll}>
+            <ScrollView>
+              {ferianteProductIds.map((id, idx) => {
+                const product = products.find((p) => p.id === id);
+                const name = product?.name ?? id;
+                return (
+                  <React.Fragment key={id}>
+                    {idx > 0 && <Divider />}
+                    <View style={styles.priceRow}>
+                      <Text style={styles.priceName}>{name}</Text>
+                      <TextInput
+                        value={ferianteDraft[id] ?? ''}
+                        onChangeText={(v) => setFerianteDraft((prev) => ({ ...prev, [id]: v }))}
+                        mode="outlined"
+                        keyboardType="decimal-pad"
+                        style={styles.priceInput}
+                        right={<TextInput.Affix text="€" />}
+                      />
+                    </View>
+                  </React.Fragment>
+                );
+              })}
+            </ScrollView>
+          </Dialog.ScrollArea>
+          <Dialog.Actions>
+            <Button onPress={() => setFerianteVisible(false)}>Cancelar</Button>
+            <Button
+              mode="contained"
+              buttonColor="#1E88E5"
+              onPress={() => void handleSaveFeriantePrices()}
+              loading={savingFeriante}
+              disabled={savingFeriante}
+            >
+              Guardar
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
+
         {/* Add / edit location */}
         <Dialog visible={locationDialogVisible} onDismiss={() => setLocationDialogVisible(false)}>
           <Dialog.Title>
@@ -364,6 +488,52 @@ const styles = StyleSheet.create({
   },
   cardDivider: {
     marginHorizontal: 0,
+  },
+
+  // ── prices section ──
+  priceActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    gap: 12,
+  },
+  priceActionText: { flex: 1, gap: 3 },
+  priceActionTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#111',
+  },
+  priceActionSubtitle: {
+    fontSize: 13,
+    color: '#666',
+  },
+  priceActionBtn: {
+    borderRadius: 8,
+    flexShrink: 0,
+  },
+
+  // ── price dialog rows ──
+  dialogScroll: {
+    maxHeight: 400,
+    paddingHorizontal: 0,
+  },
+  priceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 4,
+    gap: 12,
+  },
+  priceName: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111',
+  },
+  priceInput: {
+    width: 110,
+    backgroundColor: '#fff',
   },
 
   // ── sync ──
@@ -437,29 +607,6 @@ const styles = StyleSheet.create({
   },
   addLocationBtn: {
     margin: 4,
-  },
-
-  // ── feriante prices ──
-  ferianteRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    gap: 12,
-  },
-  ferianteName: {
-    flex: 1,
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#111',
-  },
-  ferianteInput: {
-    width: 90,
-    backgroundColor: '#fff',
-  },
-  ferianteSaveBtn: {
-    borderRadius: 8,
-    margin: 12,
   },
 
   // ── location dialog ──

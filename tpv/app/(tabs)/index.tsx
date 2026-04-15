@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Alert, KeyboardAvoidingView, Modal, Platform, StyleSheet, View } from 'react-native';
+import { useRouter } from 'expo-router';
 import { ActivityIndicator, Banner, Button, Dialog, Portal, Text, TextInput } from 'react-native-paper';
 
 import CartSummary from '../../components/CartSummary';
@@ -25,6 +26,8 @@ import { log, perf } from '../../services/logger';
 type ActionState = 'idle' | 'saving' | 'printing';
 
 export default function HomeScreen(): React.JSX.Element {
+  const router = useRouter();
+
   // ── stores ────────────────────────────────────────────────────────────────
   const products          = useSessionStore((s) => s.products);
   const isLoadingProducts = useSessionStore((s) => s.isLoadingProducts);
@@ -284,7 +287,20 @@ export default function HomeScreen(): React.JSX.Element {
       <CartSummary
         items={items}
         total={total}
-        onViewOrder={() => setTicketVisible(true)}
+        onViewOrder={() => {
+          if (!activeSession) {
+            Alert.alert(
+              'Sin sesión activa',
+              'No hay ninguna sesión abierta. ¿Quieres ir a abrir una?',
+              [
+                { text: 'Cancelar', style: 'cancel' },
+                { text: 'Ir a Sesión', onPress: () => router.navigate('/(tabs)/session') },
+              ],
+            );
+            return;
+          }
+          setTicketVisible(true);
+        }}
       />
 
       {/* Modifier sheet (index grid) */}
