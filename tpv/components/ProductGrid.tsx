@@ -29,7 +29,7 @@ const CATEGORY_COLOR: Record<Category, string> = {
   custom: '#43A047',
 };
 
-export default function ProductGrid({ products, onSelect, onLongPress }: Props): React.JSX.Element {
+export default React.memo(function ProductGrid({ products, onSelect, onLongPress }: Props): React.JSX.Element {
   const priceProfile    = useCartStore((s) => s.priceProfile);
   const setPriceProfile = useCartStore((s) => s.setPriceProfile);
   const takeAway        = useCartStore((s) => s.takeAway);
@@ -101,7 +101,7 @@ export default function ProductGrid({ products, onSelect, onLongPress }: Props):
       </View>
     </ScrollView>
   );
-}
+});
 
 // ---------------------------------------------------------------------------
 
@@ -112,7 +112,7 @@ interface TileProps {
   onLongPress: () => void;
 }
 
-function ProductTile({ product, accentColor, onPress, onLongPress }: TileProps): React.JSX.Element {
+const ProductTile = React.memo(function ProductTile({ product, accentColor, onPress, onLongPress }: TileProps): React.JSX.Element {
   return (
     <Surface style={styles.tile} elevation={2}>
       <TouchableRipple
@@ -141,7 +141,7 @@ function ProductTile({ product, accentColor, onPress, onLongPress }: TileProps):
       </TouchableRipple>
     </Surface>
   );
-}
+});
 
 // ---------------------------------------------------------------------------
 

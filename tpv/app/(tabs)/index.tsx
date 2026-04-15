@@ -24,7 +24,7 @@ export default function HomeScreen(): React.JSX.Element {
 
   const clientName    = useCartStore((s) => s.clientName);
   const items         = useCartStore((s) => s.items);
-  const total         = useCartStore((s) => s.total());
+  const total         = items.reduce((acc, i) => acc + (i.unitPrice + i.modifierPriceAdd) * i.qty, 0);
   const priceProfile  = useCartStore((s) => s.priceProfile);
   const setClientName = useCartStore((s) => s.setClientName);
   const addProduct    = useCartStore((s) => s.addProduct);
@@ -93,8 +93,7 @@ export default function HomeScreen(): React.JSX.Element {
   }
 
   function handleViewOrder(): void {
-    // If no active ticket yet we'll open one in the ticket screen
-    router.push('/ticket/new');
+    router.replace('/ticket/new');
   }
 
   // ── render ────────────────────────────────────────────────────────────────

@@ -49,6 +49,14 @@ export async function initDb(): Promise<void> {
   _initPromise = (async () => {
     const db = await openDb();
 
+    // Disable WAL — use simpler DELETE journal mode to avoid checkpoint overhead.
+    // Also set cache size and synchronous level for mobile I/O.
+    await db.execAsync(`
+      PRAGMA journal_mode=DELETE;
+      PRAGMA synchronous=NORMAL;
+      PRAGMA cache_size=-2000;
+    `);
+
     // user_version pragma drives migrations
     const row = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
     const currentVersion = row?.user_version ?? 0;
@@ -825,6 +833,10 @@ export async function insertTicket(sessionId: string, ticketNumber: number): Pro
 export async function markTicketPrinted(id: string): Promise<void> {
   const db = await getDb();
   await db.runAsync('UPDATE tickets SET printed_at = ? WHERE id = ?', [new Date().toISOString(), id]);
+  // Checkpoint after each ticket is closed — keeps the journal small between tickets.
+  // With journal_mode=DELETE this is a no-op on WAL but harmless; kept for safety
+  // in case journal mode is ever changed back.
+  try { await db.execAsync('PRAGMA wal_checkpoint(TRUNCATE)'); } catch { /* ignore */ }
 }
 
 export async function updateTicketSyncStatus(id: string, status: SyncStatus): Promise<void> {
@@ -933,9 +945,7 @@ export async function getOrderItemsByOrderId(orderId: string): Promise<OrderItem
  * Also enqueues the order for sync.
  */
 export async function saveOrderWithItems(order: Order): Promise<void> {
-  const t0 = Date.now();
   const db = await getDb();
-  const t1 = Date.now();
   await db.withTransactionAsync(async () => {
     await db.runAsync(
       'INSERT INTO orders (id, ticket_id, client_name, price_profile, take_away, amount_paid, change, total, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
@@ -953,9 +963,6 @@ export async function saveOrderWithItems(order: Order): Promise<void> {
     //   [generateId(), 'order', order.id, 'create', 'pending', 0, new Date().toISOString()],
     // );
   });
-  const t2 = Date.now();
-  const { log: appLog } = await import('./logger');
-  appLog.info('DB', `saveOrder items=${order.items.length} getDb=${t1-t0}ms txn=${t2-t1}ms total=${t2-t0}ms`);
 }
 
 // ---------------------------------------------------------------------------
