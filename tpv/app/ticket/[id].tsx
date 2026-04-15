@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Alert, Modal, ScrollView, StyleSheet, TouchableWithoutFeedback, View } from 'react-native';
 import {
   ActivityIndicator,
@@ -13,64 +13,31 @@ import {
   TextInput,
 } from 'react-native-paper';
 import { TouchableRipple } from 'react-native-paper';
-import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 
-import PaymentModal from '../../components/PaymentModal';
-import TicketPreview from '../../components/TicketPreview';
 import ProductGrid from '../../components/ProductGrid';
 import ModifierSheet from '../../components/ModifierSheet';
 
 import { formatPrice } from '../../lib/utils';
 import { generateId } from '../../lib/utils';
-import type { Modifier, Order, OrderItem, Product } from '../../lib/types';
+import type { Order, OrderItem, Product } from '../../lib/types';
 
-import { useCartStore } from '../../stores/useCartStore';
 import { useSessionStore } from '../../stores/useSessionStore';
-import { useTicketStore } from '../../stores/useTicketStore';
 
 import {
   deleteTicket,
   getTicketById,
-  insertTicket,
   markTicketPrinted,
-  saveOrderWithItems,
   updateTicketWithOrders,
 } from '../../services/db';
 import { printTicket } from '../../services/printer';
-import { log, perf } from '../../services/logger';
-
-// ---------------------------------------------------------------------------
-// Modifier maps (same pattern as before)
-// ---------------------------------------------------------------------------
-
-function buildMaps(modifiers: Modifier[]): {
-  labels: Record<string, string>;
-  radioNoSelection: Record<string, string>;
-  radioOptionSets: Record<string, Set<string>>;
-} {
-  const labels: Record<string, string> = {};
-  const radioNoSelection: Record<string, string> = {};
-  const radioOptionSets: Record<string, Set<string>> = {};
-  for (const m of modifiers) {
-    labels[m.id] = m.label;
-    if (m.type === 'radio') {
-      if (m.noSelectionLabel) radioNoSelection[m.id] = m.noSelectionLabel;
-      radioOptionSets[m.id] = new Set((m.options ?? []).map((o) => o.id));
-      for (const opt of m.options ?? []) {
-        labels[opt.id] = opt.label;
-      }
-    }
-  }
-  return { labels, radioNoSelection, radioOptionSets };
-}
+import { buildMaps } from './NewTicketScreen';
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-type ScreenMode = 'view' | 'edit' | 'new';
-type ActionState = 'idle' | 'saving' | 'printing';
+type ScreenMode = 'view' | 'edit';
 
 // ---------------------------------------------------------------------------
 // OrderItemRow — used in both view and new-ticket modes
@@ -173,54 +140,23 @@ export default function TicketScreen(): React.JSX.Element {
   const router  = useRouter();
 
   // ── stores ────────────────────────────────────────────────────────────────
-  const testMode      = useSessionStore((s) => s.testMode);
-  const activeSession = useSessionStore((s) => s.activeSession);
-  const products      = useSessionStore((s) => s.products);
+  const testMode = useSessionStore((s) => s.testMode);
+  const products = useSessionStore((s) => s.products);
 
   const { labels: MODIFIER_LABELS, radioNoSelection: RADIO_NO_SELECTION, radioOptionSets: RADIO_OPTION_SETS } =
     useMemo(() => buildMaps(products.flatMap((p) => p.modifiers)), [products]);
 
-  // New-ticket flow (cart store)
-  const clientName    = useCartStore((s) => s.clientName);
-  const cartItems     = useCartStore((s) => s.items);
-  const cartTotal     = useCartStore((s) => s.total());
-  const priceProfile  = useCartStore((s) => s.priceProfile);
-  const cartTakeAway  = useCartStore((s) => s.takeAway);
-  const clearCart     = useCartStore((s) => s.clearCart);
-  const incrementItem = useCartStore((s) => s.incrementItem);
-  const decrementItem = useCartStore((s) => s.decrementItem);
-  const removeItem    = useCartStore((s) => s.removeItem);
-  const setClientName = useCartStore((s) => s.setClientName);
-  const addProduct    = useCartStore((s) => s.addProduct);
-
-
-  const nextTicketNumber = useSessionStore((s) => s.nextTicketNumber);
-  const activeTicket     = useTicketStore((s) => s.activeTicket);
-  const openTicket       = useTicketStore((s) => s.openTicket);
-  const addOrder         = useTicketStore((s) => s.addOrder);
-  const markPrinted      = useTicketStore((s) => s.markPrinted);
-  const clearActiveTicket = useTicketStore((s) => s.clearActiveTicket);
-
   // ── screen mode ───────────────────────────────────────────────────────────
-  const isNew = id === 'new';
-  const [mode, setMode] = useState<ScreenMode>(isNew ? 'new' : 'view');
-
-  // ── new-ticket local state ────────────────────────────────────────────────
-  const [paymentVisible, setPaymentVisible] = useState(false);
-  const [paidAmount, setPaidAmount]         = useState<number | null>(null);
-  const [paidChange, setPaidChange]         = useState<number | null>(null);
-  const [actionState, setActionState]       = useState<ActionState>('idle');
+  const [mode, setMode] = useState<ScreenMode>('view');
 
   // ── saved-ticket state ────────────────────────────────────────────────────
-  const [savedTicket,  setSavedTicket]  = useState<import('../../lib/types').Ticket | null>(null);
-  const [loadingTicket, setLoadingTicket] = useState(!isNew);
+  const [savedTicket,   setSavedTicket]   = useState<import('../../lib/types').Ticket | null>(null);
+  const [loadingTicket, setLoadingTicket] = useState(true);
 
   // ── edit mode state ───────────────────────────────────────────────────────
-  // Deep clone of ticket.orders that the user edits; discarded on Cancel
   const [editOrders, setEditOrders] = useState<Order[]>([]);
-  const [saving, setSaving] = useState(false);
+  const [saving,     setSaving]     = useState(false);
 
-  // Edit mode — add product to a specific order
   const [addingToOrderId, setAddingToOrderId] = useState<string | null>(null);
   const [sheetProduct,    setSheetProduct]    = useState<Product | null>(null);
   const [renameOrder,     setRenameOrder]     = useState<Order | null>(null);
@@ -228,150 +164,12 @@ export default function TicketScreen(): React.JSX.Element {
 
   // ── load saved ticket ─────────────────────────────────────────────────────
   useEffect(() => {
-    if (isNew) return;
     setLoadingTicket(true);
     getTicketById(id ?? '').then((t) => {
       setSavedTicket(t);
       setLoadingTicket(false);
     }).catch(() => setLoadingTicket(false));
-  }, [id, isNew]);
-
-
-  // ── derived (new-ticket mode) ─────────────────────────────────────────────
-  const hasItems   = cartItems.length > 0;
-  const hasSession = activeSession !== null;
-  const isBusy     = actionState !== 'idle';
-
-const previewTicket = useMemo<import('../../lib/types').Ticket | null>(() => {
-  if (!hasItems) return activeTicket;
-  return {
-    id: activeTicket?.id ?? 'preview',
-    sessionId: activeSession?.id ?? '',
-    ticketNumber: activeTicket?.ticketNumber ?? 1,
-    printedAt: null,
-    syncStatus: 'pending',
-    createdAt: activeTicket?.createdAt ?? new Date().toISOString(),
-    editedAt: null,
-    editCount: 0,
-    orders: [
-      ...(activeTicket?.orders ?? []),
-      {
-        id: 'preview-order',
-        ticketId: activeTicket?.id ?? 'preview',
-        clientName,
-        priceProfile: priceProfile,
-        items: cartItems,
-        amountPaid: null,
-        change: null,
-        total: cartTotal,
-        takeAway: cartTakeAway,
-        createdAt: new Date().toISOString(),
-      },
-    ],
-  };
-}, [hasItems, activeTicket, activeSession?.id, clientName, priceProfile, cartItems, cartTotal, cartTakeAway]);
-
-  // ── helpers (new-ticket mode) ─────────────────────────────────────────────
-  async function ensureTicket(): Promise<string> {
-    if (activeTicket) return activeTicket.id;
-    if (!activeSession) throw new Error('No hay sesión activa');
-    const ticketNumber = nextTicketNumber();           // in-memory counter, no DB query
-    const dbTicket     = await insertTicket(activeSession.id, ticketNumber);
-    openTicket(activeSession.id, dbTicket.ticketNumber);
-    return dbTicket.id;
-  }
-
-  async function persistCurrentOrder(
-    ticketId: string,
-    overrideAmountPaid?: number,
-    overrideChange?: number,
-  ): Promise<Order> {
-    const order = addOrder({
-      clientName: clientName.trim() || 'PEDIDO',
-      items: cartItems,
-      total: cartTotal,
-      priceProfile,
-      takeAway: cartTakeAway,
-      amountPaid: overrideAmountPaid ?? paidAmount ?? undefined,
-      change:     overrideChange     ?? paidChange  ?? undefined,
-    });
-    const finalOrder: Order = { ...order, ticketId };
-    if (!testMode) {
-      await saveOrderWithItems(finalOrder);
-    }
-    return finalOrder;
-  }
-
-  // ── new-ticket actions ────────────────────────────────────────────────────
-  function handleCobrar(): void { setPaymentVisible(true); }
-
-  function handlePaymentConfirm(amountPaid: number, change: number): void {
-    setPaidAmount(amountPaid);
-    setPaidChange(change);
-    setPaymentVisible(false);
-  }
-
-async function handleAddAnother(): Promise<void> {
-  if (!hasItems) return;
-  setActionState('saving');
-  try {
-    const done = perf.start('TICKET', 'handleAddAnother');
-    const ticketId = await ensureTicket();
-    await persistCurrentOrder(ticketId);
-    done();
-    log.info('TICKET', 'order saved, back to home');
-    clearCart();
-    router.back();
-  } catch (e) {
-    log.error('TICKET', 'handleAddAnother failed', e instanceof Error ? e.message : String(e));
-    Alert.alert('Error', e instanceof Error ? e.message : 'No se pudo guardar el pedido');
-  } finally {
-    setActionState('idle');
-  }
-}
-
-  async function handlePrint(): Promise<void> {
-    if (!hasItems) return;
-    setActionState('printing');
-    try {
-      const doneAll = perf.start('TICKET', 'handlePrint total');
-
-        const doneEnsure = perf.start('TICKET', 'ensureTicket');
-      const ticketId = await ensureTicket();
-      doneEnsure();
-
-      const donePersist = perf.start('TICKET', 'persistCurrentOrder');
-      await persistCurrentOrder(ticketId);
-      donePersist();
-
-      const currentTicket = useTicketStore.getState().activeTicket;
-      if (!currentTicket) throw new Error('Ticket no encontrado en store');
-
-      log.info('TICKET', 'printing', { ticketNumber: currentTicket.ticketNumber, orders: currentTicket.orders.length });
-
-      const result = await printTicket(currentTicket, testMode, MODIFIER_LABELS, RADIO_NO_SELECTION, RADIO_OPTION_SETS);
-
-      if (!testMode) {
-        await markTicketPrinted(currentTicket.id);
-      }
-      markPrinted();
-      doneAll();
-
-      if (!result.ok) {
-        Alert.alert('Error de impresión', result.error ?? 'No se pudo conectar con la impresora',
-          [{ text: 'Continuar', style: 'default' }]);
-      }
-
-      clearActiveTicket();
-      clearCart();
-      router.replace('/');
-    } catch (e) {
-      log.error('TICKET', 'handlePrint failed', e instanceof Error ? e.message : String(e));
-      Alert.alert('Error', e instanceof Error ? e.message : 'No se pudo imprimir');
-    } finally {
-      setActionState('idle');
-    }
-  }
+  }, [id]);
 
   // ── edit mode: enter ──────────────────────────────────────────────────────
   function handleStartEdit(): void {
@@ -431,6 +229,8 @@ async function handleAddAnother(): Promise<void> {
       id: generateId(),
       ticketId: savedTicket?.id ?? '',
       clientName: '',
+      priceProfile: 'normal',
+      takeAway: false,
       items: [],
       amountPaid: null,
       change: null,
@@ -549,22 +349,8 @@ async function handleAddAnother(): Promise<void> {
   }
 
 
-  // ── guard: no session (new mode) ──────────────────────────────────────────
-  if (isNew && !hasSession) {
-    return (
-      <View style={styles.centered}>
-        <Text style={styles.noSessionText}>
-          No hay sesión activa.{'\n'}Ve a la pestaña Sesión para abrir una.
-        </Text>
-        <Button mode="outlined" onPress={() => router.replace('/session')} style={styles.goSessionBtn}>
-          Ir a Sesión
-        </Button>
-      </View>
-    );
-  }
-
-  // ── render: loading saved ticket ──────────────────────────────────────────
-  if (!isNew && loadingTicket) {
+  // ── render ────────────────────────────────────────────────────────────────
+  if (loadingTicket) {
     return (
       <View style={styles.centered}>
         <ActivityIndicator size="large" />
@@ -572,7 +358,7 @@ async function handleAddAnother(): Promise<void> {
     );
   }
 
-  if (!isNew && !savedTicket) {
+  if (!savedTicket) {
     return (
       <View style={styles.centered}>
         <Text style={styles.noSessionText}>Ticket no encontrado</Text>
@@ -580,9 +366,7 @@ async function handleAddAnother(): Promise<void> {
     );
   }
 
-  // ── render: VIEW / EDIT modes for saved ticket ────────────────────────────
-  if (!isNew && savedTicket) {
-    if (mode === 'edit') {
+  if (mode === 'edit') {
       return (
         <EditModeScreen
           ticket={savedTicket}
@@ -635,45 +419,13 @@ async function handleAddAnother(): Promise<void> {
       );
     }
 
-    // VIEW mode
-    return (
-      <ViewModeScreen
-        ticket={savedTicket}
-        modifierLabels={MODIFIER_LABELS}
-        onStartEdit={handleStartEdit}
-        onDeleteTicket={() => void handleDeleteTicket()}
-      />
-    );
-  }
-
-  // ── render: NEW ticket flow ───────────────────────────────────────────────
+  // VIEW mode
   return (
-    <NewTicketScreen
-      testMode={testMode}
-      activeTicket={activeTicket}
-      pendingOrders={activeTicket?.orders ?? []}
-      clientName={clientName}
-      cartItems={cartItems}
-      cartTotal={cartTotal}
-      paidAmount={paidAmount}
-      paidChange={paidChange}
-      actionState={actionState}
-      isBusy={isBusy}
-      hasItems={hasItems}
-      previewTicket={previewTicket}
+    <ViewModeScreen
+      ticket={savedTicket}
       modifierLabels={MODIFIER_LABELS}
-      products={products}
-      onCobrar={handleCobrar}
-      onPaymentConfirm={handlePaymentConfirm}
-      onPaymentDismiss={() => setPaymentVisible(false)}
-      paymentVisible={paymentVisible}
-      onAddAnother={() => void handleAddAnother()}
-      onPrint={() => void handlePrint()}
-      onIncrementItem={incrementItem}
-      onDecrementItem={decrementItem}
-      onRemoveItem={removeItem}
-      onSetClientName={setClientName}
-      onAddProduct={addProduct}
+      onStartEdit={handleStartEdit}
+      onDeleteTicket={() => void handleDeleteTicket()}
     />
   );
 }
@@ -907,7 +659,7 @@ function EditModeScreen({
       </ScrollView>
 
       {/* Bottom action bar */}
-      <Surface style={styles.editActions} elevation={8}>
+      <Surface style={styles.editActions} elevation={5}>
         <Divider />
         <View style={styles.editActionsInner}>
           <Button
@@ -982,284 +734,6 @@ function EditModeScreen({
           <Dialog.Actions>
             <Button onPress={onRenameDismiss}>Cancelar</Button>
             <Button mode="contained" onPress={onRenameConfirm} buttonColor="#1E88E5">Guardar</Button>
-          </Dialog.Actions>
-        </Dialog>
-      </Portal>
-    </View>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// NewTicketScreen — extracted from original ticket/[id].tsx
-// ---------------------------------------------------------------------------
-
-interface NewTicketProps {
-  testMode: boolean;
-  activeTicket: import('../../lib/types').Ticket | null;
-  pendingOrders: Order[];
-  clientName: string;
-  cartItems: OrderItem[];
-  cartTotal: number;
-  paidAmount: number | null;
-  paidChange: number | null;
-  actionState: ActionState;
-  isBusy: boolean;
-  hasItems: boolean;
-  previewTicket: import('../../lib/types').Ticket | null;
-  modifierLabels: Record<string, string>;
-  products: Product[];
-  paymentVisible: boolean;
-  onCobrar: () => void;
-  onPaymentConfirm: (amount: number, change: number) => void;
-  onPaymentDismiss: () => void;
-  onAddAnother: () => void;
-  onPrint: () => void;
-  onIncrementItem: (id: string) => void;
-  onDecrementItem: (id: string) => void;
-  onRemoveItem: (id: string) => void;
-  onSetClientName: (name: string) => void;
-  onAddProduct: (product: Product, selectedModifiers: string[], customLabel?: string) => void;
-}
-
-function NewTicketScreen({
-  testMode, activeTicket, pendingOrders, clientName, cartItems, cartTotal,
-  paidAmount, paidChange, actionState, isBusy, hasItems, previewTicket, modifierLabels,
-  paymentVisible, onCobrar, onPaymentConfirm, onPaymentDismiss,
-  onAddAnother, onPrint,
-  onIncrementItem, onDecrementItem, onRemoveItem,
-  onSetClientName, onAddProduct, products,
-}: NewTicketProps): React.JSX.Element {
-  const insets = useSafeAreaInsets();
-  const [renameVisible, setRenameVisible] = React.useState(false);
-  const [renameText, setRenameText] = React.useState('');
-  const [addingProduct, setAddingProduct] = React.useState(false);
-  const [sheetProduct, setSheetProduct] = React.useState<Product | null>(null);
-
-  function handleRenameOpen(): void {
-    setRenameText(clientName);
-    setRenameVisible(true);
-  }
-  function handleRenameConfirm(): void {
-    onSetClientName(renameText.trim());
-    setRenameVisible(false);
-  }
-  function handleProductSelected(product: Product): void {
-    if (product.isCustom) return; // custom handled via index screen
-    if (product.alwaysShowModifiers && product.modifiers.length > 0) {
-      setSheetProduct(product);
-      return;
-    }
-    onAddProduct(product, []);
-    setAddingProduct(false);
-  }
-  function handleProductLongPress(product: Product): void {
-    if (product.modifiers.length > 0) setSheetProduct(product);
-  }
-  function handleModifierConfirm(mods: string[]): void {
-    if (sheetProduct) onAddProduct(sheetProduct, mods);
-    setSheetProduct(null);
-    setAddingProduct(false);
-  }
-
-  return (
-    <View style={styles.root}>
-      <Banner visible={testMode} style={styles.testBanner} icon="alert">
-        <Text style={styles.testBannerText}>MODO PRUEBA — nada se guardará</Text>
-      </Banner>
-
-      {activeTicket && (
-        <Surface style={styles.ticketHeader} elevation={1}>
-          <Text style={styles.ticketHeaderText}>
-            Comanda #{activeTicket.ticketNumber}
-            {activeTicket.orders.length > 0
-              ? `  ·  ${activeTicket.orders.length} pedido${activeTicket.orders.length > 1 ? 's' : ''} previo${activeTicket.orders.length > 1 ? 's' : ''}`
-              : ''}
-          </Text>
-        </Surface>
-      )}
-
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
-        {/* Client header */}
-        <Surface style={styles.editOrderCard} elevation={1}>
-          <View style={styles.editOrderHeader}>
-            <Text style={styles.editClientName}>{clientName || '—'}</Text>
-            <View style={styles.editOrderHeaderActions}>
-              <Button compact mode="text" icon="account-edit" onPress={handleRenameOpen} textColor="#1E88E5">
-                Nombre
-              </Button>
-            </View>
-          </View>
-
-          <Divider />
-
-          {cartItems.length === 0 ? (
-            <Text style={styles.emptyOrderText}>No hay productos en el carrito</Text>
-          ) : (
-            cartItems.map((item) => (
-              <EditableItemRow
-                key={item.id}
-                item={item}
-                modifierLabels={modifierLabels}
-                onIncrement={() => onIncrementItem(item.id)}
-                onDecrement={() => onDecrementItem(item.id)}
-                onRemove={() => onRemoveItem(item.id)}
-              />
-            ))
-          )}
-
-          <Button
-            mode="text"
-            icon="plus"
-            onPress={() => setAddingProduct(true)}
-            style={styles.addProductBtn}
-            contentStyle={styles.addProductBtnContent}
-            textColor="#1E88E5"
-          >
-            Añadir producto
-          </Button>
-        </Surface>
-
-        <Divider style={styles.totalDivider} />
-
-        <View style={styles.totalRow}>
-          <Text style={styles.totalLabel}>TOTAL</Text>
-          <Text style={styles.totalAmount}>{formatPrice(cartTotal)}</Text>
-        </View>
-
-        {paidAmount !== null && (
-          <View style={styles.paidRow}>
-            <View style={styles.paidCol}>
-              <Text style={styles.paidLabel}>Entregado</Text>
-              <Text style={styles.paidValue}>{formatPrice(paidAmount)}</Text>
-            </View>
-            <View style={styles.paidCol}>
-              <Text style={styles.paidLabel}>Cambio</Text>
-              <Text style={[styles.paidValue, styles.changeValue]}>
-                {paidChange !== null ? formatPrice(paidChange) : '—'}
-              </Text>
-            </View>
-          </View>
-        )}
-
-        {pendingOrders.length > 0 && (
-          <View style={styles.prevOrdersBox}>
-            <Text style={styles.prevOrdersTitle}>Pedidos anteriores en esta comanda</Text>
-            {pendingOrders.map((o) => (
-              <Text key={o.id} style={styles.prevOrderRow}>
-                {o.clientName} — {formatPrice(o.total)}
-              </Text>
-            ))}
-          </View>
-        )}
-      </ScrollView>
-
-      {testMode && (
-        <View style={styles.previewRow}>
-          <TicketPreview
-            ticket={previewTicket}
-            isTest={testMode}
-            modifierLabels={modifierLabels}
-          />
-        </View>
-      )}
-
-      <Surface style={styles.actions} elevation={8}>
-        <Divider />
-        <View style={[styles.actionsInner, { paddingBottom: 12 + insets.bottom }]}>
-          <Button
-            mode="contained"
-            onPress={onCobrar}
-            disabled={!hasItems || isBusy}
-            buttonColor="#43A047"
-            style={styles.btn}
-            contentStyle={styles.btnContent}
-            labelStyle={styles.btnLabel}
-            icon="cash"
-          >
-            {paidAmount !== null ? 'Recobrar' : 'Cobrar'}
-          </Button>
-          <View style={styles.btnRow}>
-            <Button
-              mode="contained"
-              onPress={onAddAnother}
-              disabled={!hasItems || isBusy}
-              buttonColor="#1E88E5"
-              style={[styles.btn, styles.btnHalf]}
-              contentStyle={styles.btnContent}
-              labelStyle={styles.btnLabel}
-              icon={actionState === 'saving' ? undefined : 'plus'}
-            >
-              {actionState === 'saving' ? <ActivityIndicator color="#fff" size={20} /> : 'Añadir otro'}
-            </Button>
-            <Button
-              mode="contained"
-              onPress={onPrint}
-              disabled={!hasItems || isBusy}
-              buttonColor="#E53935"
-              style={[styles.btn, styles.btnHalf]}
-              contentStyle={styles.btnContent}
-              labelStyle={styles.btnLabel}
-              icon={actionState === 'printing' ? undefined : 'printer'}
-            >
-              {actionState === 'printing' ? <ActivityIndicator color="#fff" size={20} /> : testMode ? 'Imprimir prueba' : 'Imprimir'}
-            </Button>
-          </View>
-        </View>
-      </Surface>
-
-      <PaymentModal
-        visible={paymentVisible}
-        total={cartTotal}
-        onConfirm={onPaymentConfirm}
-        onDismiss={onPaymentDismiss}
-      />
-
-      {/* Product grid modal */}
-      <Modal
-        visible={addingProduct}
-        animationType="slide"
-        onRequestClose={() => setAddingProduct(false)}
-      >
-        <TouchableWithoutFeedback onPress={() => setAddingProduct(false)}>
-          <View style={styles.gridBackdrop} />
-        </TouchableWithoutFeedback>
-        <Surface style={styles.gridSheet} elevation={4}>
-          <View style={styles.gridHandle} />
-          <Text style={styles.gridTitle}>Añadir producto</Text>
-          <ProductGrid
-            products={products}
-            onSelect={handleProductSelected}
-            onLongPress={handleProductLongPress}
-          />
-        </Surface>
-      </Modal>
-
-      <ModifierSheet
-        product={sheetProduct}
-        visible={sheetProduct !== null}
-        onConfirm={handleModifierConfirm}
-        onDismiss={() => setSheetProduct(null)}
-      />
-
-      {/* Rename dialog */}
-      <Portal>
-        <Dialog visible={renameVisible} onDismiss={() => setRenameVisible(false)}>
-          <Dialog.Title>Nombre del cliente</Dialog.Title>
-          <Dialog.Content>
-            <TextInput
-              value={renameText}
-              onChangeText={setRenameText}
-              mode="outlined"
-              autoCapitalize="words"
-              autoFocus
-              returnKeyType="done"
-              onSubmitEditing={handleRenameConfirm}
-              style={styles.renameInput}
-            />
-          </Dialog.Content>
-          <Dialog.Actions>
-            <Button onPress={() => setRenameVisible(false)}>Cancelar</Button>
-            <Button mode="contained" onPress={handleRenameConfirm} buttonColor="#1E88E5">Guardar</Button>
           </Dialog.Actions>
         </Dialog>
       </Portal>

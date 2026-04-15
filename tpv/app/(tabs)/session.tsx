@@ -123,77 +123,71 @@ function ActiveSessionCard({ session, locationName, onViewTickets, onCloseReques
     getSessionSummary(session.id).then(setSummary).catch(() => {});
   }, [session.id]);
   const openedAt = session.openedAt ?? session.createdAt;
-  const autoCloseAt = session.autoCloseAt;
 
   return (
-    <Surface style={activeStyles.card} elevation={3}>
-      {/* Badge */}
-      <View style={activeStyles.badgeRow}>
-        <View style={activeStyles.badge}>
-          <Text style={activeStyles.badgeText}>● ACTIVA</Text>
+    <TouchableRipple onPress={onViewTickets} rippleColor="rgba(0,0,0,0.05)" borderless style={activeStyles.ripple}>
+      <Surface style={activeStyles.card} elevation={3}>
+        {/* Badge */}
+        <View style={activeStyles.badgeRow}>
+          <View style={activeStyles.badge}>
+            <Text style={activeStyles.badgeText}>● ACTIVA</Text>
+          </View>
+          {session.sessionCode && (
+            <Text style={activeStyles.code}>{session.sessionCode}</Text>
+          )}
         </View>
-        {session.sessionCode && (
-          <Text style={activeStyles.code}>{session.sessionCode}</Text>
-        )}
-      </View>
 
-      {/* Info */}
-      <Text style={activeStyles.location}>{locationName}</Text>
-      <View style={activeStyles.metaRow}>
-        <View style={activeStyles.metaCol}>
-          <Text style={activeStyles.metaLabel}>Apertura</Text>
-          <Text style={activeStyles.metaValue}>{formatDate(openedAt)}</Text>
-          <Text style={activeStyles.metaTime}>{formatTime(openedAt)}</Text>
+        {/* Info */}
+        <Text style={activeStyles.location}>{locationName}</Text>
+        <View style={activeStyles.metaRow}>
+          <View style={activeStyles.metaCol}>
+            <Text style={activeStyles.metaLabel}>Apertura</Text>
+            <Text style={activeStyles.metaValue}>{formatDate(openedAt)}</Text>
+            <Text style={activeStyles.metaTime}>{formatTime(openedAt)}</Text>
+          </View>
+          <View style={activeStyles.metaCol}>
+            <Text style={activeStyles.metaLabel}>Tickets</Text>
+            <Text style={activeStyles.metaValue}>{summary.ticketCount}</Text>
+          </View>
+          <View style={activeStyles.metaCol}>
+            <Text style={activeStyles.metaLabel}>Total</Text>
+            <Text style={activeStyles.metaValue}>{formatPrice(summary.total)}</Text>
+          </View>
         </View>
-        <View style={activeStyles.metaCol}>
-          <Text style={activeStyles.metaLabel}>Cierre automático</Text>
-          <Text style={activeStyles.metaValue}>{formatDate(autoCloseAt)}</Text>
-          <Text style={activeStyles.metaTime}>{formatTime(autoCloseAt)}</Text>
-        </View>
-        <View style={activeStyles.metaCol}>
-          <Text style={activeStyles.metaLabel}>Tickets</Text>
-          <Text style={activeStyles.metaValue}>{summary.ticketCount}</Text>
-        </View>
-        <View style={activeStyles.metaCol}>
-          <Text style={activeStyles.metaLabel}>Total</Text>
-          <Text style={activeStyles.metaValue}>{formatPrice(summary.total)}</Text>
-        </View>
-      </View>
 
-      {/* Actions */}
-      <View style={activeStyles.actions}>
-        <Button
-          mode="contained"
-          icon="receipt"
-          onPress={onViewTickets}
-          style={activeStyles.btn}
-          contentStyle={activeStyles.btnContent}
-          buttonColor="#1E88E5"
-        >
-          Ver tickets
-        </Button>
-        <Button
-          mode="outlined"
-          icon="stop-circle"
-          onPress={onCloseRequest}
-          contentStyle={activeStyles.btnContent}
-          textColor="#E53935"
-          style={[activeStyles.btn, activeStyles.closeBtn]}
-        >
-          Cerrar sesión
-        </Button>
-      </View>
-    </Surface>
+        {/* Auto-close notice */}
+        <Text style={activeStyles.autoCloseNote}>
+          La sesión se cierra automáticamente mañana a las 12:00
+        </Text>
+
+        {/* Actions */}
+        <View style={activeStyles.actions}>
+          <Button
+            mode="outlined"
+            icon="stop-circle"
+            onPress={(e) => { e.stopPropagation?.(); onCloseRequest(); }}
+            contentStyle={activeStyles.btnContent}
+            textColor="#E53935"
+            style={[activeStyles.btn, activeStyles.closeBtn]}
+          >
+            Cerrar sesión
+          </Button>
+        </View>
+      </Surface>
+    </TouchableRipple>
   );
 }
 
 const activeStyles = StyleSheet.create({
+  ripple: {
+    borderRadius: 14,
+    marginBottom: 24,
+  },
   card: {
     borderRadius: 14,
     padding: 18,
     backgroundColor: '#fff',
     gap: 10,
-    marginBottom: 24,
     borderLeftWidth: 4,
     borderLeftColor: '#43A047',
   },
@@ -229,10 +223,16 @@ const activeStyles = StyleSheet.create({
     gap: 16,
     flexWrap: 'wrap',
     marginTop: 4,
+    alignItems: 'flex-start',
   },
   metaCol: {
     gap: 2,
     minWidth: 70,
+  },
+  autoCloseNote: {
+    fontSize: 12,
+    color: '#888',
+    fontStyle: 'italic',
   },
   metaLabel: {
     fontSize: 11,
@@ -254,7 +254,6 @@ const activeStyles = StyleSheet.create({
     flexDirection: 'row',
     gap: 10,
     marginTop: 6,
-    flexWrap: 'wrap',
   },
   btn: {
     flex: 1,
@@ -265,6 +264,8 @@ const activeStyles = StyleSheet.create({
   },
   closeBtn: {
     borderColor: '#E53935',
+    flex: 1,
+    borderRadius: 8,
   },
 });
 

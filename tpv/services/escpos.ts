@@ -401,6 +401,46 @@ function _appendItemBytes(
 }
 
 // ---------------------------------------------------------------------------
+// Multi-ticket buffer — all tickets in one print job, single cut at the end
+// ---------------------------------------------------------------------------
+
+export function buildMultiTicketBuffer(
+  tickets: Ticket[],
+  isTest: boolean,
+  modifierLabels: Record<string, string>,
+): Uint8Array {
+  if (tickets.length === 0) return new Uint8Array(0);
+  if (tickets.length === 1) return buildTicketBuffer(tickets[0], isTest, modifierLabels);
+
+  const parts: (readonly number[] | Uint8Array)[] = [];
+  const rawLine = (text: string) => parts.push(encodeText(text + '\n'));
+
+  parts.push(CMD_INIT, CMD_FEED_TOP);
+
+  if (isTest) {
+    parts.push(CMD_ALIGN_CENTER, CMD_BOLD_ON);
+    rawLine('*** PRUEBA - NO VALIDO ***');
+    parts.push(CMD_BOLD_OFF);
+  }
+
+  for (const ticket of tickets) {
+    for (let i = 0; i < ticket.orders.length; i++) {
+      _appendOrderBytes(parts, ticket.orders[i], modifierLabels, ticket.ticketNumber, i);
+    }
+  }
+
+  if (isTest) {
+    parts.push(CMD_ALIGN_CENTER, CMD_BOLD_ON);
+    rawLine('*** PRUEBA - NO VALIDO ***');
+    parts.push(CMD_BOLD_OFF);
+  }
+
+  parts.push(CMD_FEED, CMD_CUT);
+
+  return concatBytes(...parts);
+}
+
+// ---------------------------------------------------------------------------
 // Legacy string-tag payload (react-native-thermal-printer format)
 // No longer used for printing — kept for reference only.
 // ---------------------------------------------------------------------------

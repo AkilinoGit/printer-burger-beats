@@ -318,43 +318,32 @@ export default function SessionDetailScreen(): React.JSX.Element {
               {/* Location */}
               <Text style={styles.locationName}>{location?.name ?? '—'}</Text>
 
-              {/* Dates */}
-              <View style={styles.datesCol}>
-                <View style={styles.dateRow}>
-                  <Text style={styles.dateLabel}>Apertura</Text>
-                  <Text style={styles.dateValue}>{formatDateTime(session.openedAt ?? session.createdAt)}</Text>
+              {/* Meta row: apertura + tickets + total */}
+              <View style={styles.metaRow}>
+                <View style={styles.metaCol}>
+                  <Text style={styles.metaLabel}>Apertura</Text>
+                  <Text style={styles.metaValue}>{formatDateTime(session.openedAt ?? session.createdAt)}</Text>
                 </View>
-                {isOpen && session.autoCloseAt != null && (
-                  <View style={styles.dateRow}>
-                    <Text style={styles.dateLabel}>Cierre automático</Text>
-                    <Text style={styles.dateValue}>{formatDateTime(session.autoCloseAt)}</Text>
-                  </View>
-                )}
-                {!isOpen && session.closedAt != null && (
-                  <View style={styles.dateRow}>
-                    <Text style={styles.dateLabel}>Cierre</Text>
-                    <Text style={styles.dateValue}>{formatDateTime(session.closedAt)}</Text>
-                  </View>
-                )}
-              </View>
-
-              <Divider style={styles.divider} />
-
-              {/* Totals row */}
-              <View style={styles.totalsRow}>
-                <View style={styles.totalItem}>
-                  <Text style={styles.totalLabel}>Tickets</Text>
-                  <Text style={styles.totalValue}>{tickets.length}</Text>
+                <View style={styles.metaCol}>
+                  <Text style={styles.metaLabel}>Tickets</Text>
+                  <Text style={styles.metaValue}>{tickets.length}</Text>
                 </View>
-                <View style={styles.totalItem}>
-                  <Text style={styles.totalLabel}>Pedidos</Text>
-                  <Text style={styles.totalValue}>{orderCount}</Text>
-                </View>
-                <View style={styles.totalItem}>
-                  <Text style={styles.totalLabel}>Total</Text>
-                  <Text style={[styles.totalValue, styles.grandTotal]}>{formatPrice(grandTotal)}</Text>
+                <View style={styles.metaCol}>
+                  <Text style={styles.metaLabel}>Total</Text>
+                  <Text style={[styles.metaValue, styles.grandTotal]}>{formatPrice(grandTotal)}</Text>
                 </View>
               </View>
+
+              {/* Auto-close / closed notice */}
+              {isOpen ? (
+                <Text style={styles.autoCloseNote}>
+                  La sesión se cierra automáticamente mañana a las 12:00
+                </Text>
+              ) : session.closedAt != null ? (
+                <Text style={styles.closedNote}>
+                  Cerrada el {formatDateTime(session.closedAt)}
+                </Text>
+              ) : null}
 
               {/* Close button (only when active) */}
               {isOpen && (
@@ -475,57 +464,45 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 
-  // location + dates
+  // location
   locationName: {
     fontSize: 24,
     fontWeight: '800',
     color: '#111',
   },
-  datesCol: { gap: 6 },
-  dateRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'baseline',
-    gap: 8,
-  },
-  dateLabel: {
-    fontSize: 12,
-    color: '#888',
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.4,
-    flexShrink: 0,
-  },
-  dateValue: {
-    fontSize: 13,
-    color: '#333',
-    fontWeight: '500',
-    textAlign: 'right',
-    flexShrink: 1,
-  },
 
-  divider: { marginVertical: 2 },
-
-  // totals
-  totalsRow: {
+  // meta row (apertura + tickets + total)
+  metaRow: {
     flexDirection: 'row',
-    gap: 24,
+    gap: 16,
     flexWrap: 'wrap',
+    alignItems: 'flex-start',
   },
-  totalItem: { gap: 2 },
-  totalLabel: {
+  metaCol: { gap: 2, minWidth: 70 },
+  metaLabel: {
     fontSize: 11,
     color: '#888',
     fontWeight: '600',
     textTransform: 'uppercase',
     letterSpacing: 0.4,
   },
-  totalValue: {
-    fontSize: 22,
-    fontWeight: '800',
+  metaValue: {
+    fontSize: 15,
+    fontWeight: '700',
     color: '#1a1a1a',
   },
   grandTotal: { color: '#1565C0' },
+
+  autoCloseNote: {
+    fontSize: 12,
+    color: '#888',
+    fontStyle: 'italic',
+  },
+  closedNote: {
+    fontSize: 12,
+    color: '#888',
+    fontStyle: 'italic',
+  },
 
   // close button
   closeBtn: {

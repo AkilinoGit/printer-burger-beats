@@ -5,12 +5,14 @@ import type { Order, OrderItem, PriceProfile, Ticket } from '../lib/types';
 interface TicketState {
   // --- data ---
   activeTicket: Ticket | null;
+  /** Tickets already saved & waiting to be printed together with the next one. */
+  pendingTickets: Ticket[];
 
   /**
    * Open a brand-new ticket (called before the first Order of a sale).
    * Returns the created Ticket so the caller can persist it in SQLite.
    */
-  openTicket: (sessionId: string, ticketNumber: number) => Ticket;
+  openTicket: (sessionId: string, ticketNumber: number, id?: string) => Ticket;
 
   /**
    * Build an Order from cart data and append it to the active ticket.
@@ -28,12 +30,18 @@ interface TicketState {
   }) => Order;
 
   /**
+   * Move activeTicket to pendingTickets and clear activeTicket.
+   * Called by "Añadir otro" after saving the current ticket to SQLite.
+   */
+  parkTicket: () => void;
+
+  /**
    * Mark the active ticket as printed (sets printedAt).
    * Does NOT clear the ticket — caller clears after successful BT print.
    */
   markPrinted: () => void;
 
-  /** Dispose of the active ticket after it has been fully saved & printed. */
+  /** Dispose of activeTicket and pendingTickets after printing. */
   clearActiveTicket: () => void;
 
   // --- selectors ---
@@ -43,16 +51,19 @@ interface TicketState {
 
 export const useTicketStore = create<TicketState>((set, get) => ({
   activeTicket: null,
+  pendingTickets: [],
 
-  openTicket: (sessionId, ticketNumber) => {
+  openTicket: (sessionId, ticketNumber, id) => {
     const ticket: Ticket = {
-      id: generateId(),
+      id: id ?? generateId(),
       sessionId,
       ticketNumber,
       orders: [],
       printedAt: null,
       syncStatus: 'pending',
       createdAt: new Date().toISOString(),
+      editedAt: null,
+      editCount: 0,
     };
     set({ activeTicket: ticket });
     return ticket;
@@ -99,7 +110,13 @@ export const useTicketStore = create<TicketState>((set, get) => ({
     });
   },
 
-  clearActiveTicket: () => set({ activeTicket: null }),
+  parkTicket: () => {
+    const ticket = get().activeTicket;
+    if (!ticket) return;
+    set((s) => ({ pendingTickets: [...s.pendingTickets, ticket], activeTicket: null }));
+  },
+
+  clearActiveTicket: () => set({ activeTicket: null, pendingTickets: [] }),
 
   ticketTotal: () => {
     const orders = get().activeTicket?.orders ?? [];
