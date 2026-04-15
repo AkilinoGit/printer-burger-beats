@@ -25,6 +25,7 @@ const SALSA_RADIO_NINO: Modifier = {
   type: 'radio',
   noSelectionLabel: 'Sin salsa',
   options: [
+    { id: 'salsa-sin-nada', label: 'Sin nada' },
     { id: 'salsa-ketchup',  label: 'Ketchup'  },
     { id: 'salsa-ali-oli',  label: 'Ali Oli'  },
     { id: 'salsa-mostaza',  label: 'Mostaza'  },
@@ -40,6 +41,7 @@ const SALSA_RADIO_ALITAS: Modifier = {
   type: 'radio',
   noSelectionLabel: 'Sin salsa',
   options: [
+    { id: 'salsa-sin-nada', label: 'Sin nada' },
     { id: 'salsa-ketchup',  label: 'Ketchup'  },
     { id: 'salsa-ali-oli',  label: 'Ali Oli'  },
     { id: 'salsa-mostaza',  label: 'Mostaza'  },
@@ -56,6 +58,7 @@ const SALSA_RADIO_TEKENOS: Modifier = {
   type: 'radio',
   noSelectionLabel: 'Sin salsa',
   options: [
+    { id: 'salsa-sin-nada', label: 'Sin nada' },
     { id: 'salsa-ketchup',  label: 'Ketchup'  },
     { id: 'salsa-ali-oli',  label: 'Ali Oli'  },
     { id: 'salsa-mostaza',  label: 'Mostaza'  },
@@ -80,6 +83,7 @@ const MOD_DOBLE_SUBWOOFER: Modifier[] = [
 ];
 
 const MOD_PATATAS: Modifier[] = [
+  { id: 'patatas-sin-nada',       label: 'Sin nada',       type: 'add' },
   { id: 'patatas-con-todo',       label: 'Con todo',       type: 'add' },
   { id: 'patatas-ketchup',        label: 'Ketchup',        type: 'add' },
   { id: 'patatas-mostaza-dulce',  label: 'Mostaza dulce',  type: 'add' },

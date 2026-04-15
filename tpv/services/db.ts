@@ -19,7 +19,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 const DB_NAME = 'tpv_v12.db';
-const SCHEMA_VERSION = 18;
+const SCHEMA_VERSION = 19;
 
 let _db: SQLite.SQLiteDatabase | null = null;
 let _initPromise: Promise<void> | null = null;
@@ -114,6 +114,9 @@ export async function initDb(): Promise<void> {
     }
     if (currentVersion < 18) {
       await migrate_v18(db); // purge sync_queue — no API yet, rows were never consumed
+    }
+    if (currentVersion < 19) {
+      await migrate_v19(db); // add Sin nada modifier to patatas, alitas, tekeños, burger-nino
     }
     await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
   })();
@@ -341,6 +344,32 @@ async function migrate_v17(db: SQLite.SQLiteDatabase): Promise<void> {
 
 async function migrate_v18(db: SQLite.SQLiteDatabase): Promise<void> {
   await db.runAsync("DELETE FROM sync_queue");
+}
+
+async function migrate_v19(db: SQLite.SQLiteDatabase): Promise<void> {
+  // Insert 'Sin nada' as first modifier for patatas, alitas, tekeños, burger-nino
+  await db.withExclusiveTransactionAsync(async (txn) => {
+    await txn.runAsync(
+      `INSERT OR IGNORE INTO modifiers (id, product_id, label, type, price_add, options, no_selection_label)
+       VALUES ('patatas-sin-nada', 'patatas', 'Sin nada', 'add', 0, '[]', NULL)`,
+    );
+    // salsa-sin-nada is a radio option — stored in the options JSON of each salsa radio modifier.
+    // Update options for alitas-salsa, tekenos-salsa, nino-salsa to prepend Sin nada.
+    const radioIds = ['alitas-salsa', 'tekenos-salsa', 'nino-salsa'];
+    for (const modId of radioIds) {
+      const row = await txn.getFirstAsync<{ options: string }>(
+        'SELECT options FROM modifiers WHERE id = ?', [modId],
+      );
+      if (!row) continue;
+      const opts: { id: string; label: string }[] = JSON.parse(row.options);
+      if (opts.some((o) => o.id === 'salsa-sin-nada')) continue; // already added
+      opts.unshift({ id: 'salsa-sin-nada', label: 'Sin nada' });
+      await txn.runAsync(
+        'UPDATE modifiers SET options = ? WHERE id = ?',
+        [JSON.stringify(opts), modId],
+      );
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
