@@ -14,8 +14,8 @@
 //   Package : ru.a402d.rawbtprinter
 
 import * as IntentLauncher from 'expo-intent-launcher';
-import type { Ticket } from '../lib/types';
-import { buildTicketBuffer, buildMultiTicketBuffer } from './escpos';
+import type { Session, Ticket } from '../lib/types';
+import { buildTicketBuffer, buildMultiTicketBuffer, buildSessionSummaryBuffer } from './escpos';
 import { log, perf } from './logger';
 
 // ---------------------------------------------------------------------------
@@ -214,6 +214,34 @@ export async function diagMethod2(base64Data: string): Promise<DiagResult> {
       ok: false,
       error: e instanceof Error ? e.message : String(e),
     };
+  }
+}
+
+/**
+ * Prints a session summary (all products sold, with variant breakdown).
+ */
+export async function printSessionSummary(
+  session: Session,
+  tickets: Ticket[],
+  locationName: string,
+): Promise<PrintResult> {
+  log.info('PRINT', `session summary — ${tickets.length} ticket(s)`);
+  try {
+    const bytes      = buildSessionSummaryBuffer(session, tickets, locationName);
+    const base64Data = _uint8ArrayToBase64(bytes);
+    IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+      data: 'rawbt:base64,' + base64Data,
+      packageName: RAWBT_PACKAGE,
+    }).catch((e: unknown) => {
+      const msg = e instanceof Error ? e.message : String(e);
+      log.error('PRINT', _isNotFoundError(msg) ? RAWBT_NOT_INSTALLED : msg);
+    });
+    log.info('PRINT', 'session summary intent fired');
+    return { ok: true };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    log.error('PRINT', msg);
+    return { ok: false, error: _isNotFoundError(msg) ? RAWBT_NOT_INSTALLED : msg };
   }
 }
 

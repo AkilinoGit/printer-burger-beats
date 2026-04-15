@@ -6,7 +6,7 @@
 // buildTicketCommands() is the legacy string-tag format (kept for reference,
 // no longer used for actual printing).
 
-import type { Order, OrderItem, Ticket } from '../lib/types';
+import type { Order, OrderItem, Session, Ticket } from '../lib/types';
 import { currentTime } from '../lib/utils';
 import { INITIAL_PRODUCTS } from '../lib/constants';
 
@@ -436,6 +436,323 @@ export function buildMultiTicketBuffer(
   }
 
   parts.push(CMD_FEED, CMD_CUT);
+
+  return concatBytes(...parts);
+}
+
+// ---------------------------------------------------------------------------
+// Session summary buffer
+// ---------------------------------------------------------------------------
+
+// Modifier IDs as stored in DB: add/remove use `${productId}-${modifierId}`,
+// radio option IDs are stored as-is (the optionId).
+const SUMMARY_MOD_IDS = new Set([
+  // Burger add/remove (productId-modifierId)
+  'fat-furious-mod_sin_gluten',     'fat-furious-sin-una-carne',     'fat-furious-extra-carne',
+  'ben-muerde-mod_sin_gluten',      'ben-muerde-sin-una-carne',      'ben-muerde-extra-bacon',
+  'doble-subwoofer-mod_sin_gluten', 'doble-subwoofer-sin-una-carne', 'doble-subwoofer-extra-bacon',
+  'burger-nino-mod_sin_gluten',     'burger-nino-nino-bacon',        'burger-nino-nino-verdura',
+  // Patatas add checkboxes (productId-modifierId)
+  'patatas-patatas-sin-nada', 'patatas-patatas-con-todo', 'patatas-patatas-ketchup',
+  'patatas-patatas-mostaza-dulce', 'patatas-patatas-ali-oli',
+  // Salsa radio options (optionId, shared across alitas/tekenos/nino)
+  'salsa-sin-nada', 'salsa-ketchup', 'salsa-ali-oli', 'salsa-mostaza',
+  'salsa-fat', 'salsa-ben', 'salsa-doble', 'salsa-mango',
+]);
+
+const SUMMARY_MOD_LABELS: Record<string, string> = {
+  // Burger
+  'fat-furious-mod_sin_gluten':      'Sin Gluten',
+  'fat-furious-sin-una-carne':       'Sin una carne',
+  'fat-furious-extra-carne':         'Extra carne',
+  'ben-muerde-mod_sin_gluten':       'Sin Gluten',
+  'ben-muerde-sin-una-carne':        'Sin una carne',
+  'ben-muerde-extra-bacon':          'Extra bacon',
+  'doble-subwoofer-mod_sin_gluten':  'Sin Gluten',
+  'doble-subwoofer-sin-una-carne':   'Sin una carne',
+  'doble-subwoofer-extra-bacon':     'Extra bacon',
+  'burger-nino-mod_sin_gluten':      'Sin Gluten',
+  'burger-nino-nino-bacon':          'Bacon',
+  'burger-nino-nino-verdura':        'Verdura',
+  // Patatas
+  'patatas-patatas-sin-nada':        'Sin nada',
+  'patatas-patatas-con-todo':        'Con todo',
+  'patatas-patatas-ketchup':         'Ketchup',
+  'patatas-patatas-mostaza-dulce':   'Mostaza dulce',
+  'patatas-patatas-ali-oli':         'Ali Oli',
+  // Salsas radio
+  'salsa-sin-nada':  'Sin nada',
+  'salsa-ketchup':   'Ketchup',
+  'salsa-ali-oli':   'Ali Oli',
+  'salsa-mostaza':   'Mostaza',
+  'salsa-fat':       'Fat',
+  'salsa-ben':       'Ben',
+  'salsa-doble':     'Doble',
+  'salsa-mango':     'Mango',
+};
+
+const SUMMARY_CAT_ORDER: Record<string, number> = { burger: 0, side: 1, drink: 2, custom: 3 };
+
+const SUMMARY_PRODUCT_CAT: Record<string, string> = {
+  'fat-furious': 'burger', 'ben-muerde': 'burger', 'doble-subwoofer': 'burger',
+  'patatas': 'side', 'alitas': 'side', 'tekenos': 'side', 'gyozas': 'side',
+  'bebida': 'drink', 'agua': 'drink',
+  'burger-nino': 'custom', 'otros': 'custom',
+};
+
+interface _SummaryVariant {
+  priceProfile: string;
+  mods:         string[];   // sorted relevant mod ids
+  qty:          number;
+  totalPrice:   number;
+}
+
+interface _SummaryGroup {
+  productId:   string;
+  productName: string;
+  category:    string;
+  totalQty:    number;
+  totalPrice:  number;
+  variants:    _SummaryVariant[];
+}
+
+function _buildSummaryGroups(tickets: Ticket[]): _SummaryGroup[] {
+  const productMap = new Map<string, _SummaryGroup>();
+  const variantMap = new Map<string, _SummaryVariant>();
+
+  for (const ticket of tickets) {
+    for (const order of ticket.orders) {
+      for (const item of order.items) {
+        const mods      = item.selectedModifiers.filter((id) => SUMMARY_MOD_IDS.has(id)).sort();
+        const vKey      = `${item.productId}|${order.priceProfile}|${mods.join(',')}`;
+        const linePrice = order.priceProfile === 'invitacion'
+          ? 0
+          : (item.unitPrice + item.modifierPriceAdd) * item.qty;
+
+        // product total
+        const pg = productMap.get(item.productId);
+        if (pg) {
+          pg.totalQty   += item.qty;
+          pg.totalPrice += linePrice;
+        } else {
+          productMap.set(item.productId, {
+            productId:   item.productId,
+            productName: sanitizeForPrinter(item.customLabel ?? item.productName),
+            category:    SUMMARY_PRODUCT_CAT[item.productId] ?? 'custom',
+            totalQty:    item.qty,
+            totalPrice:  linePrice,
+            variants:    [],
+          });
+        }
+
+        // variant total
+        const vt = variantMap.get(vKey);
+        if (vt) {
+          vt.qty        += item.qty;
+          vt.totalPrice += linePrice;
+        } else {
+          variantMap.set(vKey, { priceProfile: order.priceProfile, mods, qty: item.qty, totalPrice: linePrice });
+        }
+      }
+    }
+  }
+
+  // attach variants
+  for (const [vKey, vt] of variantMap) {
+    productMap.get(vKey.split('|')[0])?.variants.push(vt);
+  }
+
+  // sort variants: normal first, then feriante, invitacion; within profile fewer mods first
+  const profileOrd: Record<string, number> = { normal: 0, feriante: 1, invitacion: 2 };
+  for (const g of productMap.values()) {
+    g.variants.sort((a, b) => {
+      const pd = (profileOrd[a.priceProfile] ?? 0) - (profileOrd[b.priceProfile] ?? 0);
+      return pd !== 0 ? pd : a.mods.length - b.mods.length;
+    });
+  }
+
+  return Array.from(productMap.values()).sort((a, b) => {
+    const cd = (SUMMARY_CAT_ORDER[a.category] ?? 3) - (SUMMARY_CAT_ORDER[b.category] ?? 3);
+    return cd !== 0 ? cd : a.productName.localeCompare(b.productName, 'es');
+  });
+}
+
+function _summaryVariantLabel(priceProfile: string, mods: string[], category: string): string {
+  const parts: string[] = [];
+  if (priceProfile === 'feriante')   parts.push('OFERTA');
+  if (priceProfile === 'invitacion') parts.push('INVITACION');
+  for (const id of mods) {
+    const label = SUMMARY_MOD_LABELS[id];
+    if (label) parts.push(label);
+  }
+  if (parts.length > 0) return sanitizeForPrinter(parts.join(' + '));
+  return category === 'side' ? 'Sin nada' : 'NORMAL';
+}
+
+/**
+ * Prints a wide line: prefix(normal) + label(double-wide) + price(normal)
+ * fitting exactly CHARS_PER_LINE physical columns.
+ */
+function _appendSummaryLine(
+  parts: (readonly number[] | Uint8Array)[],
+  prefix: string,
+  label: string,
+  price: number,
+  bold: boolean,
+): void {
+  const priceStr   = price.toFixed(2);
+  const priceBlock = ' ' + priceStr.padStart(PRICE_FIELD);
+  const maxChars   = Math.floor((CHARS_PER_LINE - prefix.length - priceBlock.length) / 2);
+  const nameWide   = label.length > maxChars ? label.slice(0, maxChars - 1) + '.' : label;
+  const filler     = ' '.repeat(Math.max(0, CHARS_PER_LINE - prefix.length - nameWide.length * 2 - priceBlock.length));
+
+  if (bold) parts.push(CMD_BOLD_ON);
+  parts.push(CMD_ALIGN_LEFT, encodeText(prefix), CMD_SIZE_WIDE, encodeText(nameWide), CMD_SIZE_WIDE_OFF);
+  parts.push(encodeText(filler + priceBlock + '\n'));
+  if (bold) parts.push(CMD_BOLD_OFF);
+}
+
+const _PATATAS_SAUCE_MAP: Record<string, string[]> = {
+  'patatas-patatas-con-todo':      ['Ketchup', 'Ali Oli'],
+  'patatas-patatas-ketchup':       ['Ketchup'],
+  'patatas-patatas-mostaza-dulce': ['Mostaza'],
+  'patatas-patatas-ali-oli':       ['Ali Oli'],
+};
+
+const _BURGER_DEFAULT_SAUCE: Record<string, string> = {
+  'fat-furious':     'Fat',
+  'ben-muerde':      'Ben',
+  'doble-subwoofer': 'Doble',
+};
+
+const _RADIO_SAUCE_MAP: Record<string, string> = {
+  'salsa-ketchup': 'Ketchup', 'salsa-ali-oli': 'Ali Oli', 'salsa-mostaza': 'Mostaza',
+  'salsa-fat': 'Fat', 'salsa-ben': 'Ben', 'salsa-doble': 'Doble', 'salsa-mango': 'Mango',
+};
+
+const _RADIO_SAUCE_PRODUCTS = new Set(['alitas', 'tekenos', 'burger-nino']);
+
+const _SAUCE_ORDER = ['Fat', 'Ben', 'Doble', 'Ketchup', 'Ali Oli', 'Mostaza', 'Mango'];
+
+function _buildSauceSummary(tickets: Ticket[]): [string, number][] {
+  const tally = new Map<string, number>();
+  const add = (sauce: string, qty: number) => tally.set(sauce, (tally.get(sauce) ?? 0) + qty);
+
+  for (const ticket of tickets) {
+    for (const order of ticket.orders) {
+      if (order.priceProfile === 'invitacion') continue;
+      for (const item of order.items) {
+        const mods = item.selectedModifiers;
+        if (_BURGER_DEFAULT_SAUCE[item.productId]) {
+          if (!mods.some((id) => id.endsWith('-sin-salsa'))) {
+            add(_BURGER_DEFAULT_SAUCE[item.productId], item.qty);
+          }
+        } else if (item.productId === 'patatas') {
+          for (const modId of mods) {
+            for (const s of _PATATAS_SAUCE_MAP[modId] ?? []) add(s, item.qty);
+          }
+        } else if (_RADIO_SAUCE_PRODUCTS.has(item.productId)) {
+          for (const modId of mods) {
+            const s = _RADIO_SAUCE_MAP[modId];
+            if (s) add(s, item.qty);
+          }
+        }
+      }
+    }
+  }
+
+  return Array.from(tally.entries())
+    .filter(([, qty]) => qty > 0)
+    .sort(([a], [b]) => {
+      const ia = _SAUCE_ORDER.indexOf(a), ib = _SAUCE_ORDER.indexOf(b);
+      if (ia !== -1 && ib !== -1) return ia - ib;
+      if (ia !== -1) return -1;
+      if (ib !== -1) return 1;
+      return a.localeCompare(b, 'es');
+    });
+}
+
+export function buildSessionSummaryBuffer(
+  session: Session,
+  tickets: Ticket[],
+  locationName: string,
+): Uint8Array {
+  const parts: (readonly number[] | Uint8Array)[] = [];
+  const rawLine = (text: string) => parts.push(encodeText(text + '\n'));
+  const SEP     = '='.repeat(CHARS_PER_LINE);
+  const isOpen  = session.status === 'open';
+
+  parts.push(CMD_INIT, CMD_FEED_TOP);
+
+  // ── Header ────────────────────────────────────────────────────────────────
+  parts.push(CMD_ALIGN_CENTER);
+  parts.push(CMD_SIZE_WIDE);
+  rawLine(sanitizeForPrinter(locationName).slice(0, 16));
+  parts.push(CMD_SIZE_WIDE_OFF);
+
+  const openedAt = session.openedAt ?? session.createdAt;
+  rawLine(sanitizeForPrinter(new Date(openedAt).toLocaleDateString('es-ES', {
+    day: '2-digit', month: '2-digit', year: 'numeric',
+  })));
+
+  if (isOpen) rawLine('RESUMEN PARCIAL');
+  rawLine(SEP);
+
+  // ── Product groups ────────────────────────────────────────────────────────
+  const groups = _buildSummaryGroups(tickets);
+
+  for (const group of groups) {
+    // Main product line (bold)
+    _appendSummaryLine(parts, 'x' + group.totalQty + ' ', group.productName, group.totalPrice, true);
+
+    // Always show variants for sides; for other categories only when meaningful.
+    const needVariants = group.variants.length > 0 && (
+      group.category === 'side' ||
+      group.variants.length > 1 || (
+        group.variants[0].priceProfile !== 'normal' ||
+        group.variants[0].mods.length > 0
+      )
+    );
+
+    if (needVariants) {
+      for (const v of group.variants) {
+        const label     = _summaryVariantLabel(v.priceProfile, v.mods, group.category);
+        const priceStr  = v.totalPrice.toFixed(2);
+        const prefix    = '  x' + v.qty + ' ';
+        const available = CHARS_PER_LINE - prefix.length - priceStr.length - 1;
+        const padded    = sanitizeForPrinter(label).padEnd(available).slice(0, available);
+        parts.push(CMD_ALIGN_LEFT);
+        parts.push(encodeText(prefix + padded + ' ' + priceStr + '\n'));
+      }
+    }
+  }
+
+  // ── Sauce summary ─────────────────────────────────────────────────────────
+  const sauces = _buildSauceSummary(tickets);
+  if (sauces.length > 0) {
+    rawLine(SEP);
+    parts.push(CMD_ALIGN_CENTER, CMD_BOLD_ON);
+    rawLine('SALSAS');
+    parts.push(CMD_BOLD_OFF, CMD_ALIGN_LEFT);
+    for (const [sauce, qty] of sauces) {
+      const qtyStr  = 'x' + qty;
+      const filler  = ' '.repeat(Math.max(1, CHARS_PER_LINE - sauce.length - qtyStr.length));
+      rawLine(sauce + filler + qtyStr);
+    }
+  }
+
+  // ── Footer ────────────────────────────────────────────────────────────────
+  rawLine(SEP);
+
+  const grandTotal = groups.reduce((s, g) => s + g.totalPrice, 0);
+  parts.push(CMD_ALIGN_CENTER, CMD_SIZE_WIDE);
+  rawLine(sanitizeForPrinter('TOTAL ' + grandTotal.toFixed(2)));
+  parts.push(CMD_SIZE_WIDE_OFF);
+  rawLine(SEP);
+
+  if (isOpen) rawLine('*** SESION EN CURSO ***');
+
+  parts.push(encodeText('\n\n\n'), CMD_CUT);
 
   return concatBytes(...parts);
 }

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { useFocusEffect } from 'expo-router';
 import {
   FlatList,
   ScrollView,
@@ -57,9 +58,10 @@ interface SessionCardProps {
   session: Session;
   locationName: string;
   onPress: () => void;
+  onViewSummary: () => void;
 }
 
-function SessionCard({ session, locationName, onPress }: SessionCardProps): React.JSX.Element {
+function SessionCard({ session, locationName, onPress, onViewSummary }: SessionCardProps): React.JSX.Element {
   const [summary, setSummary] = useState<{ ticketCount: number; total: number }>({ ticketCount: 0, total: 0 });
 
   useEffect(() => {
@@ -67,21 +69,43 @@ function SessionCard({ session, locationName, onPress }: SessionCardProps): Reac
   }, [session.id]);
 
   return (
-    <TouchableRipple onPress={onPress} rippleColor="rgba(0,0,0,0.06)">
-      <View style={cardStyles.row}>
-        <View style={cardStyles.left}>
-          <Text style={cardStyles.date}>{formatDate(session.openedAt ?? session.createdAt)}</Text>
-          <Text style={cardStyles.location}>{locationName}</Text>
-          {session.sessionCode && (
-            <Text style={cardStyles.code}>{session.sessionCode}</Text>
-          )}
+    <View>
+      <TouchableRipple onPress={onPress} rippleColor="rgba(0,0,0,0.06)">
+        <View style={cardStyles.row}>
+          <View style={cardStyles.left}>
+            <Text style={cardStyles.date}>{formatDate(session.openedAt ?? session.createdAt)}</Text>
+            <Text style={cardStyles.location}>{locationName}</Text>
+            {session.sessionCode && (
+              <Text style={cardStyles.code}>{session.sessionCode}</Text>
+            )}
+          </View>
+          <View style={cardStyles.right}>
+            <Text style={cardStyles.total}>{formatPrice(summary.total)}</Text>
+            <Text style={cardStyles.tickets}>{summary.ticketCount} ticket{summary.ticketCount !== 1 ? 's' : ''}</Text>
+          </View>
         </View>
-        <View style={cardStyles.right}>
-          <Text style={cardStyles.total}>{formatPrice(summary.total)}</Text>
-          <Text style={cardStyles.tickets}>{summary.ticketCount} ticket{summary.ticketCount !== 1 ? 's' : ''}</Text>
-        </View>
+      </TouchableRipple>
+      <View style={cardStyles.actions}>
+        <Button
+          mode="text"
+          icon="format-list-bulleted"
+          onPress={onPress}
+          compact
+          style={cardStyles.actionBtn}
+        >
+          Ver tickets
+        </Button>
+        <Button
+          mode="text"
+          icon="chart-bar"
+          onPress={onViewSummary}
+          compact
+          style={cardStyles.actionBtn}
+        >
+          Ver resumen
+        </Button>
       </View>
-    </TouchableRipple>
+    </View>
   );
 }
 
@@ -92,8 +116,6 @@ const cardStyles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 14,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#e0e0e0',
     gap: 8,
   },
   left: { flex: 1, gap: 3 },
@@ -103,6 +125,14 @@ const cardStyles = StyleSheet.create({
   code: { fontSize: 12, color: '#1565C0', fontWeight: '600' },
   total: { fontSize: 16, fontWeight: '800', color: '#1a1a1a' },
   tickets: { fontSize: 12, color: '#888' },
+  actions: {
+    flexDirection: 'row',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#e0e0e0',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  actionBtn: { flex: 1 },
 });
 
 // ---------------------------------------------------------------------------
@@ -112,16 +142,13 @@ const cardStyles = StyleSheet.create({
 interface ActiveSessionCardProps {
   session: Session;
   locationName: string;
+  summary: { ticketCount: number; total: number };
   onViewTickets: () => void;
+  onViewSummary: () => void;
   onCloseRequest: () => void;
 }
 
-function ActiveSessionCard({ session, locationName, onViewTickets, onCloseRequest }: ActiveSessionCardProps): React.JSX.Element {
-  const [summary, setSummary] = useState<{ ticketCount: number; total: number }>({ ticketCount: 0, total: 0 });
-
-  useEffect(() => {
-    getSessionSummary(session.id).then(setSummary).catch(() => {});
-  }, [session.id]);
+function ActiveSessionCard({ session, locationName, summary, onViewTickets, onViewSummary, onCloseRequest }: ActiveSessionCardProps): React.JSX.Element {
   const openedAt = session.openedAt ?? session.createdAt;
 
   return (
@@ -162,6 +189,25 @@ function ActiveSessionCard({ session, locationName, onViewTickets, onCloseReques
 
         {/* Actions */}
         <View style={activeStyles.actions}>
+          <Button
+            mode="contained"
+            icon="ticket-outline"
+            onPress={(e) => { e.stopPropagation?.(); onViewTickets(); }}
+            contentStyle={activeStyles.btnContent}
+            style={activeStyles.btn}
+            buttonColor="#1565C0"
+          >
+            Ver tickets
+          </Button>
+          <Button
+            mode="contained-tonal"
+            icon="chart-bar"
+            onPress={(e) => { e.stopPropagation?.(); onViewSummary(); }}
+            contentStyle={activeStyles.btnContent}
+            style={activeStyles.btn}
+          >
+            Ver resumen
+          </Button>
           <Button
             mode="outlined"
             icon="stop-circle"
@@ -251,7 +297,7 @@ const activeStyles = StyleSheet.create({
     color: '#555',
   },
   actions: {
-    flexDirection: 'row',
+    flexDirection: 'column',
     gap: 10,
     marginTop: 6,
   },
@@ -293,6 +339,7 @@ export default function SessionScreen(): React.JSX.Element {
   const [opening, setOpening]                   = useState(false);
   const [closing, setClosing]                   = useState(false);
   const [closeDialogVisible, setCloseDialogVisible] = useState(false);
+  const [activeSummary, setActiveSummary]       = useState<{ ticketCount: number; total: number }>({ ticketCount: 0, total: 0 });
 
   // New session selector
   const [selectedLocationId, setSelectedLocationId] = useState<string>('');
@@ -323,6 +370,13 @@ export default function SessionScreen(): React.JSX.Element {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { void loadData(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Refresh active session summary every time the tab comes into focus
+  useFocusEffect(useCallback(() => {
+    if (activeSession?.id) {
+      getSessionSummary(activeSession.id).then(setActiveSummary).catch(() => {});
+    }
+  }, [activeSession?.id]));
 
   // ── open session ──────────────────────────────────────────────────────────
   async function handleOpenSession(): Promise<void> {
@@ -397,7 +451,9 @@ export default function SessionScreen(): React.JSX.Element {
                 <ActiveSessionCard
                   session={activeSession}
                   locationName={locationName(activeSession.locationId)}
+                  summary={activeSummary}
                   onViewTickets={() => router.push(`/session/${activeSession.id}`)}
+                  onViewSummary={() => router.push(`/session/summary/${activeSession.id}`)}
                   onCloseRequest={() => setCloseDialogVisible(true)}
                 />
               </>
@@ -488,6 +544,7 @@ export default function SessionScreen(): React.JSX.Element {
               session={item}
               locationName={locationName(item.locationId)}
               onPress={() => router.push(`/session/${item.id}`)}
+              onViewSummary={() => router.push(`/session/summary/${item.id}`)}
             />
           </Surface>
         )}

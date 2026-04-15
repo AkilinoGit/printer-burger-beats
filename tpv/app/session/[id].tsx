@@ -345,6 +345,17 @@ export default function SessionDetailScreen(): React.JSX.Element {
                 </Text>
               ) : null}
 
+              {/* Ver resumen — always visible */}
+              <Button
+                mode="contained-tonal"
+                icon="chart-bar"
+                onPress={() => router.push(`/session/summary/${session.id}`)}
+                style={styles.summaryBtn}
+                contentStyle={styles.closeBtnContent}
+              >
+                Ver resumen
+              </Button>
+
               {/* Close button (only when active) */}
               {isOpen && (
                 <Button
@@ -505,6 +516,9 @@ const styles = StyleSheet.create({
   },
 
   // close button
+  summaryBtn: {
+    borderRadius: 8,
+  },
   closeBtn: {
     borderColor: '#E53935',
     borderRadius: 8,
