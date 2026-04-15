@@ -242,10 +242,9 @@ export default function SettingsScreen(): React.JSX.Element {
           </View>
           <Button
             mode="outlined"
-            icon="tag-multiple"
+            icon="pencil"
             onPress={openFeriantePrices}
             style={styles.priceActionBtn}
-            textColor="#1E88E5"
           >
             Editar
           </Button>
