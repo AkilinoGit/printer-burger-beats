@@ -122,7 +122,7 @@ function ticketTotal(ticket: Ticket): number {
   return ticket.orders.reduce((sum, o) => sum + o.total, 0);
 }
 
-function variantLabel(priceProfile: string, mods: string[], category: ProductCategory): string {
+function variantLabel(priceProfile: string, mods: string[]): string {
   const parts: string[] = [];
   if (priceProfile === 'feriante')   parts.push('OFERTA');
   if (priceProfile === 'invitacion') parts.push('INVITACIÓN');
@@ -130,8 +130,7 @@ function variantLabel(priceProfile: string, mods: string[], category: ProductCat
     const l = MOD_LABELS[id];
     if (l) parts.push(l);
   }
-  if (parts.length > 0) return parts.join(' + ');
-  return category === 'side' ? 'Sin nada' : 'NORMAL';
+  return parts.length > 0 ? parts.join(' + ') : 'Normal';
 }
 
 // ---------------------------------------------------------------------------
@@ -174,6 +173,13 @@ const RADIO_SAUCE_MAP: Record<string, string> = {
 // Products that use radio sauce
 const RADIO_SAUCE_PRODUCTS = new Set(['alitas', 'tekenos', 'burger-nino']);
 
+// Default sauce when no radio option is selected (Normal = su salsa habitual)
+const DEFAULT_SAUCE_WHEN_NORMAL: Record<string, string> = {
+  'alitas':  'Salsa Alitas',
+  'tekenos': 'Mango',
+  'gyozas':  'Soja',
+};
+
 function buildSauceSummary(tickets: Ticket[]): SauceTally[] {
   const tally = new Map<string, number>();
 
@@ -205,10 +211,19 @@ function buildSauceSummary(tickets: Ticket[]): SauceTally[] {
 
         // Alitas / Tekeños / Burger Niño: radio option
         } else if (RADIO_SAUCE_PRODUCTS.has(item.productId)) {
-          for (const modId of mods) {
-            const sauce = RADIO_SAUCE_MAP[modId];
-            if (sauce) add(sauce, item.qty);
+          const radioSauce = mods.map((id) => RADIO_SAUCE_MAP[id]).find(Boolean);
+          if (radioSauce) {
+            add(radioSauce, item.qty);
+          } else if (!mods.includes('salsa-sin-nada')) {
+            // No selection = Normal = su salsa por defecto
+            const def = DEFAULT_SAUCE_WHEN_NORMAL[item.productId];
+            if (def) add(def, item.qty);
           }
+
+        // Gyozas: siempre soja salvo que no tenga salsa (no tiene radio, así que siempre)
+        } else if (item.productId === 'gyozas') {
+          const def = DEFAULT_SAUCE_WHEN_NORMAL['gyozas'];
+          if (def) add(def, item.qty);
         }
       }
     }
@@ -321,7 +336,7 @@ function ProductGroupCard({ group }: { group: ProductGroup }): React.JSX.Element
       {showVariants && group.variants.map((v) => (
         <View key={v.key} style={cardStyles.variantRow}>
           <Text style={cardStyles.variantQty}>x{v.qty}</Text>
-          <Text style={cardStyles.variantLabel}>{variantLabel(v.priceProfile, v.mods, group.category)}</Text>
+          <Text style={cardStyles.variantLabel}>{variantLabel(v.priceProfile, v.mods)}</Text>
           <Text style={cardStyles.variantPrice}>{formatPrice(v.totalPrice)}</Text>
         </View>
       ))}

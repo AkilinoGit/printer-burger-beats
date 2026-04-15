@@ -534,7 +534,7 @@ function _buildSummaryGroups(tickets: Ticket[]): _SummaryGroup[] {
   });
 }
 
-function _summaryVariantLabel(priceProfile: string, mods: string[], category: string): string {
+function _summaryVariantLabel(priceProfile: string, mods: string[]): string {
   const parts: string[] = [];
   if (priceProfile === 'feriante')   parts.push('OFERTA');
   if (priceProfile === 'invitacion') parts.push('INVITACION');
@@ -542,8 +542,7 @@ function _summaryVariantLabel(priceProfile: string, mods: string[], category: st
     const label = SUMMARY_MOD_LABELS[id];
     if (label) parts.push(label);
   }
-  if (parts.length > 0) return sanitizeForPrinter(parts.join(' + '));
-  return category === 'side' ? 'Sin nada' : 'NORMAL';
+  return sanitizeForPrinter(parts.length > 0 ? parts.join(' + ') : 'Normal');
 }
 
 /**
@@ -589,6 +588,12 @@ const _RADIO_SAUCE_MAP: Record<string, string> = {
 
 const _RADIO_SAUCE_PRODUCTS = new Set(['alitas', 'tekenos', 'burger-nino']);
 
+const _DEFAULT_SAUCE_WHEN_NORMAL: Record<string, string> = {
+  'alitas':  'Salsa Alitas',
+  'tekenos': 'Mango',
+  'gyozas':  'Soja',
+};
+
 const _SAUCE_ORDER = ['Fat', 'Ben', 'Doble', 'Ketchup', 'Ali Oli', 'Mostaza', 'Mango'];
 
 function _buildSauceSummary(tickets: Ticket[]): [string, number][] {
@@ -609,10 +614,15 @@ function _buildSauceSummary(tickets: Ticket[]): [string, number][] {
             for (const s of _PATATAS_SAUCE_MAP[modId] ?? []) add(s, item.qty);
           }
         } else if (_RADIO_SAUCE_PRODUCTS.has(item.productId)) {
-          for (const modId of mods) {
-            const s = _RADIO_SAUCE_MAP[modId];
-            if (s) add(s, item.qty);
+          const radioSauce = mods.map((id) => _RADIO_SAUCE_MAP[id]).find(Boolean);
+          if (radioSauce) {
+            add(radioSauce, item.qty);
+          } else if (!mods.includes('salsa-sin-nada')) {
+            const def = _DEFAULT_SAUCE_WHEN_NORMAL[item.productId];
+            if (def) add(def, item.qty);
           }
+        } else if (item.productId === 'gyozas') {
+          add(_DEFAULT_SAUCE_WHEN_NORMAL['gyozas'], item.qty);
         }
       }
     }
@@ -673,7 +683,7 @@ export function buildSessionSummaryBuffer(
 
     if (needVariants) {
       for (const v of group.variants) {
-        const label     = _summaryVariantLabel(v.priceProfile, v.mods, group.category);
+        const label     = _summaryVariantLabel(v.priceProfile, v.mods);
         const priceStr  = v.totalPrice.toFixed(2);
         const prefix    = '  x' + v.qty + ' ';
         const available = CHARS_PER_LINE - prefix.length - priceStr.length - 1;
