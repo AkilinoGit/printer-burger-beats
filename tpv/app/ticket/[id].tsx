@@ -190,6 +190,8 @@ export default function TicketScreen(): React.JSX.Element {
   const incrementItem = useCartStore((s) => s.incrementItem);
   const decrementItem = useCartStore((s) => s.decrementItem);
   const removeItem    = useCartStore((s) => s.removeItem);
+  const setClientName = useCartStore((s) => s.setClientName);
+  const addProduct    = useCartStore((s) => s.addProduct);
 
 
   const nextTicketNumber = useSessionStore((s) => s.nextTicketNumber);
@@ -208,7 +210,6 @@ export default function TicketScreen(): React.JSX.Element {
   const [paidAmount, setPaidAmount]         = useState<number | null>(null);
   const [paidChange, setPaidChange]         = useState<number | null>(null);
   const [actionState, setActionState]       = useState<ActionState>('idle');
-  const [qtyItem, setQtyItem]               = useState<OrderItem | null>(null);
 
   // ── saved-ticket state ────────────────────────────────────────────────────
   const [savedTicket,  setSavedTicket]  = useState<import('../../lib/types').Ticket | null>(null);
@@ -218,9 +219,6 @@ export default function TicketScreen(): React.JSX.Element {
   // Deep clone of ticket.orders that the user edits; discarded on Cancel
   const [editOrders, setEditOrders] = useState<Order[]>([]);
   const [saving, setSaving] = useState(false);
-  const [reprintDialogVisible, setReprintDialogVisible] = useState(false);
-  // After save we keep a ref to the updated ticket to pass to reprint
-  const savedTicketRef = useRef<import('../../lib/types').Ticket | null>(null);
 
   // Edit mode — add product to a specific order
   const [addingToOrderId, setAddingToOrderId] = useState<string | null>(null);
@@ -323,7 +321,7 @@ async function handleAddAnother(): Promise<void> {
     done();
     log.info('TICKET', 'order saved, back to home');
     clearCart();
-    router.replace('/');
+    router.back();
   } catch (e) {
     log.error('TICKET', 'handleAddAnother failed', e instanceof Error ? e.message : String(e));
     Alert.alert('Error', e instanceof Error ? e.message : 'No se pudo guardar el pedido');
@@ -519,14 +517,20 @@ async function handleAddAnother(): Promise<void> {
       };
       await updateTicketWithOrders(updatedTicket);
 
-      // Refresh local state
       const refreshed = await getTicketById(savedTicket.id);
       setSavedTicket(refreshed);
-      savedTicketRef.current = refreshed;
 
       setMode('view');
       setEditOrders([]);
-      setReprintDialogVisible(true);
+
+      if (refreshed) {
+        const result = await printTicket(refreshed, testMode, MODIFIER_LABELS, RADIO_NO_SELECTION, RADIO_OPTION_SETS);
+        if (!result.ok) {
+          Alert.alert('Error de impresión', result.error ?? 'No se pudo conectar con la impresora');
+        } else if (!testMode) {
+          await markTicketPrinted(refreshed.id);
+        }
+      }
     } catch (e) {
       Alert.alert('Error', e instanceof Error ? e.message : 'No se pudo guardar');
     } finally {
@@ -544,17 +548,6 @@ async function handleAddAnother(): Promise<void> {
     }
   }
 
-  async function handleReprintAfterSave(): Promise<void> {
-    setReprintDialogVisible(false);
-    const ticket = savedTicketRef.current;
-    if (!ticket) return;
-    const result = await printTicket(ticket, testMode, MODIFIER_LABELS, RADIO_NO_SELECTION, RADIO_OPTION_SETS);
-    if (!result.ok) {
-      Alert.alert('Error de impresión', result.error ?? 'No se pudo conectar con la impresora');
-    } else if (!testMode) {
-      await markTicketPrinted(ticket.id);
-    }
-  }
 
   // ── guard: no session (new mode) ──────────────────────────────────────────
   if (isNew && !hasSession) {
@@ -647,12 +640,6 @@ async function handleAddAnother(): Promise<void> {
       <ViewModeScreen
         ticket={savedTicket}
         modifierLabels={MODIFIER_LABELS}
-        reprintDialogVisible={reprintDialogVisible}
-        onReprintConfirm={() => void handleReprintAfterSave()}
-        onReprintDismiss={() => {
-          setReprintDialogVisible(false);
-          router.back();
-        }}
         onStartEdit={handleStartEdit}
         onDeleteTicket={() => void handleDeleteTicket()}
       />
@@ -675,18 +662,18 @@ async function handleAddAnother(): Promise<void> {
       hasItems={hasItems}
       previewTicket={previewTicket}
       modifierLabels={MODIFIER_LABELS}
+      products={products}
       onCobrar={handleCobrar}
       onPaymentConfirm={handlePaymentConfirm}
       onPaymentDismiss={() => setPaymentVisible(false)}
       paymentVisible={paymentVisible}
       onAddAnother={() => void handleAddAnother()}
       onPrint={() => void handlePrint()}
-      qtyItem={qtyItem}
-      onLongPressItem={setQtyItem}
-      onQtyItemDismiss={() => setQtyItem(null)}
       onIncrementItem={incrementItem}
-      onDecrementItem={(id) => { decrementItem(id); if (qtyItem?.id === id) setQtyItem(null); }}
-      onRemoveItem={(id) => { removeItem(id); setQtyItem(null); }}
+      onDecrementItem={decrementItem}
+      onRemoveItem={removeItem}
+      onSetClientName={setClientName}
+      onAddProduct={addProduct}
     />
   );
 }
@@ -698,17 +685,11 @@ async function handleAddAnother(): Promise<void> {
 function ViewModeScreen({
   ticket,
   modifierLabels,
-  reprintDialogVisible,
-  onReprintConfirm,
-  onReprintDismiss,
   onStartEdit,
   onDeleteTicket,
 }: {
   ticket: import('../../lib/types').Ticket;
   modifierLabels: Record<string, string>;
-  reprintDialogVisible: boolean;
-  onReprintConfirm: () => void;
-  onReprintDismiss: () => void;
   onStartEdit: () => void;
   onDeleteTicket: () => void;
 }): React.JSX.Element {
@@ -720,31 +701,29 @@ function ViewModeScreen({
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
         {/* Header */}
         <Surface style={styles.viewHeader} elevation={1}>
-          <View style={styles.viewHeaderTop}>
-            <Text style={styles.viewTicketNum}>Comanda #{ticket.ticketNumber}</Text>
-            <View style={styles.viewHeaderActions}>
-              <Button
-                mode="contained-tonal"
-                icon="pencil"
-                onPress={onStartEdit}
-                compact
-                style={styles.editBtn}
-                contentStyle={styles.editBtnContent}
-              >
-                Editar ticket
-              </Button>
-              <Button
-                mode="contained"
-                icon="delete"
-                onPress={() => setDeleteDialogVisible(true)}
-                compact
-                style={styles.editBtn}
-                contentStyle={styles.editBtnContent}
-                buttonColor="#E53935"
-              >
-                Eliminar
-              </Button>
-            </View>
+          <Text style={styles.viewTicketNum}>Comanda #{ticket.ticketNumber}</Text>
+          <View style={styles.viewHeaderActions}>
+            <Button
+              mode="contained-tonal"
+              icon="pencil"
+              onPress={onStartEdit}
+              compact
+              style={styles.editBtn}
+              contentStyle={styles.editBtnContent}
+            >
+              Editar ticket
+            </Button>
+            <Button
+              mode="contained"
+              icon="delete"
+              onPress={() => setDeleteDialogVisible(true)}
+              compact
+              style={styles.editBtn}
+              contentStyle={styles.editBtnContent}
+              buttonColor="#E53935"
+            >
+              Eliminar
+            </Button>
           </View>
           {ticket.editedAt != null && (
             <View style={styles.editedBadge}>
@@ -802,21 +781,6 @@ function ViewModeScreen({
         </Dialog>
       </Portal>
 
-      {/* Reprint dialog (shown after save) */}
-      <Portal>
-        <Dialog visible={reprintDialogVisible} onDismiss={onReprintDismiss}>
-          <Dialog.Title>¿Reimprimir ticket?</Dialog.Title>
-          <Dialog.Content>
-            <Text variant="bodyMedium">El ticket se ha guardado correctamente. ¿Quieres reimprimirlo en la impresora?</Text>
-          </Dialog.Content>
-          <Dialog.Actions>
-            <Button onPress={onReprintDismiss}>No, solo guardar</Button>
-            <Button mode="contained" onPress={onReprintConfirm} buttonColor="#E53935" icon="printer">
-              Reimprimir
-            </Button>
-          </Dialog.Actions>
-        </Dialog>
-      </Portal>
     </View>
   );
 }
@@ -1043,18 +1007,18 @@ interface NewTicketProps {
   hasItems: boolean;
   previewTicket: import('../../lib/types').Ticket | null;
   modifierLabels: Record<string, string>;
+  products: Product[];
   paymentVisible: boolean;
   onCobrar: () => void;
   onPaymentConfirm: (amount: number, change: number) => void;
   onPaymentDismiss: () => void;
   onAddAnother: () => void;
   onPrint: () => void;
-  qtyItem: OrderItem | null;
-  onLongPressItem: (item: OrderItem) => void;
-  onQtyItemDismiss: () => void;
   onIncrementItem: (id: string) => void;
   onDecrementItem: (id: string) => void;
   onRemoveItem: (id: string) => void;
+  onSetClientName: (name: string) => void;
+  onAddProduct: (product: Product, selectedModifiers: string[], customLabel?: string) => void;
 }
 
 function NewTicketScreen({
@@ -1062,9 +1026,41 @@ function NewTicketScreen({
   paidAmount, paidChange, actionState, isBusy, hasItems, previewTicket, modifierLabels,
   paymentVisible, onCobrar, onPaymentConfirm, onPaymentDismiss,
   onAddAnother, onPrint,
-  qtyItem, onLongPressItem, onQtyItemDismiss, onIncrementItem, onDecrementItem, onRemoveItem,
+  onIncrementItem, onDecrementItem, onRemoveItem,
+  onSetClientName, onAddProduct, products,
 }: NewTicketProps): React.JSX.Element {
   const insets = useSafeAreaInsets();
+  const [renameVisible, setRenameVisible] = React.useState(false);
+  const [renameText, setRenameText] = React.useState('');
+  const [addingProduct, setAddingProduct] = React.useState(false);
+  const [sheetProduct, setSheetProduct] = React.useState<Product | null>(null);
+
+  function handleRenameOpen(): void {
+    setRenameText(clientName);
+    setRenameVisible(true);
+  }
+  function handleRenameConfirm(): void {
+    onSetClientName(renameText.trim());
+    setRenameVisible(false);
+  }
+  function handleProductSelected(product: Product): void {
+    if (product.isCustom) return; // custom handled via index screen
+    if (product.alwaysShowModifiers && product.modifiers.length > 0) {
+      setSheetProduct(product);
+      return;
+    }
+    onAddProduct(product, []);
+    setAddingProduct(false);
+  }
+  function handleProductLongPress(product: Product): void {
+    if (product.modifiers.length > 0) setSheetProduct(product);
+  }
+  function handleModifierConfirm(mods: string[]): void {
+    if (sheetProduct) onAddProduct(sheetProduct, mods);
+    setSheetProduct(null);
+    setAddingProduct(false);
+  }
+
   return (
     <View style={styles.root}>
       <Banner visible={testMode} style={styles.testBanner} icon="alert">
@@ -1083,24 +1079,45 @@ function NewTicketScreen({
       )}
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
-        <View style={styles.clientRow}>
-          <Text style={styles.clientLabel}>Cliente</Text>
-          <Text style={styles.clientName}>{clientName || '—'}</Text>
-        </View>
-        <Divider />
+        {/* Client header */}
+        <Surface style={styles.editOrderCard} elevation={1}>
+          <View style={styles.editOrderHeader}>
+            <Text style={styles.editClientName}>{clientName || '—'}</Text>
+            <View style={styles.editOrderHeaderActions}>
+              <Button compact mode="text" icon="account-edit" onPress={handleRenameOpen} textColor="#1E88E5">
+                Nombre
+              </Button>
+            </View>
+          </View>
 
-        {cartItems.length === 0 ? (
-          <Text style={styles.emptyText}>No hay productos en el carrito</Text>
-        ) : (
-          cartItems.map((item) => (
-            <OrderItemRow
-              key={item.id}
-              item={item}
-              modifierLabels={modifierLabels}
-              onLongPress={() => onLongPressItem(item)}
-            />
-          ))
-        )}
+          <Divider />
+
+          {cartItems.length === 0 ? (
+            <Text style={styles.emptyOrderText}>No hay productos en el carrito</Text>
+          ) : (
+            cartItems.map((item) => (
+              <EditableItemRow
+                key={item.id}
+                item={item}
+                modifierLabels={modifierLabels}
+                onIncrement={() => onIncrementItem(item.id)}
+                onDecrement={() => onDecrementItem(item.id)}
+                onRemove={() => onRemoveItem(item.id)}
+              />
+            ))
+          )}
+
+          <Button
+            mode="text"
+            icon="plus"
+            onPress={() => setAddingProduct(true)}
+            style={styles.addProductBtn}
+            contentStyle={styles.addProductBtnContent}
+            textColor="#1E88E5"
+          >
+            Añadir producto
+          </Button>
+        </Surface>
 
         <Divider style={styles.totalDivider} />
 
@@ -1197,29 +1214,52 @@ function NewTicketScreen({
         onDismiss={onPaymentDismiss}
       />
 
+      {/* Product grid modal */}
+      <Modal
+        visible={addingProduct}
+        animationType="slide"
+        onRequestClose={() => setAddingProduct(false)}
+      >
+        <TouchableWithoutFeedback onPress={() => setAddingProduct(false)}>
+          <View style={styles.gridBackdrop} />
+        </TouchableWithoutFeedback>
+        <Surface style={styles.gridSheet} elevation={4}>
+          <View style={styles.gridHandle} />
+          <Text style={styles.gridTitle}>Añadir producto</Text>
+          <ProductGrid
+            products={products}
+            onSelect={handleProductSelected}
+            onLongPress={handleProductLongPress}
+          />
+        </Surface>
+      </Modal>
+
+      <ModifierSheet
+        product={sheetProduct}
+        visible={sheetProduct !== null}
+        onConfirm={handleModifierConfirm}
+        onDismiss={() => setSheetProduct(null)}
+      />
+
+      {/* Rename dialog */}
       <Portal>
-        <Dialog visible={qtyItem !== null} onDismiss={onQtyItemDismiss}>
-          <Dialog.Title numberOfLines={2}>
-            {qtyItem?.customLabel ?? qtyItem?.productName ?? ''}
-          </Dialog.Title>
+        <Dialog visible={renameVisible} onDismiss={() => setRenameVisible(false)}>
+          <Dialog.Title>Nombre del cliente</Dialog.Title>
           <Dialog.Content>
-            <View style={styles.qtyRow}>
-              <IconButton
-                icon="minus" size={32} mode="contained"
-                containerColor="#E53935" iconColor="#fff"
-                onPress={() => { if (!qtyItem) return; onDecrementItem(qtyItem.id); }}
-              />
-              <Text style={styles.qtyValue}>{qtyItem?.qty ?? 0}</Text>
-              <IconButton
-                icon="plus" size={32} mode="contained"
-                containerColor="#43A047" iconColor="#fff"
-                onPress={() => { if (!qtyItem) return; onIncrementItem(qtyItem.id); }}
-              />
-            </View>
+            <TextInput
+              value={renameText}
+              onChangeText={setRenameText}
+              mode="outlined"
+              autoCapitalize="words"
+              autoFocus
+              returnKeyType="done"
+              onSubmitEditing={handleRenameConfirm}
+              style={styles.renameInput}
+            />
           </Dialog.Content>
           <Dialog.Actions>
-            <Button onPress={() => { if (qtyItem) { onRemoveItem(qtyItem.id); } }} textColor="#E53935">Eliminar</Button>
-            <Button onPress={onQtyItemDismiss}>Hecho</Button>
+            <Button onPress={() => setRenameVisible(false)}>Cancelar</Button>
+            <Button mode="contained" onPress={handleRenameConfirm} buttonColor="#1E88E5">Guardar</Button>
           </Dialog.Actions>
         </Dialog>
       </Portal>
@@ -1270,14 +1310,8 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   viewHeaderActions: { flexDirection: 'row', gap: 8 },
-  viewHeaderTop: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    gap: 8,
-  },
   viewTicketNum: { fontSize: 20, fontWeight: '800', color: '#111' },
-  editBtn: { borderRadius: 8 },
+  editBtn: { borderRadius: 8, flex: 1 },
   editBtnContent: { height: 40 },
   editedBadge: {
     backgroundColor: '#FFF8E1',

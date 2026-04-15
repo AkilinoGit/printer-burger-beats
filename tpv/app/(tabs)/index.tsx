@@ -93,7 +93,7 @@ export default function HomeScreen(): React.JSX.Element {
   }
 
   function handleViewOrder(): void {
-    router.replace('/ticket/new');
+    router.push('/ticket/new');
   }
 
   // ── render ────────────────────────────────────────────────────────────────
