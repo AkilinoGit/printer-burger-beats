@@ -5,7 +5,6 @@ import type { Order, OrderItem, PriceProfile, Ticket } from '../lib/types';
 interface TicketState {
   // --- data ---
   activeTicket: Ticket | null;
-  pendingPrintTickets: Ticket[];
 
   /**
    * Open a brand-new ticket (called before the first Order of a sale).
@@ -37,15 +36,6 @@ interface TicketState {
   /** Dispose of the active ticket after it has been fully saved & printed. */
   clearActiveTicket: () => void;
 
-  /**
-   * Move activeTicket into pendingPrintTickets and set activeTicket to null.
-   * No-op if there is no active ticket.
-   */
-  commitTicketToPending: () => void;
-
-  /** Reset activeTicket and pendingPrintTickets to their initial values. */
-  clearAll: () => void;
-
   // --- selectors ---
   /** Total across all orders in the active ticket. */
   ticketTotal: () => number;
@@ -53,7 +43,6 @@ interface TicketState {
 
 export const useTicketStore = create<TicketState>((set, get) => ({
   activeTicket: null,
-  pendingPrintTickets: [],
 
   openTicket: (sessionId, ticketNumber) => {
     const ticket: Ticket = {
@@ -111,17 +100,6 @@ export const useTicketStore = create<TicketState>((set, get) => ({
   },
 
   clearActiveTicket: () => set({ activeTicket: null }),
-
-  commitTicketToPending: () => {
-    const ticket = get().activeTicket;
-    if (!ticket) return;
-    set({
-      pendingPrintTickets: [...get().pendingPrintTickets, ticket],
-      activeTicket: null,
-    });
-  },
-
-  clearAll: () => set({ activeTicket: null, pendingPrintTickets: [] }),
 
   ticketTotal: () => {
     const orders = get().activeTicket?.orders ?? [];

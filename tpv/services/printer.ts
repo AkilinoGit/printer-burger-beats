@@ -16,6 +16,7 @@
 import * as IntentLauncher from 'expo-intent-launcher';
 import type { Ticket } from '../lib/types';
 import { buildTicketBuffer } from './escpos';
+import { log, perf } from './logger';
 
 // ---------------------------------------------------------------------------
 // Public types  (kept compatible with existing callers)
@@ -81,19 +82,34 @@ export async function printTicket(
   _radioNoSelection: Record<string, string> = {},
   _radioOptionSets: Record<string, Set<string>> = {},
 ): Promise<PrintResult> {
-  try {
-    const bytes      = buildTicketBuffer(ticket, isTest, modifierLabels);
-    const base64Data = _uint8ArrayToBase64(bytes);
+  const orders = ticket.orders.length;
+  const items  = ticket.orders.reduce((s, o) => s + o.items.length, 0);
+  log.info('PRINT', `ticket #${ticket.ticketNumber} — ${orders} order(s) ${items} item(s)`);
 
-    await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+  try {
+    const doneEscpos = perf.start('PRINT', 'buildTicketBuffer');
+    const bytes      = buildTicketBuffer(ticket, isTest, modifierLabels);
+    doneEscpos();
+
+    const doneB64 = perf.start('PRINT', 'base64 encode');
+    const base64Data = _uint8ArrayToBase64(bytes);
+    doneB64();
+
+    log.info('PRINT', `payload ${bytes.length}b → ${base64Data.length}ch b64`);
+
+    IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
       data: 'rawbt:base64,' + base64Data,
       packageName: RAWBT_PACKAGE,
+    }).catch((e: unknown) => {
+      const msg = e instanceof Error ? e.message : String(e);
+      log.error('PRINT', _isNotFoundError(msg) ? RAWBT_NOT_INSTALLED : msg);
     });
 
+    log.info('PRINT', 'intent fired');
     return { ok: true };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    console.error('[printer] printTicket error:', msg);
+    log.error('PRINT', msg);
     return {
       ok: false,
       error: _isNotFoundError(msg) ? RAWBT_NOT_INSTALLED : msg,
@@ -192,9 +208,12 @@ export function getPairedAddress(): string | null {
 // ---------------------------------------------------------------------------
 
 function _uint8ArrayToBase64(bytes: Uint8Array): string {
+  // Process in chunks to avoid stack overflow on large buffers while still
+  // building the string in one fromCharCode call per chunk (no += loop).
+  const CHUNK = 4096;
   let binary = '';
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]);
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
   }
   return btoa(binary);
 }

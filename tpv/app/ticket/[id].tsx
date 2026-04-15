@@ -13,7 +13,7 @@ import {
   TextInput,
 } from 'react-native-paper';
 import { TouchableRipple } from 'react-native-paper';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import PaymentModal from '../../components/PaymentModal';
@@ -31,7 +31,6 @@ import { useTicketStore } from '../../stores/useTicketStore';
 
 import {
   deleteTicket,
-  getNextTicketNumber,
   getTicketById,
   insertTicket,
   markTicketPrinted,
@@ -39,6 +38,7 @@ import {
   updateTicketWithOrders,
 } from '../../services/db';
 import { printTicket } from '../../services/printer';
+import { log, perf } from '../../services/logger';
 
 // ---------------------------------------------------------------------------
 // Modifier maps (same pattern as before)
@@ -190,15 +190,14 @@ export default function TicketScreen(): React.JSX.Element {
   const incrementItem = useCartStore((s) => s.incrementItem);
   const decrementItem = useCartStore((s) => s.decrementItem);
   const removeItem    = useCartStore((s) => s.removeItem);
-  const addProduct    = useCartStore((s) => s.addProduct);
 
-  const activeTicket          = useTicketStore((s) => s.activeTicket);
-  const pendingPrintTickets   = useTicketStore((s) => s.pendingPrintTickets);
-  const openTicket            = useTicketStore((s) => s.openTicket);
-  const addOrder              = useTicketStore((s) => s.addOrder);
-  const markPrinted           = useTicketStore((s) => s.markPrinted);
-  const commitTicketToPending = useTicketStore((s) => s.commitTicketToPending);
-  const clearAll              = useTicketStore((s) => s.clearAll);
+
+  const nextTicketNumber = useSessionStore((s) => s.nextTicketNumber);
+  const activeTicket     = useTicketStore((s) => s.activeTicket);
+  const openTicket       = useTicketStore((s) => s.openTicket);
+  const addOrder         = useTicketStore((s) => s.addOrder);
+  const markPrinted      = useTicketStore((s) => s.markPrinted);
+  const clearActiveTicket = useTicketStore((s) => s.clearActiveTicket);
 
   // ── screen mode ───────────────────────────────────────────────────────────
   const isNew = id === 'new';
@@ -239,6 +238,7 @@ export default function TicketScreen(): React.JSX.Element {
     }).catch(() => setLoadingTicket(false));
   }, [id, isNew]);
 
+
   // ── derived (new-ticket mode) ─────────────────────────────────────────────
   const hasItems   = cartItems.length > 0;
   const hasSession = activeSession !== null;
@@ -249,33 +249,35 @@ const previewTicket = useMemo<import('../../lib/types').Ticket | null>(() => {
   return {
     id: activeTicket?.id ?? 'preview',
     sessionId: activeSession?.id ?? '',
-    ticketNumber: pendingPrintTickets[0]?.ticketNumber ?? activeTicket?.ticketNumber ?? 1,
+    ticketNumber: activeTicket?.ticketNumber ?? 1,
     printedAt: null,
     syncStatus: 'pending',
     createdAt: activeTicket?.createdAt ?? new Date().toISOString(),
     editedAt: null,
     editCount: 0,
     orders: [
-      ...pendingPrintTickets.flatMap((t) => t.orders),
+      ...(activeTicket?.orders ?? []),
       {
         id: 'preview-order',
         ticketId: activeTicket?.id ?? 'preview',
         clientName,
+        priceProfile: priceProfile,
         items: cartItems,
         amountPaid: null,
         change: null,
         total: cartTotal,
-        createdAt: activeTicket?.createdAt ?? new Date().toISOString(),
+        takeAway: cartTakeAway,
+        createdAt: new Date().toISOString(),
       },
     ],
   };
-}, [hasItems, activeTicket, activeSession?.id, pendingPrintTickets, clientName, cartItems, cartTotal]);
+}, [hasItems, activeTicket, activeSession?.id, clientName, priceProfile, cartItems, cartTotal, cartTakeAway]);
 
   // ── helpers (new-ticket mode) ─────────────────────────────────────────────
   async function ensureTicket(): Promise<string> {
     if (activeTicket) return activeTicket.id;
     if (!activeSession) throw new Error('No hay sesión activa');
-    const ticketNumber = await getNextTicketNumber(activeSession.id);
+    const ticketNumber = nextTicketNumber();           // in-memory counter, no DB query
     const dbTicket     = await insertTicket(activeSession.id, ticketNumber);
     openTicket(activeSession.id, dbTicket.ticketNumber);
     return dbTicket.id;
@@ -315,58 +317,58 @@ async function handleAddAnother(): Promise<void> {
   if (!hasItems) return;
   setActionState('saving');
   try {
+    const done = perf.start('TICKET', 'handleAddAnother');
     const ticketId = await ensureTicket();
     await persistCurrentOrder(ticketId);
-    // Leer el estado actualizado del store antes de commitear
-    const updatedTicket = useTicketStore.getState().activeTicket;
-    if (updatedTicket) {
-      useTicketStore.getState().commitTicketToPending();
-    }
+    done();
+    log.info('TICKET', 'order saved, back to home');
     clearCart();
     router.replace('/');
   } catch (e) {
+    log.error('TICKET', 'handleAddAnother failed', e instanceof Error ? e.message : String(e));
     Alert.alert('Error', e instanceof Error ? e.message : 'No se pudo guardar el pedido');
   } finally {
     setActionState('idle');
   }
 }
+
   async function handlePrint(): Promise<void> {
     if (!hasItems) return;
     setActionState('printing');
     try {
+      const doneAll = perf.start('TICKET', 'handlePrint total');
+
+        const doneEnsure = perf.start('TICKET', 'ensureTicket');
       const ticketId = await ensureTicket();
+      doneEnsure();
+
+      const donePersist = perf.start('TICKET', 'persistCurrentOrder');
       await persistCurrentOrder(ticketId);
+      donePersist();
 
       const currentTicket = useTicketStore.getState().activeTicket;
       if (!currentTicket) throw new Error('Ticket no encontrado en store');
 
-      const allTickets = [...useTicketStore.getState().pendingPrintTickets, currentTicket];
-      const firstTicket = allTickets[0];
+      log.info('TICKET', 'printing', { ticketNumber: currentTicket.ticketNumber, orders: currentTicket.orders.length });
 
-      const virtualTicket: import('../../lib/types').Ticket = {
-        ...currentTicket,
-        ticketNumber: firstTicket.ticketNumber,
-        orders: allTickets.flatMap((t) => t.orders),
-      };
-
-      const result = await printTicket(virtualTicket, testMode, MODIFIER_LABELS, RADIO_NO_SELECTION, RADIO_OPTION_SETS);
+      const result = await printTicket(currentTicket, testMode, MODIFIER_LABELS, RADIO_NO_SELECTION, RADIO_OPTION_SETS);
 
       if (!testMode) {
-        for (const t of allTickets) {
-          await markTicketPrinted(t.id);
-        }
+        await markTicketPrinted(currentTicket.id);
       }
       markPrinted();
+      doneAll();
 
       if (!result.ok) {
         Alert.alert('Error de impresión', result.error ?? 'No se pudo conectar con la impresora',
           [{ text: 'Continuar', style: 'default' }]);
       }
 
-      clearAll();
+      clearActiveTicket();
       clearCart();
       router.replace('/');
     } catch (e) {
+      log.error('TICKET', 'handlePrint failed', e instanceof Error ? e.message : String(e));
       Alert.alert('Error', e instanceof Error ? e.message : 'No se pudo imprimir');
     } finally {
       setActionState('idle');
@@ -662,7 +664,7 @@ async function handleAddAnother(): Promise<void> {
     <NewTicketScreen
       testMode={testMode}
       activeTicket={activeTicket}
-      pendingTickets={pendingPrintTickets}
+      pendingOrders={activeTicket?.orders ?? []}
       clientName={clientName}
       cartItems={cartItems}
       cartTotal={cartTotal}
@@ -1030,7 +1032,7 @@ function EditModeScreen({
 interface NewTicketProps {
   testMode: boolean;
   activeTicket: import('../../lib/types').Ticket | null;
-  pendingTickets: import('../../lib/types').Ticket[];
+  pendingOrders: Order[];
   clientName: string;
   cartItems: OrderItem[];
   cartTotal: number;
@@ -1056,7 +1058,7 @@ interface NewTicketProps {
 }
 
 function NewTicketScreen({
-  testMode, activeTicket, pendingTickets, clientName, cartItems, cartTotal,
+  testMode, activeTicket, pendingOrders, clientName, cartItems, cartTotal,
   paidAmount, paidChange, actionState, isBusy, hasItems, previewTicket, modifierLabels,
   paymentVisible, onCobrar, onPaymentConfirm, onPaymentDismiss,
   onAddAnother, onPrint,
@@ -1122,16 +1124,14 @@ function NewTicketScreen({
           </View>
         )}
 
-        {pendingTickets.length > 0 && (
+        {pendingOrders.length > 0 && (
           <View style={styles.prevOrdersBox}>
             <Text style={styles.prevOrdersTitle}>Pedidos anteriores en esta comanda</Text>
-            {pendingTickets.map((t) =>
-              t.orders.map((o) => (
-                <Text key={o.id} style={styles.prevOrderRow}>
-                  #{t.ticketNumber} · {o.clientName} — {formatPrice(o.total)}
-                </Text>
-              ))
-            )}
+            {pendingOrders.map((o) => (
+              <Text key={o.id} style={styles.prevOrderRow}>
+                {o.clientName} — {formatPrice(o.total)}
+              </Text>
+            ))}
           </View>
         )}
       </ScrollView>

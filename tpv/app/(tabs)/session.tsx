@@ -23,12 +23,13 @@ import { useSessionStore } from '../../stores/useSessionStore';
 import {
   getActiveSession,
   getLocations,
+  getNextTicketNumber,
+  getSessionSummary,
   getSessions,
-  getTicketsBySession,
   insertSession,
 } from '../../services/db';
 import { formatPrice } from '../../lib/utils';
-import type { Location, Session, Ticket } from '../../lib/types';
+import type { Location, Session } from '../../lib/types';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -48,12 +49,6 @@ function formatTime(iso: string | null): string {
   return d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
 }
 
-function sessionTotal(tickets: Ticket[]): number {
-  return tickets.reduce((sum, t) => {
-    return sum + t.orders.reduce((s, o) => s + o.total, 0);
-  }, 0);
-}
-
 // ---------------------------------------------------------------------------
 // SessionCard — used in history list
 // ---------------------------------------------------------------------------
@@ -65,13 +60,11 @@ interface SessionCardProps {
 }
 
 function SessionCard({ session, locationName, onPress }: SessionCardProps): React.JSX.Element {
-  const [tickets, setTickets] = useState<Ticket[]>([]);
+  const [summary, setSummary] = useState<{ ticketCount: number; total: number }>({ ticketCount: 0, total: 0 });
 
   useEffect(() => {
-    getTicketsBySession(session.id).then(setTickets).catch(() => setTickets([]));
+    getSessionSummary(session.id).then(setSummary).catch(() => {});
   }, [session.id]);
-
-  const total = sessionTotal(tickets);
 
   return (
     <TouchableRipple onPress={onPress} rippleColor="rgba(0,0,0,0.06)">
@@ -84,8 +77,8 @@ function SessionCard({ session, locationName, onPress }: SessionCardProps): Reac
           )}
         </View>
         <View style={cardStyles.right}>
-          <Text style={cardStyles.total}>{formatPrice(total)}</Text>
-          <Text style={cardStyles.tickets}>{tickets.length} ticket{tickets.length !== 1 ? 's' : ''}</Text>
+          <Text style={cardStyles.total}>{formatPrice(summary.total)}</Text>
+          <Text style={cardStyles.tickets}>{summary.ticketCount} ticket{summary.ticketCount !== 1 ? 's' : ''}</Text>
         </View>
       </View>
     </TouchableRipple>
@@ -124,13 +117,11 @@ interface ActiveSessionCardProps {
 }
 
 function ActiveSessionCard({ session, locationName, onViewTickets, onCloseRequest }: ActiveSessionCardProps): React.JSX.Element {
-  const [tickets, setTickets] = useState<Ticket[]>([]);
+  const [summary, setSummary] = useState<{ ticketCount: number; total: number }>({ ticketCount: 0, total: 0 });
 
   useEffect(() => {
-    getTicketsBySession(session.id).then(setTickets).catch(() => setTickets([]));
+    getSessionSummary(session.id).then(setSummary).catch(() => {});
   }, [session.id]);
-
-  const total = sessionTotal(tickets);
   const openedAt = session.openedAt ?? session.createdAt;
   const autoCloseAt = session.autoCloseAt;
 
@@ -161,11 +152,11 @@ function ActiveSessionCard({ session, locationName, onViewTickets, onCloseReques
         </View>
         <View style={activeStyles.metaCol}>
           <Text style={activeStyles.metaLabel}>Tickets</Text>
-          <Text style={activeStyles.metaValue}>{tickets.length}</Text>
+          <Text style={activeStyles.metaValue}>{summary.ticketCount}</Text>
         </View>
         <View style={activeStyles.metaCol}>
           <Text style={activeStyles.metaLabel}>Total</Text>
-          <Text style={activeStyles.metaValue}>{formatPrice(total)}</Text>
+          <Text style={activeStyles.metaValue}>{formatPrice(summary.total)}</Text>
         </View>
       </View>
 
@@ -288,10 +279,11 @@ export default function SessionScreen(): React.JSX.Element {
 
   const activeSession      = useSessionStore((s) => s.activeSession);
   const activeLocation     = useSessionStore((s) => s.activeLocation);
-  const setActiveSession   = useSessionStore((s) => s.setActiveSession);
-  const setActiveLocation  = useSessionStore((s) => s.setActiveLocation);
-  const setProducts        = useSessionStore((s) => s.setProducts);
+  const setActiveSession    = useSessionStore((s) => s.setActiveSession);
+  const setActiveLocation   = useSessionStore((s) => s.setActiveLocation);
+  const setProducts         = useSessionStore((s) => s.setProducts);
   const closeCurrentSession = useSessionStore((s) => s.closeCurrentSession);
+  const setLastTicketNumber = (n: number) => useSessionStore.setState({ lastTicketNumber: n });
 
   // ── local state ───────────────────────────────────────────────────────────
   const [locations, setLocations]               = useState<Location[]>([]);
@@ -339,11 +331,14 @@ export default function SessionScreen(): React.JSX.Element {
     try {
       const existing = await getActiveSession();
       if (existing) {
+        const lastNum = await getNextTicketNumber(existing.id) - 1;
+        setLastTicketNumber(lastNum);
         setActiveSession(existing);
         setActiveLocation(loc);
         return;
       }
       const session = await insertSession(loc.id);
+      setLastTicketNumber(0);
       setActiveSession(session);
       setActiveLocation(loc);
     } finally {

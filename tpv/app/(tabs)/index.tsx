@@ -282,9 +282,13 @@ const styles = StyleSheet.create({
 
   // in-progress ticket badge
   ticketBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     backgroundColor: '#E3F2FD',
-    paddingVertical: 6,
-    paddingHorizontal: 16,
+    paddingVertical: 2,
+    paddingLeft: 16,
+    paddingRight: 4,
   },
   ticketBadgeText: {
     fontSize: 13,

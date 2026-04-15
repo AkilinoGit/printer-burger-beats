@@ -19,7 +19,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 const DB_NAME = 'tpv_v12.db';
-const SCHEMA_VERSION = 16;
+const SCHEMA_VERSION = 18;
 
 let _db: SQLite.SQLiteDatabase | null = null;
 let _initPromise: Promise<void> | null = null;
@@ -31,6 +31,7 @@ async function openDb(): Promise<SQLite.SQLiteDatabase> {
 }
 
 async function getDb(): Promise<SQLite.SQLiteDatabase> {
+  if (_db) return _db;           // already open — skip await entirely
   if (_initPromise) await _initPromise;
   return openDb();
 }
@@ -99,6 +100,12 @@ export async function initDb(): Promise<void> {
     }
     if (currentVersion < 16) {
       await migrate_v16(db); // add indexes on FK columns and sync_queue status
+    }
+    if (currentVersion < 17) {
+      await migrate_v17(db); // create app_log table for in-app diagnostics
+    }
+    if (currentVersion < 18) {
+      await migrate_v18(db); // purge sync_queue — no API yet, rows were never consumed
     }
     await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
   })();
@@ -308,6 +315,24 @@ async function migrate_v16(db: SQLite.SQLiteDatabase): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_tickets_session ON tickets(session_id);
     CREATE INDEX IF NOT EXISTS idx_sync_queue_status ON sync_queue(status);
   `);
+}
+
+async function migrate_v17(db: SQLite.SQLiteDatabase): Promise<void> {
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS app_log (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts         TEXT    NOT NULL,
+      level      TEXT    NOT NULL,
+      tag        TEXT    NOT NULL,
+      msg        TEXT    NOT NULL,
+      ms         INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_app_log_ts ON app_log(ts);
+  `);
+}
+
+async function migrate_v18(db: SQLite.SQLiteDatabase): Promise<void> {
+  await db.runAsync("DELETE FROM sync_queue");
 }
 
 // ---------------------------------------------------------------------------
@@ -776,6 +801,7 @@ export async function getNextTicketNumber(sessionId: string): Promise<number> {
 }
 
 export async function insertTicket(sessionId: string, ticketNumber: number): Promise<Ticket> {
+  const t0 = Date.now();
   const db = await getDb();
   const ticket: Ticket = {
     id: generateId(),
@@ -792,6 +818,7 @@ export async function insertTicket(sessionId: string, ticketNumber: number): Pro
     'INSERT INTO tickets (id, session_id, ticket_number, printed_at, sync_status, created_at, edited_at, edit_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
     [ticket.id, ticket.sessionId, ticket.ticketNumber, null, ticket.syncStatus, ticket.createdAt, null, 0],
   );
+  console.log(`[DB] insertTicket #${ticketNumber}: ${Date.now()-t0}ms`);
   return ticket;
 }
 
@@ -825,6 +852,24 @@ export async function getTicketsBySession(sessionId: string): Promise<Ticket[]> 
     tickets.push(mapTicket(row, orders));
   }
   return tickets;
+}
+
+/**
+ * Lightweight summary for a session: ticket count and total revenue.
+ * Uses a single aggregated SQL query — no N+1, safe to call frequently.
+ */
+export async function getSessionSummary(
+  sessionId: string,
+): Promise<{ ticketCount: number; total: number }> {
+  const db = await getDb();
+  const row = await db.getFirstAsync<{ ticket_count: number; total: number }>(
+    `SELECT COUNT(DISTINCT t.id) AS ticket_count, COALESCE(SUM(o.total), 0) AS total
+     FROM tickets t
+     LEFT JOIN orders o ON o.ticket_id = t.id
+     WHERE t.session_id = ?`,
+    [sessionId],
+  );
+  return { ticketCount: row?.ticket_count ?? 0, total: row?.total ?? 0 };
 }
 
 // ---------------------------------------------------------------------------
@@ -888,24 +933,29 @@ export async function getOrderItemsByOrderId(orderId: string): Promise<OrderItem
  * Also enqueues the order for sync.
  */
 export async function saveOrderWithItems(order: Order): Promise<void> {
+  const t0 = Date.now();
   const db = await getDb();
-  await db.withExclusiveTransactionAsync(async (txn) => {
-    await txn.runAsync(
+  const t1 = Date.now();
+  await db.withTransactionAsync(async () => {
+    await db.runAsync(
       'INSERT INTO orders (id, ticket_id, client_name, price_profile, take_away, amount_paid, change, total, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [order.id, order.ticketId, order.clientName, order.priceProfile, order.takeAway ? 1 : 0, order.amountPaid, order.change, order.total, order.createdAt],
     );
     for (const item of order.items) {
-      await txn.runAsync(
+      await db.runAsync(
         'INSERT INTO order_items (id, order_id, product_id, product_name, qty, unit_price, modifier_price_add, selected_modifiers, custom_label) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
         [item.id, item.orderId, item.productId, item.productName, item.qty, item.unitPrice, item.modifierPriceAdd, JSON.stringify(item.selectedModifiers), item.customLabel],
       );
     }
-    // Enqueue for sync
-    await txn.runAsync(
-      'INSERT INTO sync_queue (id, entity_type, entity_id, action, status, attempts, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [generateId(), 'order', order.id, 'create', 'pending', 0, new Date().toISOString()],
-    );
+    // TODO(API): re-enable when backend exists
+    // await db.runAsync(
+    //   'INSERT INTO sync_queue (id, entity_type, entity_id, action, status, attempts, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    //   [generateId(), 'order', order.id, 'create', 'pending', 0, new Date().toISOString()],
+    // );
   });
+  const t2 = Date.now();
+  const { log: appLog } = await import('./logger');
+  appLog.info('DB', `saveOrder items=${order.items.length} getDb=${t1-t0}ms txn=${t2-t1}ms total=${t2-t0}ms`);
 }
 
 // ---------------------------------------------------------------------------
@@ -926,25 +976,25 @@ export async function updateTicketWithOrders(ticket: Ticket): Promise<void> {
   const wasAlreadySynced = ticket.syncStatus === 'synced';
   const newSyncStatus: SyncStatus = wasAlreadySynced ? 'pending_update' : ticket.syncStatus;
 
-  await db.withExclusiveTransactionAsync(async (txn) => {
+  await db.withTransactionAsync(async () => {
     // 1. Delete existing order_items and orders for this ticket
-    const existingOrders = await txn.getAllAsync<{ id: string }>(
+    const existingOrders = await db.getAllAsync<{ id: string }>(
       'SELECT id FROM orders WHERE ticket_id = ?',
       [ticket.id],
     );
     for (const { id } of existingOrders) {
-      await txn.runAsync('DELETE FROM order_items WHERE order_id = ?', [id]);
+      await db.runAsync('DELETE FROM order_items WHERE order_id = ?', [id]);
     }
-    await txn.runAsync('DELETE FROM orders WHERE ticket_id = ?', [ticket.id]);
+    await db.runAsync('DELETE FROM orders WHERE ticket_id = ?', [ticket.id]);
 
     // 2. Re-insert orders and their items
     for (const order of ticket.orders) {
-      await txn.runAsync(
+      await db.runAsync(
         'INSERT INTO orders (id, ticket_id, client_name, price_profile, take_away, amount_paid, change, total, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
         [order.id, ticket.id, order.clientName, order.priceProfile ?? 'normal', order.takeAway ? 1 : 0, order.amountPaid, order.change, order.total, order.createdAt],
       );
       for (const item of order.items) {
-        await txn.runAsync(
+        await db.runAsync(
           'INSERT INTO order_items (id, order_id, product_id, product_name, qty, unit_price, modifier_price_add, selected_modifiers, custom_label) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
           [item.id, item.orderId, item.productId, item.productName, item.qty, item.unitPrice, item.modifierPriceAdd, JSON.stringify(item.selectedModifiers), item.customLabel],
         );
@@ -952,18 +1002,18 @@ export async function updateTicketWithOrders(ticket: Ticket): Promise<void> {
     }
 
     // 3. Update ticket metadata
-    await txn.runAsync(
+    await db.runAsync(
       'UPDATE tickets SET edited_at = ?, edit_count = edit_count + 1, sync_status = ? WHERE id = ?',
       [now, newSyncStatus, ticket.id],
     );
 
-    // 4. If transitioning to pending_update, enqueue with action='update'
-    if (wasAlreadySynced) {
-      await txn.runAsync(
-        'INSERT INTO sync_queue (id, entity_type, entity_id, action, status, attempts, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        [generateId(), 'ticket', ticket.id, 'update', 'pending', 0, now],
-      );
-    }
+    // TODO(API): re-enable when backend exists
+    // if (wasAlreadySynced) {
+    //   await db.runAsync(
+    //     'INSERT INTO sync_queue (id, entity_type, entity_id, action, status, attempts, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    //     [generateId(), 'ticket', ticket.id, 'update', 'pending', 0, now],
+    //   );
+    // }
   });
 }
 
@@ -979,12 +1029,9 @@ export async function getPendingSyncEntries(): Promise<SyncQueueEntry[]> {
   return rows.map(mapSyncQueueEntry);
 }
 
-export async function enqueueSyncEntry(entityType: 'order' | 'ticket', entityId: string, action: 'create' | 'update' = 'create'): Promise<void> {
-  const db = await getDb();
-  await db.runAsync(
-    'INSERT INTO sync_queue (id, entity_type, entity_id, action, status, attempts, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    [generateId(), entityType, entityId, action, 'pending', 0, new Date().toISOString()],
-  );
+// TODO(API): re-enable when backend exists
+export async function enqueueSyncEntry(_entityType: 'order' | 'ticket', _entityId: string, _action: 'create' | 'update' = 'create'): Promise<void> {
+  // no-op until API is available
 }
 
 export async function updateSyncEntryStatus(id: string, status: SyncStatus): Promise<void> {
@@ -1000,18 +1047,71 @@ export async function clearSyncedEntries(): Promise<void> {
   await db.runAsync("DELETE FROM sync_queue WHERE status = 'synced'");
 }
 
+// ---------------------------------------------------------------------------
+// APP LOG
+// ---------------------------------------------------------------------------
+
+export type LogLevel = 'info' | 'warn' | 'error' | 'perf';
+
+export interface AppLogEntry {
+  id: number;
+  ts: string;
+  level: LogLevel;
+  tag: string;
+  msg: string;
+  ms: number | null;
+}
+
+const LOG_MAX_ROWS = 200;
+
+export async function insertLog(
+  level: LogLevel,
+  tag: string,
+  msg: string,
+  ms?: number,
+): Promise<void> {
+  try {
+    const db = await getDb();
+    await db.runAsync(
+      'INSERT INTO app_log (ts, level, tag, msg, ms) VALUES (?, ?, ?, ?, ?)',
+      [new Date().toISOString(), level, tag, msg, ms ?? null],
+    );
+    // Keep only the last LOG_MAX_ROWS rows to avoid unbounded growth
+    await db.runAsync(
+      `DELETE FROM app_log WHERE id NOT IN (
+         SELECT id FROM app_log ORDER BY id DESC LIMIT ${LOG_MAX_ROWS}
+       )`,
+    );
+  } catch {
+    // Logging must never throw — silently discard if DB is not ready
+  }
+}
+
+export async function getLogs(): Promise<AppLogEntry[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<AppLogEntry>(
+    'SELECT * FROM app_log ORDER BY id DESC LIMIT 200',
+  );
+  return rows;
+}
+
+export async function clearLogs(): Promise<void> {
+  const db = await getDb();
+  await db.runAsync('DELETE FROM app_log');
+}
+
 export async function deleteTicket(id: string): Promise<void> {
   const db = await getDb();
-  await db.withExclusiveTransactionAsync(async (txn) => {
-    const orderRows = await txn.getAllAsync<{ id: string }>(
+  await db.withTransactionAsync(async () => {
+    const orderRows = await db.getAllAsync<{ id: string }>(
       'SELECT id FROM orders WHERE ticket_id = ?',
       [id],
     );
     for (const { id: orderId } of orderRows) {
-      await txn.runAsync('DELETE FROM order_items WHERE order_id = ?', [orderId]);
+      await db.runAsync('DELETE FROM order_items WHERE order_id = ?', [orderId]);
     }
-    await txn.runAsync('DELETE FROM orders WHERE ticket_id = ?', [id]);
-    await txn.runAsync('DELETE FROM sync_queue WHERE entity_type = ? AND entity_id = ?', ['ticket', id]);
-    await txn.runAsync('DELETE FROM tickets WHERE id = ?', [id]);
+    await db.runAsync('DELETE FROM orders WHERE ticket_id = ?', [id]);
+    await db.runAsync('DELETE FROM sync_queue WHERE entity_type = ? AND entity_id = ?', ['ticket', id]);
+    await db.runAsync('DELETE FROM tickets WHERE id = ?', [id]);
   });
 }

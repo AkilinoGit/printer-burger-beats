@@ -26,7 +26,6 @@ import {
   updateLocation,
 } from '../../services/db';
 import { diagMethod1, diagMethod2, openRawBT, printTicket, type DiagResult } from '../../services/printer';
-import { useTicketStore } from '../../stores/useTicketStore';
 import { DEFAULT_FERIANTE_PRICES } from '../../lib/constants';
 import type { Location } from '../../lib/types';
 
@@ -52,8 +51,6 @@ export default function SettingsScreen(): React.JSX.Element {
   const [testPrinting, setTestPrinting]     = useState(false);
   const [diagRunning, setDiagRunning]       = useState(false);
   const [diagResults, setDiagResults]       = useState<DiagResult[]>([]);
-  const activeTicket = useTicketStore((s) => s.activeTicket);
-
   // Feriante prices
   const ferianteProductIds = Object.keys(DEFAULT_FERIANTE_PRICES);
   const ferianteProducts   = products.filter((p) => ferianteProductIds.includes(p.id));
@@ -139,7 +136,7 @@ export default function SettingsScreen(): React.JSX.Element {
     try {
       // Build a minimal test ticket in memory — nothing is persisted.
       const now = new Date().toISOString();
-      const testTicket = activeTicket ?? {
+      const testTicket = {
         id: 'test',
         sessionId: 'test',
         ticketNumber: 0,
@@ -458,6 +455,7 @@ export default function SettingsScreen(): React.JSX.Element {
         </Button>
       </Surface>
 
+
       {/* ── DIALOGS ───────────────────────────────────────────────────────── */}
       <Portal>
         {/* Add / edit location */}
@@ -498,6 +496,7 @@ export default function SettingsScreen(): React.JSX.Element {
             </Button>
           </Dialog.Actions>
         </Dialog>
+
       </Portal>
     </ScrollView>
   );
@@ -748,3 +747,4 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
 });
+

@@ -3,7 +3,12 @@
     "allow": [
       "Bash(rm -rf android)",
       "Bash(NODE_OPTIONS=--experimental-require-module npx expo prebuild --platform android --clean)",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "Bash(grep -n \"nextTicketNumber\\\\|clearCart\" app/ticket/[id].tsx)",
+      "Bash(grep -n \"setSavedTicket\\\\|savedTicket\\\\|mode ===\" app/ticket/[id].tsx)",
+      "Bash(grep -n \"isNew\\\\|const mode\\\\|setMode\" app/ticket/[id].tsx)",
+      "Bash(grep -n \"clearActiveTicket\\\\|clearCart\\\\|router.replace\" app/ticket/[id].tsx)",
+      "Bash(grep -A 5 \"handleAddAnother\" app/ticket/[id].tsx)"
     ]
   }
 }

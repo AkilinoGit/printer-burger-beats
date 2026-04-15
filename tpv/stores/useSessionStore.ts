@@ -2,7 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
 import type { Location, Product, Session } from '../lib/types';
 import { DEFAULT_FERIANTE_PRICES } from '../lib/constants';
-import { closeSession, getActiveSession, getProducts, initDb } from '../services/db';
+import { closeSession, getActiveSession, getNextTicketNumber, getProducts, initDb } from '../services/db';
 
 const TEST_MODE_KEY       = 'tpv:testMode';
 const FERIANTE_PRICES_KEY = 'tpv:feriantePrices';
@@ -15,6 +15,8 @@ interface SessionState {
   isLoadingProducts: boolean;
   testMode: boolean;
   feriantePrices: Record<string, number>;
+  /** Last ticket number used in the active session. Incremented in-memory — no DB query needed. */
+  lastTicketNumber: number;
 
   // --- setters ---
   setActiveLocation: (location: Location) => void;
@@ -50,6 +52,9 @@ interface SessionState {
    */
   closeCurrentSession: () => Promise<void>;
 
+  /** Returns the next ticket number and increments the in-memory counter. No DB query. */
+  nextTicketNumber: () => number;
+
   // --- test mode ---
   /** Load persisted test-mode value from AsyncStorage. Call once on app start. */
   loadTestMode: () => Promise<void>;
@@ -70,6 +75,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   isLoadingProducts: true,
   testMode: false,
   feriantePrices: DEFAULT_FERIANTE_PRICES,
+  lastTicketNumber: 0,
 
   setActiveLocation: (location) => set({ activeLocation: location }),
 
@@ -109,7 +115,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     try {
       await initDb();
       const [session, products] = await Promise.all([getActiveSession(), getProducts()]);
-      set({ products, isLoadingProducts: false, ...(session ? { activeSession: session } : {}) });
+      if (session) {
+        const lastNum = await getNextTicketNumber(session.id) - 1;
+        set({ products, isLoadingProducts: false, activeSession: session, lastTicketNumber: lastNum });
+      } else {
+        set({ products, isLoadingProducts: false });
+      }
     } catch {
       set({ isLoadingProducts: false });
     }
@@ -123,7 +134,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     } catch {
       // DB error — still clear the store so UI stays consistent
     }
-    set({ activeSession: null });
+    set({ activeSession: null, lastTicketNumber: 0 });
+  },
+
+  nextTicketNumber: () => {
+    const next = get().lastTicketNumber + 1;
+    set({ lastTicketNumber: next });
+    return next;
   },
 
   loadTestMode: async () => {
