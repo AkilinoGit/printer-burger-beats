@@ -8,16 +8,11 @@
 
 import type { Order, OrderItem, Session, Ticket } from '../lib/types';
 import { currentTime } from '../lib/utils';
-import { INITIAL_PRODUCTS } from '../lib/constants';
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-/** Maps productId → category, built once from INITIAL_PRODUCTS. */
-const PRODUCT_CATEGORY: ReadonlyMap<string, string> = new Map(
-  INITIAL_PRODUCTS.map((p) => [p.id, p.category]),
-);
 
 const CHARS_PER_LINE = 32;
 const SEP_THIN = '-'.repeat(CHARS_PER_LINE);
@@ -236,22 +231,15 @@ function _appendOrderBytes(
     parts.push(CMD_BOLD_OFF, CMD_ALIGN_LEFT);
   }
 
-  // "---★ COMPLEMENTOS ★---" separator printed before the first side item.
-  // ★ is not in CP437/CP850, so we use the closest printable substitute: '*'.
-  // Byte 0x0F (☼) exists in CP437 but renders poorly; '*' is universally safe.
-  const hasSide = _sortAndGroupItems(order.items).some(
-    (it) => PRODUCT_CATEGORY.get(it.productId) === 'side',
-  );
-  let sideHeaderPrinted = false;
-
-  for (const item of _sortAndGroupItems(order.items)) {
-    if (!sideHeaderPrinted && hasSide && PRODUCT_CATEGORY.get(item.productId) === 'side') {
+  const sorted = _sortAndGroupItems(order.items);
+  const firstSideIdx = sorted.findIndex((it) => KITCHEN_ORDER[it.productId] >= KITCHEN_ORDER['patatas']);
+  for (let i = 0; i < sorted.length; i++) {
+    if (i === firstSideIdx) {
       parts.push(CMD_ALIGN_CENTER);
       parts.push(encodeText('---* COMPLEMENTOS *---\n'));
       parts.push(CMD_ALIGN_LEFT);
-      sideHeaderPrinted = true;
     }
-    _appendItemBytes(parts, item, profile, modifierLabels);
+    _appendItemBytes(parts, sorted[i], profile, modifierLabels);
   }
 
   // ── Closing separator with order total ──────────────────────────────────
@@ -269,76 +257,45 @@ function _appendOrderBytes(
 /**
  * Sort and group OrderItems for printing.
  *
- * Ordering:
- *   1. burger (non-burger-nino)
- *   2. burger-nino (forced after burgers regardless of its 'custom' category)
- *   3. side
- *   4. drink
- *   5. custom (excluding burger-nino)
- *   Within each group, original cart order is preserved.
+ * Fixed kitchen order (by productId):
+ *   doble-subwoofer → ben-muerde → fat-furious → burger-nino →
+ *   patatas → alitas → tekenos → gyozas → bebida → agua → otros (catch-all last)
  *
  * Grouping:
- *   Items with the same productId AND selectedModifiers.length === 0
- *   are merged into a single line (qty summed).
- *   Items that have any modifier applied are never merged — each is
- *   printed on its own line even if another identical-product item exists.
+ *   Items with the same productId AND same selectedModifiers (sorted) are merged
+ *   into a single line with qty summed.
  */
+const KITCHEN_ORDER: Record<string, number> = {
+  'doble-subwoofer': 0,
+  'ben-muerde':      1,
+  'fat-furious':     2,
+  'burger-nino':     3,
+  'patatas':         4,
+  'alitas':          5,
+  'tekenos':         6,
+  'gyozas':          7,
+  'bebida':          8,
+  'agua':            9,
+};
+
 function _sortAndGroupItems(items: readonly OrderItem[]): OrderItem[] {
-  const PRINT_ORDER: Record<string, number> = {
-    burger: 0,
-    'burger-nino': 1,
-    side: 2,
-    drink: 3,
-    custom: 4,
-  };
-
-  // Assign a sort key to each item.
-  // burger-nino is identified by productId regardless of its DB category.
-  function sortKey(item: OrderItem): number {
-    if (item.productId === 'burger-nino') return PRINT_ORDER['burger-nino'];
-    // We don't have the Product object here, so we approximate by productName.
-    // The actual category routing is handled by the explicit burger-nino check above;
-    // for everything else we rely on the product name not mattering — the order
-    // in the cart already reflects display order. Use a stable fallback of 2 (side).
-    return PRINT_ORDER['side'];
-  }
-
-  // Stable sort: burgers first, then burger-nino, rest keep relative order.
-  // We only need to pull burger-nino out — the rest keep their original sequence.
-  const burgerNino  = items.filter((i) => i.productId === 'burger-nino');
-  const otherCustom = items.filter((i) => i.productId !== 'burger-nino');
-  // Insert burger-nino after the last item whose sortKey < 1 (i.e. after regular burgers).
-  // Since we don't know burger category here, find the last item before burger-nino's
-  // natural position by scanning otherCustom for 'burger' productIds is not feasible
-  // without the Product list. Instead: keep original relative order of otherCustom
-  // and append burgerNino items at the end of that list, then re-sort only by the
-  // two-bucket rule: burger-nino after non-burger-nino, everything else untouched.
-  //
-  // Simpler and correct: stable-partition into [non-burger-nino, burger-nino].
-  // The cart already stores burgers before sides/drinks/custom, so burger-nino
-  // will land after real burgers and before sides — which is the desired output.
-  const sorted = [...otherCustom, ...burgerNino];
-  void sortKey; // suppress unused-variable warning — kept for documentation
-
-  // Group: items with selectedModifiers.length === 0 and same productId are merged.
-  const result: OrderItem[] = [];
-  // Map from productId → index in result (only for modifier-free items).
-  const mergeIndex = new Map<string, number>();
-
-  for (const item of sorted) {
-    if (item.selectedModifiers.length === 0) {
-      const existing = mergeIndex.get(item.productId);
-      if (existing !== undefined) {
-        const prev = result[existing];
-        result[existing] = { ...prev, qty: prev.qty + item.qty };
-        continue;
-      }
-      mergeIndex.set(item.productId, result.length);
+  // Merge items with identical productId + modifiers
+  const mergeMap = new Map<string, OrderItem>();
+  for (const item of items) {
+    const key = item.productId + '|' + [...item.selectedModifiers].sort().join(',');
+    const existing = mergeMap.get(key);
+    if (existing) {
+      mergeMap.set(key, { ...existing, qty: existing.qty + item.qty });
+    } else {
+      mergeMap.set(key, { ...item });
     }
-    result.push({ ...item });
   }
 
-  return result;
+  return Array.from(mergeMap.values()).sort((a, b) => {
+    const oa = KITCHEN_ORDER[a.productId] ?? 99;
+    const ob = KITCHEN_ORDER[b.productId] ?? 99;
+    return oa !== ob ? oa - ob : 0;
+  });
 }
 
 /**
