@@ -43,3 +43,57 @@ export function currentTime(): string {
   const mm = String(now.getMinutes()).padStart(2, '0');
   return `${hh}:${mm}`;
 }
+
+// ---------------------------------------------------------------------------
+// Verdura modifier collapsing
+// ---------------------------------------------------------------------------
+
+const VERDURA_SIN_IDS = ['sin-cebolla', 'sin-lechuga', 'sin-tomate'] as const;
+const VERDURA_LABEL: Record<(typeof VERDURA_SIN_IDS)[number], string> = {
+  'sin-cebolla': 'Cebolla',
+  'sin-lechuga': 'Lechuga',
+  'sin-tomate':  'Tomate',
+};
+
+/**
+ * Sentinel id injected at print/preview time only — never persisted.
+ * When 2 of the 3 verdura "sin" modifiers are selected, the pair is collapsed
+ * into a single "Solo X" line where X is the remaining verdura.
+ * The label is provided alongside via `extraLabels`.
+ */
+export const SOLO_VERDURA_ID = '__solo_verdura__';
+
+/**
+ * Returns the modifier id list to render for a single item, applying the
+ * verdura collapse rule. Pure presentation — does not mutate the item.
+ *
+ * Rule: if selectedModifiers contains exactly 2 of {sin-cebolla, sin-lechuga,
+ * sin-tomate}, drop those 2 ids and insert SOLO_VERDURA_ID (with a dynamic
+ * label "Solo <remaining>") in place of the first one.
+ */
+export function collapseVerduraModifiers(
+  selectedModifiers: readonly string[],
+): { ids: string[]; extraLabels: Record<string, string> } {
+  const present = VERDURA_SIN_IDS.filter((id) => selectedModifiers.includes(id));
+  if (present.length !== 2) {
+    return { ids: [...selectedModifiers], extraLabels: {} };
+  }
+  const remaining = VERDURA_SIN_IDS.find((id) => !present.includes(id))!;
+  const label = 'Solo ' + VERDURA_LABEL[remaining];
+
+  const firstIdx = selectedModifiers.findIndex((id) => present.includes(id as typeof present[number]));
+  const ids: string[] = [];
+  let inserted = false;
+  for (let i = 0; i < selectedModifiers.length; i++) {
+    const id = selectedModifiers[i];
+    if (present.includes(id as typeof present[number])) {
+      if (i === firstIdx && !inserted) {
+        ids.push(SOLO_VERDURA_ID);
+        inserted = true;
+      }
+      continue;
+    }
+    ids.push(id);
+  }
+  return { ids, extraLabels: { [SOLO_VERDURA_ID]: label } };
+}

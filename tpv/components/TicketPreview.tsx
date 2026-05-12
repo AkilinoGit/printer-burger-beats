@@ -21,7 +21,7 @@ import {
 import { Text } from 'react-native-paper';
 
 import type { Ticket } from '../lib/types';
-import { currentTime } from '../lib/utils';
+import { collapseVerduraModifiers, currentTime } from '../lib/utils';
 
 // ---------------------------------------------------------------------------
 // Constants — mirror the printer's 58 mm / 32-char layout
@@ -67,8 +67,9 @@ function buildPreviewLines(
       const label = item.customLabel ?? item.productName;
       lines.push(String(item.qty) + 'x ' + label);
       if (item.selectedModifiers.length > 0) {
-        const mods = item.selectedModifiers
-          .map((id) => modifierLabels[id] ?? id)
+        const { ids, extraLabels } = collapseVerduraModifiers(item.selectedModifiers);
+        const mods = ids
+          .map((id) => extraLabels[id] ?? modifierLabels[id] ?? id)
           .join(' · ');
         lines.push('   ' + mods);
       }

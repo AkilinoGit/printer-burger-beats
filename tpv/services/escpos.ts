@@ -7,7 +7,7 @@
 // no longer used for actual printing).
 
 import type { Order, OrderItem, Session, Ticket } from '../lib/types';
-import { currentTime } from '../lib/utils';
+import { collapseVerduraModifiers, currentTime } from '../lib/utils';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -349,13 +349,14 @@ function _appendItemBytes(
   parts.push(CMD_SIZE_WIDE_OFF);
   parts.push(encodeText(filler + priceBlock + '\n'));
 
-  const sortedModifiers = [...item.selectedModifiers].sort((a, b) => {
+  const { ids: collapsedIds, extraLabels } = collapseVerduraModifiers(item.selectedModifiers);
+  const sortedModifiers = collapsedIds.sort((a, b) => {
     if (a === 'mod_sin_gluten') return -1;
     if (b === 'mod_sin_gluten') return  1;
     return 0;
   });
   for (const id of sortedModifiers) {
-    const modLabel = sanitizeForPrinter(modifierLabels[id] ?? id);
+    const modLabel = sanitizeForPrinter(extraLabels[id] ?? modifierLabels[id] ?? id);
     rawLine('  ' + modLabel);
   }
 }
