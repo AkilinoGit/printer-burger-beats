@@ -339,6 +339,13 @@ export default function SessionDetailScreen(): React.JSX.Element {
   const grandTotal = tickets.reduce((sum, t) => sum + ticketTotal(t), 0);
   const orderCount = tickets.reduce((s, t) => s + t.orders.length, 0);
 
+  const ticketTimes = tickets
+    .map((t) => new Date(t.createdAt).getTime())
+    .filter((n) => !isNaN(n))
+    .sort((a, b) => a - b);
+  const firstTicketAt = ticketTimes.length > 0 ? new Date(ticketTimes[0]).toISOString() : null;
+  const lastTicketAt  = ticketTimes.length > 0 ? new Date(ticketTimes[ticketTimes.length - 1]).toISOString() : null;
+
   // ── render ────────────────────────────────────────────────────────────────
   return (
     <View style={styles.root}>
@@ -366,21 +373,41 @@ export default function SessionDetailScreen(): React.JSX.Element {
               {/* Location */}
               <Text style={styles.locationName}>{location?.name ?? '—'}</Text>
 
-              {/* Meta row: apertura + tickets + total */}
+              {/* Apertura */}
+              <View style={styles.metaCol}>
+                <Text style={styles.metaLabel}>Apertura</Text>
+                <Text style={styles.metaValue}>{formatDateTime(session.openedAt ?? session.createdAt)}</Text>
+              </View>
+
+              {/* Tickets + Total */}
               <View style={styles.metaRow}>
-                <View style={styles.metaCol}>
-                  <Text style={styles.metaLabel}>Apertura</Text>
-                  <Text style={styles.metaValue}>{formatDateTime(session.openedAt ?? session.createdAt)}</Text>
-                </View>
                 <View style={styles.metaCol}>
                   <Text style={styles.metaLabel}>Tickets</Text>
                   <Text style={styles.metaValue}>{tickets.length}</Text>
                 </View>
                 <View style={styles.metaCol}>
                   <Text style={styles.metaLabel}>Total</Text>
-                  <Text style={[styles.metaValue, styles.grandTotal]}>{formatPrice(grandTotal)}</Text>
+                  {/* ============================================================
+                      ===== TEMPORAL: TOTAL MULTIPLICADO POR 0.7 (REVERTIR) =====
+                      ===== Quitar el * 0.7 para volver al total real        =====
+                      ============================================================ */}
+                  <Text style={[styles.metaValue, styles.grandTotal]}>{formatPrice(Math.round(grandTotal * 0.7 * 2) / 2)}</Text>
                 </View>
               </View>
+
+              {/* 1er pedido / Último pedido */}
+              {tickets.length > 0 && (
+                <View style={styles.metaRow}>
+                  <View style={styles.metaCol}>
+                    <Text style={styles.metaLabel}>1er pedido</Text>
+                    <Text style={styles.metaValue}>{formatTime(firstTicketAt)}</Text>
+                  </View>
+                  <View style={styles.metaCol}>
+                    <Text style={styles.metaLabel}>Último pedido</Text>
+                    <Text style={styles.metaValue}>{formatTime(lastTicketAt)}</Text>
+                  </View>
+                </View>
+              )}
 
               {/* Auto-close / closed notice */}
               {isOpen ? (

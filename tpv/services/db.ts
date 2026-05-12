@@ -1016,16 +1016,24 @@ export async function getTicketsBySession(sessionId: string): Promise<Ticket[]> 
  */
 export async function getSessionSummary(
   sessionId: string,
-): Promise<{ ticketCount: number; total: number }> {
+): Promise<{ ticketCount: number; total: number; firstTicketAt: string | null; lastTicketAt: string | null }> {
   const db = await getDb();
-  const row = await db.getFirstAsync<{ ticket_count: number; total: number }>(
-    `SELECT COUNT(DISTINCT t.id) AS ticket_count, COALESCE(SUM(o.total), 0) AS total
+  const row = await db.getFirstAsync<{ ticket_count: number; total: number; first_at: string | null; last_at: string | null }>(
+    `SELECT COUNT(DISTINCT t.id) AS ticket_count,
+            COALESCE(SUM(o.total), 0) AS total,
+            MIN(t.created_at) AS first_at,
+            MAX(t.created_at) AS last_at
      FROM tickets t
      LEFT JOIN orders o ON o.ticket_id = t.id
      WHERE t.session_id = ?`,
     [sessionId],
   );
-  return { ticketCount: row?.ticket_count ?? 0, total: row?.total ?? 0 };
+  return {
+    ticketCount: row?.ticket_count ?? 0,
+    total: row?.total ?? 0,
+    firstTicketAt: row?.first_at ?? null,
+    lastTicketAt: row?.last_at ?? null,
+  };
 }
 
 // ---------------------------------------------------------------------------

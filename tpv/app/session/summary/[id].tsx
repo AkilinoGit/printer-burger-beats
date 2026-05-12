@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Alert, ScrollView, StyleSheet, View } from 'react-native';
 import {
   ActivityIndicator,
-  Banner,
   Button,
   Divider,
   Surface,
@@ -448,15 +447,20 @@ export default function SessionSummaryScreen(): React.JSX.Element {
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
       >
-        {/* Active session banner */}
-        {isOpen && (
-          <Banner visible icon="information" style={styles.banner}>
-            SESIÓN EN CURSO — resumen hasta ahora
-          </Banner>
-        )}
-
         {/* Summary header card */}
         <Surface style={[styles.headerCard, isOpen && styles.headerCardOpen]} elevation={2}>
+          {/* Status badge + session code */}
+          <View style={styles.badgeRow}>
+            <View style={[styles.statusBadge, isOpen ? styles.statusBadgeOpen : styles.statusBadgeClosed]}>
+              <Text style={[styles.statusBadgeText, isOpen ? styles.statusTextOpen : styles.statusTextClosed]}>
+                {isOpen ? '● ACTIVA' : '◼ CERRADA'}
+              </Text>
+            </View>
+            {session.sessionCode != null && (
+              <Text style={styles.sessionCode}>{session.sessionCode}</Text>
+            )}
+          </View>
+
           <Text style={styles.locationName}>{location?.name ?? '—'}</Text>
           <View style={styles.metaCol}>
             <Text style={styles.metaLabel}>Apertura</Text>
@@ -564,13 +568,21 @@ const styles = StyleSheet.create({
   scroll:  { flex: 1 },
   content: { padding: 16, paddingBottom: 48, gap: 12 },
 
-  banner: { backgroundColor: '#FFF9C4', marginBottom: 4 },
-
   headerCard: {
     borderRadius: 14, padding: 18,
     backgroundColor: '#fff', gap: 12,
   },
   headerCardOpen: { borderLeftWidth: 4, borderLeftColor: '#43A047' },
+
+  badgeRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  statusBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20 },
+  statusBadgeOpen:   { backgroundColor: '#E8F5E9' },
+  statusBadgeClosed: { backgroundColor: '#F5F5F5' },
+  statusBadgeText: { fontSize: 12, fontWeight: '800', letterSpacing: 0.4 },
+  statusTextOpen:   { color: '#2E7D32' },
+  statusTextClosed: { color: '#757575' },
+  sessionCode: { fontSize: 13, color: '#1565C0', fontWeight: '700' },
+
   locationName: { fontSize: 24, fontWeight: '800', color: '#111' },
   metaRow:  { flexDirection: 'row', gap: 16, flexWrap: 'wrap', alignItems: 'flex-start' },
   metaCol:  { gap: 2, minWidth: 70 },

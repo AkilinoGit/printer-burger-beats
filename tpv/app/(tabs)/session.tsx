@@ -79,6 +79,15 @@ function formatTime(iso: string | null): string {
   return d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
 }
 
+function formatDateTime(iso: string | null): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleString('es-ES', {
+    weekday: 'short', day: '2-digit', month: '2-digit',
+    year: 'numeric', hour: '2-digit', minute: '2-digit',
+  });
+}
+
 // ---------------------------------------------------------------------------
 // SessionCard — used in history list
 // ---------------------------------------------------------------------------
@@ -92,6 +101,7 @@ interface SessionCardProps {
 
 function SessionCard({ session, locationName, onPress, onViewSummary }: SessionCardProps): React.JSX.Element {
   const [summary, setSummary] = useState<{ ticketCount: number; total: number }>({ ticketCount: 0, total: 0 });
+  // getSessionSummary now returns extra fields, but SessionCard only needs ticketCount + total
 
   useEffect(() => {
     getSessionSummary(session.id).then(setSummary).catch(() => {});
@@ -176,12 +186,14 @@ interface ActiveSessionCardProps {
   session: Session;
   locationName: string;
   summary: { ticketCount: number; total: number };
+  firstTicketAt: string | null;
+  lastTicketAt: string | null;
   onViewTickets: () => void;
   onViewSummary: () => void;
   onCloseRequest: () => void;
 }
 
-function ActiveSessionCard({ session, locationName, summary, onViewTickets, onViewSummary, onCloseRequest }: ActiveSessionCardProps): React.JSX.Element {
+function ActiveSessionCard({ session, locationName, summary, firstTicketAt, lastTicketAt, onViewTickets, onViewSummary, onCloseRequest }: ActiveSessionCardProps): React.JSX.Element {
   const openedAt = session.openedAt ?? session.createdAt;
 
   return (
@@ -199,12 +211,15 @@ function ActiveSessionCard({ session, locationName, summary, onViewTickets, onVi
 
         {/* Info */}
         <Text style={activeStyles.location}>{locationName}</Text>
+
+        {/* Apertura */}
+        <View style={activeStyles.metaCol}>
+          <Text style={activeStyles.metaLabel}>Apertura</Text>
+          <Text style={activeStyles.metaValue}>{formatDateTime(openedAt)}</Text>
+        </View>
+
+        {/* Tickets + Total */}
         <View style={activeStyles.metaRow}>
-          <View style={activeStyles.metaCol}>
-            <Text style={activeStyles.metaLabel}>Apertura</Text>
-            <Text style={activeStyles.metaValue}>{formatDate(openedAt)}</Text>
-            <Text style={activeStyles.metaTime}>{formatTime(openedAt)}</Text>
-          </View>
           <View style={activeStyles.metaCol}>
             <Text style={activeStyles.metaLabel}>Tickets</Text>
             <Text style={activeStyles.metaValue}>{summary.ticketCount}</Text>
@@ -215,9 +230,23 @@ function ActiveSessionCard({ session, locationName, summary, onViewTickets, onVi
                 ===== TEMPORAL: TOTAL MULTIPLICADO POR 0.7 (REVERTIR) =====
                 ===== Quitar el * 0.7 para volver al total real        =====
                 ============================================================ */}
-            <Text style={activeStyles.metaValue}>{formatPrice(Math.round(summary.total * 0.7 * 2) / 2)}</Text>
+            <Text style={[activeStyles.metaValue, activeStyles.totalBlue]}>{formatPrice(Math.round(summary.total * 0.7 * 2) / 2)}</Text>
           </View>
         </View>
+
+        {/* 1er pedido / Último pedido */}
+        {summary.ticketCount > 0 && (
+          <View style={activeStyles.metaRow}>
+            <View style={activeStyles.metaCol}>
+              <Text style={activeStyles.metaLabel}>1er pedido</Text>
+              <Text style={activeStyles.metaValue}>{formatTime(firstTicketAt)}</Text>
+            </View>
+            <View style={activeStyles.metaCol}>
+              <Text style={activeStyles.metaLabel}>Último pedido</Text>
+              <Text style={activeStyles.metaValue}>{formatTime(lastTicketAt)}</Text>
+            </View>
+          </View>
+        )}
 
         {/* Auto-close notice */}
         <Text style={activeStyles.autoCloseNote}>
@@ -329,6 +358,9 @@ const activeStyles = StyleSheet.create({
     fontWeight: '700',
     color: '#1a1a1a',
   },
+  totalBlue: {
+    color: '#1565C0',
+  },
   metaTime: {
     fontSize: 12,
     color: '#555',
@@ -377,7 +409,7 @@ export default function SessionScreen(): React.JSX.Element {
   const [opening, setOpening]                   = useState(false);
   const [closing, setClosing]                   = useState(false);
   const [closeDialogVisible, setCloseDialogVisible] = useState(false);
-  const [activeSummary, setActiveSummary]       = useState<{ ticketCount: number; total: number }>({ ticketCount: 0, total: 0 });
+  const [activeSummary, setActiveSummary]       = useState<{ ticketCount: number; total: number; firstTicketAt: string | null; lastTicketAt: string | null }>({ ticketCount: 0, total: 0, firstTicketAt: null, lastTicketAt: null });
 
   // Price dialog before opening session
   const [priceDialogVisible, setPriceDialogVisible] = useState(false);
@@ -517,6 +549,8 @@ export default function SessionScreen(): React.JSX.Element {
                   session={activeSession}
                   locationName={locationName(activeSession.locationId)}
                   summary={activeSummary}
+                  firstTicketAt={activeSummary.firstTicketAt}
+                  lastTicketAt={activeSummary.lastTicketAt}
                   onViewTickets={() => router.push(`/session/${activeSession.id}`)}
                   onViewSummary={() => router.push(`/session/summary/${activeSession.id}`)}
                   onCloseRequest={() => setCloseDialogVisible(true)}
