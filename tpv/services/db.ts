@@ -19,7 +19,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 const DB_NAME = 'tpv_v12.db';
-const SCHEMA_VERSION = 19;
+const SCHEMA_VERSION = 20;
 
 let _db: SQLite.SQLiteDatabase | null = null;
 let _initPromise: Promise<void> | null = null;
@@ -118,7 +118,27 @@ export async function initDb(): Promise<void> {
     if (currentVersion < 19) {
       await migrate_v19(db); // add Sin nada modifier to patatas, alitas, tekeños, burger-nino
     }
+    if (currentVersion < 20) {
+      await migrate_v20(db); // add section + sort_order columns to modifiers and reseed
+    }
     await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+
+    // Self-heal: if for any reason modifiers have no section populated
+    // (e.g. v20 was marked done but the reseed silently failed), force a reseed.
+    try {
+      const check = await db.getFirstAsync<{ c: number }>(
+        "SELECT COUNT(*) as c FROM modifiers WHERE section IS NOT NULL"
+      );
+      if (!check || check.c === 0) {
+        // eslint-disable-next-line no-console
+        console.log('[db] No modifiers with section found — running reseed');
+        await migrate_v20(db);
+      }
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.log('[db] Self-heal check failed (column may not exist yet) — running reseed', e);
+      await migrate_v20(db);
+    }
   })();
   return _initPromise;
 }
@@ -159,7 +179,9 @@ async function migrate_v1(db: SQLite.SQLiteDatabase): Promise<void> {
         type                TEXT NOT NULL,
         price_add           REAL NOT NULL DEFAULT 0,
         options             TEXT NOT NULL DEFAULT '[]',
-        no_selection_label  TEXT
+        no_selection_label  TEXT,
+        section             TEXT,
+        sort_order          INTEGER NOT NULL DEFAULT 999
       );
 
       CREATE TABLE IF NOT EXISTS tickets (
@@ -346,6 +368,35 @@ async function migrate_v18(db: SQLite.SQLiteDatabase): Promise<void> {
   await db.runAsync("DELETE FROM sync_queue");
 }
 
+async function migrate_v20(db: SQLite.SQLiteDatabase): Promise<void> {
+  // Add section + sort_order columns and reseed products/modifiers
+  const addCol = async (sql: string) => {
+    try { await db.execAsync(sql); } catch { /* column already exists */ }
+  };
+  await addCol(`ALTER TABLE modifiers ADD COLUMN section TEXT`);
+  await addCol(`ALTER TABLE modifiers ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 999`);
+
+  await db.execAsync('PRAGMA foreign_keys = OFF');
+  await db.runAsync('DELETE FROM modifiers');
+  await db.runAsync('DELETE FROM products');
+  await db.execAsync('PRAGMA foreign_keys = ON');
+
+  await db.withExclusiveTransactionAsync(async (txn) => {
+    for (const p of INITIAL_PRODUCTS) {
+      await txn.runAsync(
+        'INSERT INTO products (id, name, base_price, category, is_custom, is_active, always_show_modifiers) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [p.id, p.name, p.basePrice, p.category, p.isCustom ? 1 : 0, p.isActive ? 1 : 0, p.alwaysShowModifiers ? 1 : 0],
+      );
+      for (const m of p.modifiers) {
+        await txn.runAsync(
+          'INSERT INTO modifiers (id, product_id, label, type, price_add, options, no_selection_label, section, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [`${p.id}-${m.id}`, p.id, m.label, m.type, m.priceAdd ?? 0, JSON.stringify(m.options ?? []), m.noSelectionLabel ?? null, m.section ?? null, m.order ?? 999],
+        );
+      }
+    }
+  });
+}
+
 async function migrate_v19(db: SQLite.SQLiteDatabase): Promise<void> {
   // Insert 'Sin nada' as first modifier for patatas, alitas, tekeños, burger-nino
   await db.withExclusiveTransactionAsync(async (txn) => {
@@ -436,8 +487,8 @@ async function seedInitialData(db: SQLite.SQLiteDatabase): Promise<void> {
     for (const p of INITIAL_PRODUCTS) {
       for (const m of p.modifiers) {
         await txn.runAsync(
-          'INSERT INTO modifiers (id, product_id, label, type, price_add, options, no_selection_label) VALUES (?, ?, ?, ?, ?, ?, ?)',
-          [`${p.id}-${m.id}`, p.id, m.label, m.type, m.priceAdd ?? 0, JSON.stringify(m.options ?? []), m.noSelectionLabel ?? null],
+          'INSERT INTO modifiers (id, product_id, label, type, price_add, options, no_selection_label, section, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [`${p.id}-${m.id}`, p.id, m.label, m.type, m.priceAdd ?? 0, JSON.stringify(m.options ?? []), m.noSelectionLabel ?? null, m.section ?? null, m.order ?? 999],
         );
       }
     }
@@ -487,6 +538,8 @@ type ModifierRow = {
   price_add: number;
   options: string;
   no_selection_label: string | null;
+  section: string | null;
+  sort_order: number;
 };
 
 type TicketRow = {
@@ -580,6 +633,8 @@ function mapModifier(row: ModifierRow): Modifier {
     priceAdd: row.price_add !== 0 ? row.price_add : undefined,
     options: JSON.parse(row.options),
     noSelectionLabel: row.no_selection_label ?? undefined,
+    section: (row.section ?? undefined) as Modifier['section'],
+    order: row.sort_order,
   };
 }
 

@@ -28,6 +28,8 @@ export interface ModifierOption {
   label: string;
 }
 
+export type ModifierSection = 'verdura' | 'queso-salsa' | 'carne' | 'extra' | 'otros';
+
 export interface Modifier {
   id: string;
   label: string;
@@ -35,6 +37,8 @@ export interface Modifier {
   priceAdd?: number;          // extra cost when selected (e.g. +1 for bacon)
   options?: ModifierOption[]; // only for type 'radio' — user picks exactly one
   noSelectionLabel?: string;  // printed when no option is chosen (e.g. "Sin salsa")
+  section?: ModifierSection;  // grouping & color in ModifierSheet
+  order?: number;             // fixed position within its section
 }
 
 export interface Product {

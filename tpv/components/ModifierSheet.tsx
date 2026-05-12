@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { Modal, ScrollView, StyleSheet, TouchableWithoutFeedback, View } from 'react-native';
-import { Button, Chip, Divider, Surface, Text, TouchableRipple } from 'react-native-paper';
+import { Modal, Pressable, ScrollView, StyleSheet, TouchableWithoutFeedback, View } from 'react-native';
+import { Button, Divider, Surface, Text, TouchableRipple } from 'react-native-paper';
 import { formatPrice } from '../lib/utils';
-import type { Modifier, Product } from '../lib/types';
+import type { Modifier, ModifierSection, Product } from '../lib/types';
 
 interface Props {
   product: Product | null;
@@ -11,10 +11,28 @@ interface Props {
   onDismiss: () => void;
 }
 
+interface SectionSpec {
+  key: ModifierSection;
+  title: string;
+  color: string;     // dark / primary
+  light: string;     // light fill for unselected chip background
+}
+
+// Fixed display order — sections always appear in this sequence
+const SECTION_SPECS: SectionSpec[] = [
+  { key: 'verdura',     title: 'VERDURA',       color: '#2E7D32', light: '#E8F5E9' }, // verde
+  { key: 'queso-salsa', title: 'QUESO Y SALSA', color: '#EF6C00', light: '#FFE0B2' }, // naranja
+  { key: 'carne',       title: 'CARNE',         color: '#C62828', light: '#FFCDD2' }, // rojo
+  { key: 'extra',       title: 'EXTRA',         color: '#6A1B9A', light: '#E1BEE7' }, // morado
+  { key: 'otros',       title: 'OTROS',         color: '#455A64', light: '#CFD8DC' }, // gris
+];
+
+function sortBySectionOrder(mods: Modifier[]): Modifier[] {
+  return [...mods].sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
+}
+
 export default function ModifierSheet({ product, visible, onConfirm, onDismiss }: Props): React.JSX.Element {
-  // toggle modifiers (remove / add)
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  // radio modifiers: modifierId → selected optionId (or null)
   const [radioSelected, setRadioSelected] = useState<Record<string, string | null>>({});
 
   useEffect(() => {
@@ -29,10 +47,6 @@ export default function ModifierSheet({ product, visible, onConfirm, onDismiss }
   }, [visible, product?.id]);
 
   if (!product) return <></>;
-
-  const removes = product.modifiers.filter((m) => m.type === 'remove');
-  const adds    = product.modifiers.filter((m) => m.type === 'add');
-  const radios  = product.modifiers.filter((m) => m.type === 'radio');
 
   function toggle(id: string): void {
     setSelected((prev) => {
@@ -51,13 +65,90 @@ export default function ModifierSheet({ product, visible, onConfirm, onDismiss }
   }
 
   function handleConfirm(): void {
-    // Collect toggle selections
     const result: string[] = [...selected];
-    // Collect radio selections (optionId goes into selectedModifiers)
     for (const optionId of Object.values(radioSelected)) {
       if (optionId !== null) result.push(optionId);
     }
     onConfirm(result);
+  }
+
+  // Group modifiers by section
+  const bySection = new Map<ModifierSection, Modifier[]>();
+  const unsectioned: Modifier[] = [];
+  for (const m of product.modifiers) {
+    if (m.section) {
+      const arr = bySection.get(m.section) ?? [];
+      arr.push(m);
+      bySection.set(m.section, arr);
+    } else {
+      unsectioned.push(m);
+    }
+  }
+
+  function ChipButton({
+    label, isSelected, color, light, onPress,
+  }: {
+    label: string;
+    isSelected: boolean;
+    color: string;
+    light: string;
+    onPress: () => void;
+  }): React.JSX.Element {
+    return (
+      <Pressable
+        onPress={onPress}
+        style={({ pressed }) => [
+          styles.chipBtn,
+          {
+            backgroundColor: isSelected ? color : light,
+            borderColor: color,
+            opacity: pressed ? 0.7 : 1,
+          },
+        ]}
+      >
+        <Text style={[styles.chipText, { color: isSelected ? '#fff' : color }]}>
+          {label}
+        </Text>
+      </Pressable>
+    );
+  }
+
+  function renderToggle(m: Modifier, color: string, light: string): React.JSX.Element {
+    const isSelected = selected.has(m.id);
+    const priceStr = m.priceAdd ? `  ${m.priceAdd > 0 ? '+' : ''}${formatPrice(m.priceAdd)}` : '';
+    return (
+      <ChipButton
+        key={m.id}
+        label={`${m.label}${priceStr}`}
+        isSelected={isSelected}
+        color={color}
+        light={light}
+        onPress={() => toggle(m.id)}
+      />
+    );
+  }
+
+  function renderRadio(m: Modifier, color: string, light: string): React.JSX.Element {
+    return (
+      <View key={m.id} style={styles.radioInline}>
+        <Text style={[styles.radioLabel, { color }]}>{m.label.toUpperCase()}</Text>
+        <View style={styles.chipRow}>
+          {(m.options ?? []).map((opt) => {
+            const isChosen = radioSelected[m.id] === opt.id;
+            return (
+              <ChipButton
+                key={opt.id}
+                label={opt.label}
+                isSelected={isChosen}
+                color={color}
+                light={light}
+                onPress={() => selectRadioOption(m.id, opt.id)}
+              />
+            );
+          })}
+        </View>
+      </View>
+    );
   }
 
   return (
@@ -82,71 +173,35 @@ export default function ModifierSheet({ product, visible, onConfirm, onDismiss }
 
         <ScrollView contentContainerStyle={styles.chipScroll}>
 
-          {/* RADIO modifiers — pick one option per group */}
-          {radios.map((m: Modifier) => (
-            <View key={m.id} style={styles.radioGroup}>
-              <Text style={styles.groupLabel}>{m.label.toUpperCase()}</Text>
-              <View style={styles.chipRow}>
-                {(m.options ?? []).map((opt) => {
-                  const isChosen = radioSelected[m.id] === opt.id;
-                  return (
-                    <Chip
-                      key={opt.id}
-                      mode={isChosen ? 'flat' : 'outlined'}
-                      selected={isChosen}
-                      onPress={() => selectRadioOption(m.id, opt.id)}
-                      style={styles.chip}
-                      selectedColor="#1E88E5"
-                      showSelectedCheck={false}
-                    >
-                      {opt.label}
-                    </Chip>
-                  );
-                })}
+          {SECTION_SPECS.map((spec) => {
+            const mods = sortBySectionOrder(bySection.get(spec.key) ?? []);
+            if (mods.length === 0) return null;
+            return (
+              <View key={spec.key} style={[styles.sectionCard, { borderColor: spec.color }]}>
+                <View style={[styles.sectionHeader, { backgroundColor: spec.color }]}>
+                  <Text style={styles.sectionHeaderText}>{spec.title}</Text>
+                </View>
+                <View style={styles.sectionBody}>
+                  <View style={styles.chipRow}>
+                    {mods.filter((m) => m.type !== 'radio').map((m) => renderToggle(m, spec.color, spec.light))}
+                  </View>
+                  {mods.filter((m) => m.type === 'radio').map((m) => renderRadio(m, spec.color, spec.light))}
+                </View>
               </View>
-            </View>
-          ))}
+            );
+          })}
 
-          {/* REMOVE modifiers */}
-          {removes.length > 0 && (
-            <View style={radios.length > 0 ? styles.radioGroup : undefined}>
-              <Text style={styles.groupLabel}>QUITAR</Text>
-              <View style={styles.chipRow}>
-                {removes.map((m) => (
-                  <Chip
-                    key={m.id}
-                    mode={selected.has(m.id) ? 'flat' : 'outlined'}
-                    selected={selected.has(m.id)}
-                    onPress={() => toggle(m.id)}
-                    style={styles.chip}
-                    selectedColor="#E53935"
-                    showSelectedCheck={false}
-                  >
-                    {m.label}{m.priceAdd ? `  ${m.priceAdd > 0 ? '+' : ''}${formatPrice(m.priceAdd)}` : ''}
-                  </Chip>
-                ))}
+          {/* Fallback for modifiers without a section */}
+          {unsectioned.length > 0 && (
+            <View style={[styles.sectionCard, { borderColor: '#9E9E9E' }]}>
+              <View style={[styles.sectionHeader, { backgroundColor: '#616161' }]}>
+                <Text style={styles.sectionHeaderText}>OTROS</Text>
               </View>
-            </View>
-          )}
-
-          {/* ADD modifiers (with optional price) */}
-          {adds.length > 0 && (
-            <View style={styles.radioGroup}>
-              <Text style={styles.groupLabel}>AÑADIR</Text>
-              <View style={styles.chipRow}>
-                {adds.map((m) => (
-                  <Chip
-                    key={m.id}
-                    mode={selected.has(m.id) ? 'flat' : 'outlined'}
-                    selected={selected.has(m.id)}
-                    onPress={() => toggle(m.id)}
-                    style={styles.chip}
-                    selectedColor="#43A047"
-                    showSelectedCheck={false}
-                  >
-                    {m.label}{m.priceAdd ? `  +${formatPrice(m.priceAdd)}` : ''}
-                  </Chip>
-                ))}
+              <View style={styles.sectionBody}>
+                <View style={styles.chipRow}>
+                  {unsectioned.filter((m) => m.type !== 'radio').map((m) => renderToggle(m, '#616161', '#ECEFF1'))}
+                </View>
+                {unsectioned.filter((m) => m.type === 'radio').map((m) => renderRadio(m, '#616161', '#ECEFF1'))}
               </View>
             </View>
           )}
@@ -190,9 +245,10 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     paddingBottom: 32,
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
     paddingTop: 4,
     backgroundColor: '#fff',
+    maxHeight: '92%',
   },
   handleArea: {
     alignItems: 'center',
@@ -217,28 +273,58 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   divider: {
-    marginVertical: 16,
+    marginVertical: 10,
   },
   chipScroll: {
     paddingBottom: 8,
   },
-  radioGroup: {
-    marginTop: 16,
+  sectionCard: {
+    borderWidth: 2,
+    borderRadius: 12,
+    marginBottom: 14,
+    overflow: 'hidden',
+    backgroundColor: '#fff',
   },
-  groupLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 1.1,
-    color: '#999',
-    marginBottom: 8,
+  sectionHeader: {
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+  },
+  sectionHeaderText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '900',
+    letterSpacing: 1.5,
+  },
+  sectionBody: {
+    paddingVertical: 12,
+    paddingHorizontal: 12,
   },
   chipRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
   },
-  chip: {
-    height: 40,
+  chipBtn: {
+    minHeight: 42,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 22,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  chipText: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  radioInline: {
+    marginTop: 12,
+  },
+  radioLabel: {
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 1.0,
+    marginBottom: 8,
   },
   actions: {
     flexDirection: 'row',

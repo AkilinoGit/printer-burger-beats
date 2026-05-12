@@ -1,34 +1,47 @@
 import type { Modifier, Product } from './types';
 
-const SIN_QUESO:        Modifier = { id: 'sin-queso',        label: 'Sin queso',        type: 'remove' };
-const SIN_LECHUGA:      Modifier = { id: 'sin-lechuga',      label: 'Sin lechuga',      type: 'remove' };
-const SIN_CEBOLLA:      Modifier = { id: 'sin-cebolla',      label: 'Sin cebolla',      type: 'remove' };
-const SIN_TOMATE:       Modifier = { id: 'sin-tomate',       label: 'Sin tomate',       type: 'remove' };
-const SIN_BACON:        Modifier = { id: 'sin-bacon',        label: 'Sin bacon',        type: 'remove' };
-const SIN_SALSA:        Modifier = { id: 'sin-salsa',        label: 'Sin salsa',        type: 'remove' };
-const SIN_VERDURA:      Modifier = { id: 'sin-verdura',      label: 'Sin verdura',      type: 'remove' };
-const SIN_CEB_CRISPY:   Modifier = { id: 'sin-cebolla-crispy', label: 'Sin cebolla crispy', type: 'remove' };
-const SIN_CARNE_MECH:   Modifier = { id: 'sin-carne-mechada',  label: 'Sin carne mechada',  type: 'remove' };
-const SIN_UNA_CARNE:    Modifier = { id: 'sin-una-carne',    label: 'Sin una carne',    type: 'remove', priceAdd: -1.50 };
-const EXTRA_CARNE:      Modifier = { id: 'extra-carne',      label: 'Extra de carne',   type: 'add',    priceAdd:  1.00 };
-const EXTRA_BACON:      Modifier = { id: 'extra-bacon',      label: 'Extra bacon',      type: 'add',    priceAdd:  1.00 };
+// --- VERDURA (verde) ---
+const SIN_CEBOLLA:      Modifier = { id: 'sin-cebolla',        label: 'Sin cebolla',        type: 'remove', section: 'verdura',     order: 1 };
+const SIN_LECHUGA:      Modifier = { id: 'sin-lechuga',        label: 'Sin lechuga',        type: 'remove', section: 'verdura',     order: 2 };
+const SIN_TOMATE:       Modifier = { id: 'sin-tomate',         label: 'Sin tomate',         type: 'remove', section: 'verdura',     order: 3 };
+const SIN_VERDURA:      Modifier = { id: 'sin-verdura',        label: 'Sin verdura',        type: 'remove', section: 'verdura',     order: 4 };
+const SIN_CEB_CRISPY:   Modifier = { id: 'sin-cebolla-crispy', label: 'Sin cebolla crispy', type: 'remove', section: 'verdura',     order: 5 };
+
+// --- QUESO Y SALSA (naranja) ---
+const SIN_QUESO:        Modifier = { id: 'sin-queso',          label: 'Sin queso',          type: 'remove', section: 'queso-salsa', order: 1 };
+const SIN_SALSA:        Modifier = { id: 'sin-salsa',          label: 'Sin salsa',          type: 'remove', section: 'queso-salsa', order: 2 };
+
+// --- CARNE (rojo) ---
+const SIN_BACON:        Modifier = { id: 'sin-bacon',          label: 'Sin bacon',          type: 'remove', section: 'carne',       order: 1 };
+const SIN_CARNE_MECH:   Modifier = { id: 'sin-carne-mechada',  label: 'Sin carne mechada',  type: 'remove', section: 'carne',       order: 2 };
+const SIN_UNA_CARNE:    Modifier = { id: 'sin-una-carne',      label: 'Sin una carne',      type: 'remove', section: 'carne',       order: 3, priceAdd: -1.50 };
+
+// --- EXTRA (morado) ---
+const CEBOLLA_CARAM:    Modifier = { id: 'cebolla-caramelizada', label: 'Cebolla Caram.',   type: 'add',    section: 'extra',       order: 1 };
+
+// --- EXTRAS de carne (rojo, dentro de sección 'carne') ---
+const EXTRA_CARNE:      Modifier = { id: 'extra-carne',         label: 'Extra de carne',    type: 'add',    section: 'carne',       order: 10, priceAdd: 1.00 };
+const EXTRA_BACON:      Modifier = { id: 'extra-bacon',         label: 'Extra bacon',       type: 'add',    section: 'carne',       order: 11, priceAdd: 1.00 };
 
 export const INITIAL_MODIFIERS: Modifier[] = [
   SIN_QUESO, SIN_LECHUGA, SIN_CEBOLLA, SIN_TOMATE, SIN_BACON,
   SIN_SALSA, SIN_VERDURA, SIN_CEB_CRISPY, SIN_CARNE_MECH,
-  SIN_UNA_CARNE, EXTRA_CARNE, EXTRA_BACON,
+  SIN_UNA_CARNE, CEBOLLA_CARAM, EXTRA_CARNE, EXTRA_BACON,
 ];
 
 const SALSA_RADIO_NINO: Modifier = {
   id: 'nino-salsa',
   label: 'Salsa',
   type: 'radio',
+  section: 'queso-salsa',
+  order: 10,
   noSelectionLabel: 'Sin salsa',
   options: [
     { id: 'salsa-sin-nada', label: 'Sin nada' },
     { id: 'salsa-ketchup',  label: 'Ketchup'  },
     { id: 'salsa-ali-oli',  label: 'Ali Oli'  },
     { id: 'salsa-mostaza',  label: 'Mostaza'  },
+    { id: 'salsa-bbq',      label: 'BBQ'      },
     { id: 'salsa-fat',      label: 'Fat'      },
     { id: 'salsa-ben',      label: 'Ben'      },
     { id: 'salsa-doble',    label: 'Doble'    },
@@ -39,6 +52,8 @@ const SALSA_RADIO_ALITAS: Modifier = {
   id: 'alitas-salsa',
   label: 'Salsa',
   type: 'radio',
+  section: 'queso-salsa',
+  order: 10,
   noSelectionLabel: 'Sin salsa',
   options: [
     { id: 'salsa-sin-nada', label: 'Sin nada' },
@@ -56,6 +71,8 @@ const SALSA_RADIO_TEKENOS: Modifier = {
   id: 'tekenos-salsa',
   label: 'Salsa',
   type: 'radio',
+  section: 'queso-salsa',
+  order: 10,
   noSelectionLabel: 'Sin salsa',
   options: [
     { id: 'salsa-sin-nada', label: 'Sin nada' },
@@ -68,18 +85,18 @@ const SALSA_RADIO_TEKENOS: Modifier = {
   ],
 };
 
-const SIN_GLUTEN: Modifier = { id: 'mod_sin_gluten', label: 'Sin Gluten', type: 'remove', priceAdd: 0 };
+const SIN_GLUTEN: Modifier = { id: 'mod_sin_gluten', label: 'Sin Gluten', type: 'remove', section: 'otros', order: 1, priceAdd: 0 };
 
 const MOD_FAT_FURIOUS: Modifier[] = [
-  SIN_GLUTEN, SIN_QUESO, SIN_CEB_CRISPY, SIN_SALSA, SIN_CARNE_MECH, SIN_UNA_CARNE, EXTRA_CARNE,
+  SIN_GLUTEN, SIN_QUESO, SIN_CEB_CRISPY, SIN_SALSA, SIN_CARNE_MECH, SIN_UNA_CARNE, CEBOLLA_CARAM, EXTRA_CARNE,
 ];
 
 const MOD_BEN_MUERDE: Modifier[] = [
-  SIN_GLUTEN, SIN_QUESO, SIN_CEBOLLA, SIN_SALSA, SIN_BACON, SIN_UNA_CARNE, EXTRA_BACON,
+  SIN_GLUTEN, SIN_QUESO, SIN_CEBOLLA, SIN_SALSA, SIN_BACON, SIN_UNA_CARNE, CEBOLLA_CARAM, EXTRA_BACON,
 ];
 
 const MOD_DOBLE_SUBWOOFER: Modifier[] = [
-  SIN_GLUTEN, SIN_QUESO, SIN_VERDURA, SIN_SALSA, SIN_TOMATE, SIN_LECHUGA, SIN_CEBOLLA, SIN_UNA_CARNE, EXTRA_BACON,
+  SIN_GLUTEN, SIN_QUESO, SIN_VERDURA, SIN_SALSA, SIN_TOMATE, SIN_LECHUGA, SIN_CEBOLLA, SIN_UNA_CARNE, CEBOLLA_CARAM, EXTRA_BACON,
 ];
 
 const MOD_PATATAS: Modifier[] = [
@@ -93,8 +110,11 @@ const MOD_PATATAS: Modifier[] = [
 const MOD_BURGER_NINO: Modifier[] = [
   SIN_GLUTEN,
   SALSA_RADIO_NINO,
-  { id: 'nino-bacon',   label: 'Bacon',   type: 'add', priceAdd: 1.00 },
-  { id: 'nino-verdura', label: 'Verdura', type: 'add', priceAdd: 0.50 },
+  { id: 'nino-queso',   label: 'Queso',   type: 'add', section: 'queso-salsa', order: 20 },
+  { id: 'nino-bacon',   label: 'Bacon',   type: 'add', section: 'carne',       order: 10 },
+  { id: 'nino-lechuga', label: 'Lechuga', type: 'add', section: 'verdura',     order: 10 },
+  { id: 'nino-tomate',  label: 'Tomate',  type: 'add', section: 'verdura',     order: 11 },
+  { id: 'nino-cebolla', label: 'Cebolla', type: 'add', section: 'verdura',     order: 12 },
 ];
 
 export const INITIAL_PRODUCTS: Product[] = [
