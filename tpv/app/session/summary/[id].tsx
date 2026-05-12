@@ -51,7 +51,8 @@ const PRODUCT_CATEGORY_MAP: Record<string, ProductCategory> = {
   'patatas':         'side',
   'alitas':          'side',
   'tekenos':         'side',
-  'gyozas':          'side',
+  'gyozas-pollo':    'side',
+  'gyozas-verdura':  'side',
   'bebida':          'drink',
   'agua':            'drink',
   'burger-nino':     'custom',
@@ -226,7 +227,7 @@ function buildSauceSummary(tickets: Ticket[]): SauceTally[] {
           }
 
         // Gyozas: siempre soja salvo que no tenga salsa (no tiene radio, así que siempre)
-        } else if (item.productId === 'gyozas') {
+        } else if (item.productId === 'gyozas-pollo' || item.productId === 'gyozas-verdura') {
           const def = DEFAULT_SAUCE_WHEN_NORMAL['gyozas'];
           if (def) add(def, item.qty);
         }

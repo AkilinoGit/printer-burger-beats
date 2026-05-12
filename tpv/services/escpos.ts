@@ -55,6 +55,7 @@ export const CMD_SIZE_WIDE_OFF: readonly number[] = [ESC, 0x21, 0x00];
 /** Short name substitutions applied only at print time (not in DB). */
 const PRINT_NAME_OVERRIDES: Record<string, string> = {
   'DOBLE SUBWOOFER': 'DOBLE SUB',
+  'BURGER VEGETARIANA': 'BURGER VEGET.',
 };
 
 /** ESC d 4 — Feed 4 lines */
@@ -259,7 +260,7 @@ function _appendOrderBytes(
  *
  * Fixed kitchen order (by productId):
  *   doble-subwoofer → ben-muerde → fat-furious → burger-nino →
- *   patatas → alitas → tekenos → gyozas → bebida → agua → otros (catch-all last)
+ *   patatas → alitas → tekenos → gyozas-pollo → gyozas-verdura → bebida → agua → otros (catch-all last)
  *
  * Grouping:
  *   Items with the same productId AND same selectedModifiers (sorted) are merged
@@ -270,10 +271,12 @@ const KITCHEN_ORDER: Record<string, number> = {
   'ben-muerde':      1,
   'fat-furious':     2,
   'burger-nino':     3,
+  'burger-veget':    3,
   'patatas':         4,
   'alitas':          5,
   'tekenos':         6,
-  'gyozas':          7,
+  'gyozas-pollo':    7,
+  'gyozas-verdura':  7,
   'bebida':          8,
   'agua':            9,
 };
@@ -452,9 +455,9 @@ const SUMMARY_CAT_ORDER: Record<string, number> = { burger: 0, side: 1, drink: 2
 
 const SUMMARY_PRODUCT_CAT: Record<string, string> = {
   'fat-furious': 'burger', 'ben-muerde': 'burger', 'doble-subwoofer': 'burger',
-  'patatas': 'side', 'alitas': 'side', 'tekenos': 'side', 'gyozas': 'side',
+  'patatas': 'side', 'alitas': 'side', 'tekenos': 'side', 'gyozas-pollo': 'side', 'gyozas-verdura': 'side',
   'bebida': 'drink', 'agua': 'drink',
-  'burger-nino': 'custom', 'otros': 'custom',
+  'burger-nino': 'custom', 'burger-veget': 'custom', 'otros': 'custom',
 };
 
 interface _SummaryVariant {
@@ -621,7 +624,7 @@ function _buildSauceSummary(tickets: Ticket[]): [string, number][] {
             const def = _DEFAULT_SAUCE_WHEN_NORMAL[item.productId];
             if (def) add(def, item.qty);
           }
-        } else if (item.productId === 'gyozas') {
+        } else if (item.productId === 'gyozas-pollo' || item.productId === 'gyozas-verdura') {
           add(_DEFAULT_SAUCE_WHEN_NORMAL['gyozas'], item.qty);
         }
       }

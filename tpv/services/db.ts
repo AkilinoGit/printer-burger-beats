@@ -19,7 +19,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 const DB_NAME = 'tpv_v12.db';
-const SCHEMA_VERSION = 21;
+const SCHEMA_VERSION = 22;
 
 let _db: SQLite.SQLiteDatabase | null = null;
 let _initPromise: Promise<void> | null = null;
@@ -123,6 +123,9 @@ export async function initDb(): Promise<void> {
     }
     if (currentVersion < 21) {
       await migrate_v20(db); // reseed: patatas modifiers now have section assigned
+    }
+    if (currentVersion < 22) {
+      await migrate_v22(db); // rename product id 'gyozas' → 'gyozas-pollo' and add 'gyozas-verdura'
     }
     await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
 
@@ -422,6 +425,55 @@ async function migrate_v19(db: SQLite.SQLiteDatabase): Promise<void> {
         'UPDATE modifiers SET options = ? WHERE id = ?',
         [JSON.stringify(opts), modId],
       );
+    }
+  });
+}
+
+async function migrate_v22(db: SQLite.SQLiteDatabase): Promise<void> {
+  // Rename product id 'gyozas' → 'gyozas-pollo' across all tables, and
+  // rotate the corresponding key in sessions.price_overrides JSON blobs.
+  // products table is fully reseeded from INITIAL_PRODUCTS at the end so
+  // the new 'gyozas-verdura' row also lands.
+  await db.withExclusiveTransactionAsync(async (txn) => {
+    await txn.runAsync(
+      "UPDATE order_items SET product_id = 'gyozas-pollo' WHERE product_id = 'gyozas'",
+    );
+
+    const rows = await txn.getAllAsync<{ id: string; price_overrides: string }>(
+      "SELECT id, price_overrides FROM sessions WHERE price_overrides LIKE '%gyozas%'",
+    );
+    for (const row of rows) {
+      let obj: Record<string, number>;
+      try { obj = JSON.parse(row.price_overrides); } catch { continue; }
+      if (Object.prototype.hasOwnProperty.call(obj, 'gyozas')) {
+        obj['gyozas-pollo'] = obj['gyozas'];
+        delete obj['gyozas'];
+        await txn.runAsync(
+          'UPDATE sessions SET price_overrides = ? WHERE id = ?',
+          [JSON.stringify(obj), row.id],
+        );
+      }
+    }
+  });
+
+  // Reseed products + modifiers so the new gyozas-pollo / gyozas-verdura rows exist.
+  await db.execAsync('PRAGMA foreign_keys = OFF');
+  await db.runAsync('DELETE FROM modifiers');
+  await db.runAsync('DELETE FROM products');
+  await db.execAsync('PRAGMA foreign_keys = ON');
+
+  await db.withExclusiveTransactionAsync(async (txn) => {
+    for (const p of INITIAL_PRODUCTS) {
+      await txn.runAsync(
+        'INSERT INTO products (id, name, base_price, category, is_custom, is_active, always_show_modifiers) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [p.id, p.name, p.basePrice, p.category, p.isCustom ? 1 : 0, p.isActive ? 1 : 0, p.alwaysShowModifiers ? 1 : 0],
+      );
+      for (const m of p.modifiers) {
+        await txn.runAsync(
+          'INSERT INTO modifiers (id, product_id, label, type, price_add, options, no_selection_label, section, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [`${p.id}-${m.id}`, p.id, m.label, m.type, m.priceAdd ?? 0, JSON.stringify(m.options ?? []), m.noSelectionLabel ?? null, m.section ?? null, m.order ?? 999],
+        );
+      }
     }
   });
 }

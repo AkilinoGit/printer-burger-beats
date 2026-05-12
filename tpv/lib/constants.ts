@@ -107,6 +107,12 @@ const MOD_PATATAS: Modifier[] = [
   { id: 'patatas-ali-oli',        label: 'Ali Oli',        type: 'add', section: 'queso-salsa', order: 5 },
 ];
 
+const MOD_BURGER_VEGET: Modifier[] = [
+  SIN_CEBOLLA, SIN_TOMATE, SIN_LECHUGA, SIN_SALSA,
+  { id: 'veget-bacon',           label: 'Con bacon',           type: 'add', section: 'carne', order: 10 },
+  { id: 'veget-cebolla-caram',   label: 'Con cebolla caram.',  type: 'add', section: 'extra', order: 1 },
+];
+
 const MOD_BURGER_NINO: Modifier[] = [
   SIN_GLUTEN,
   SALSA_RADIO_NINO,
@@ -124,10 +130,12 @@ export const INITIAL_PRODUCTS: Product[] = [
   { id: 'patatas',         name: 'PATATAS',          basePrice:  6.00, category: 'side',   modifiers: MOD_PATATAS, isCustom: false, isActive: true, alwaysShowModifiers: true },
   { id: 'alitas',          name: 'ALITAS',           basePrice:  8.00, category: 'side',   modifiers: [SALSA_RADIO_ALITAS],  isCustom: false, isActive: true },
   { id: 'tekenos',         name: 'TEKEÑOS',          basePrice:  8.00, category: 'side',   modifiers: [SALSA_RADIO_TEKENOS], isCustom: false, isActive: true },
-  { id: 'gyozas',          name: 'GYOZAS',           basePrice:  8.00, category: 'side',   modifiers: [], isCustom: false, isActive: true },
+  { id: 'gyozas-pollo',    name: 'GYOZAS POLLO',     basePrice:  8.00, category: 'side',   modifiers: [], isCustom: false, isActive: true },
+  { id: 'gyozas-verdura',  name: 'GYOZAS VERDURA',   basePrice:  8.00, category: 'side',   modifiers: [], isCustom: false, isActive: true },
   { id: 'bebida',          name: 'BEBIDA',           basePrice:  2.00, category: 'drink',  modifiers: [], isCustom: false, isActive: true },
   { id: 'agua',            name: 'AGUA',             basePrice:  1.00, category: 'drink',  modifiers: [], isCustom: false, isActive: true },
   { id: 'burger-nino',     name: 'BURGER NIÑO',      basePrice:  8.00, category: 'custom', modifiers: MOD_BURGER_NINO,   isCustom: false, isActive: true },
+  { id: 'burger-veget',    name: 'BURGER VEGETARIANA', basePrice: 13.50, category: 'custom', modifiers: MOD_BURGER_VEGET, isCustom: false, isActive: true },
   { id: 'otros',           name: 'OTROS',            basePrice:  0.00, category: 'custom', modifiers: [], isCustom: true,  isActive: true },
 ];
 
@@ -139,7 +147,8 @@ export const DEFAULT_FERIANTE_PRICES: Record<string, number> = {
   'doble-subwoofer': 10,
   'alitas': 6,
   'tekenos': 6,
-  'gyozas': 6,
+  'gyozas-pollo': 6,
+  'gyozas-verdura': 6,
   'patatas': 5,
 };
 
