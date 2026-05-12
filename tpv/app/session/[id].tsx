@@ -57,6 +57,12 @@ function formatDateTime(iso: string | null): string {
   });
 }
 
+function formatTime(iso: string | null): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+}
+
 function ticketTotal(ticket: Ticket): number {
   return ticket.orders.reduce((sum, o) => sum + o.total, 0);
 }
@@ -109,43 +115,61 @@ function TicketRow({ ticket, onPress, onReprint, reprinting }: TicketRowProps): 
   const total      = ticketTotal(ticket);
   const orderNames = ticket.orders.map((o) => o.clientName).filter(Boolean).join(', ');
   const wasEdited  = ticket.editedAt !== null;
+  const items      = ticket.orders.flatMap((o) => o.items);
 
   return (
     <TouchableRipple onPress={onPress} rippleColor="rgba(0,0,0,0.06)">
       <View style={rowStyles.row}>
 
-        {/* Left: number + names + badges */}
-        <View style={rowStyles.left}>
-          <View style={rowStyles.topLine}>
+        {/* Header line: number + client name + total + reprint */}
+        <View style={rowStyles.headerLine}>
+          <View style={rowStyles.headerLeft}>
             <Text style={rowStyles.number}>#{ticket.ticketNumber}</Text>
-            {wasEdited && (
-              <View style={rowStyles.editedBadge}>
-                <Text style={rowStyles.editedText}>✏ Editado</Text>
-              </View>
+            {orderNames.length > 0 && (
+              <Text style={rowStyles.names} numberOfLines={1}>{orderNames}</Text>
             )}
           </View>
-          {orderNames.length > 0 && (
-            <Text style={rowStyles.names} numberOfLines={1}>{orderNames}</Text>
-          )}
-          <View style={rowStyles.badgeRow}>
-            <SyncBadge status={ticket.syncStatus} />
-            <Text style={rowStyles.ordersLabel}>
-              {ticket.orders.length} pedido{ticket.orders.length !== 1 ? 's' : ''}
-            </Text>
+          <View style={rowStyles.headerRight}>
+            <Text style={rowStyles.total}>{formatPrice(total)}</Text>
+            <IconButton
+              icon="printer"
+              size={22}
+              mode="contained-tonal"
+              onPress={onReprint}
+              disabled={reprinting}
+              style={rowStyles.printBtn}
+            />
           </View>
         </View>
 
-        {/* Right: total + reprint button */}
-        <View style={rowStyles.right}>
-          <Text style={rowStyles.total}>{formatPrice(total)}</Text>
-          <IconButton
-            icon="printer"
-            size={22}
-            mode="contained-tonal"
-            onPress={onReprint}
-            disabled={reprinting}
-            style={rowStyles.printBtn}
-          />
+        {/* Created time */}
+        <Text style={rowStyles.timeText}>{formatTime(ticket.createdAt)}</Text>
+
+        {/* Items list */}
+        {items.length > 0 && (
+          <View style={rowStyles.itemsList}>
+            {items.map((it) => (
+              <View key={it.id} style={rowStyles.itemRow}>
+                <Text style={rowStyles.itemQty}>x{it.qty}</Text>
+                <Text style={rowStyles.itemName} numberOfLines={1}>
+                  {it.customLabel ?? it.productName}
+                </Text>
+              </View>
+            ))}
+          </View>
+        )}
+
+        {/* Badges */}
+        <View style={rowStyles.badgeRow}>
+          <SyncBadge status={ticket.syncStatus} />
+          <Text style={rowStyles.ordersLabel}>
+            {ticket.orders.length} pedido{ticket.orders.length !== 1 ? 's' : ''}
+          </Text>
+          {wasEdited && (
+            <View style={rowStyles.editedBadge}>
+              <Text style={rowStyles.editedText}>✏ Editado</Text>
+            </View>
+          )}
         </View>
 
       </View>
@@ -155,25 +179,52 @@ function TicketRow({ ticket, onPress, onReprint, reprinting }: TicketRowProps): 
 
 const rowStyles = StyleSheet.create({
   row: {
-    flexDirection: 'row',
-    alignItems: 'center',
     paddingLeft: 16,
     paddingRight: 8,
     paddingVertical: 12,
-    gap: 8,
+    gap: 6,
   },
-  left: { flex: 1, gap: 4 },
-  right: {
-    alignItems: 'center',
-    gap: 2,
-  },
-  topLine: {
+  headerLine: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+  },
+  headerLeft: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 10,
     flexWrap: 'wrap',
   },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
   number: { fontSize: 17, fontWeight: '800', color: '#111' },
+  names: { fontSize: 14, fontWeight: '600', color: '#1a1a1a', flexShrink: 1 },
+  timeText: { fontSize: 12, color: '#888' },
+  itemsList: {
+    gap: 2,
+    paddingLeft: 4,
+    marginTop: 2,
+  },
+  itemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  itemQty: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#555',
+    minWidth: 28,
+  },
+  itemName: {
+    flex: 1,
+    fontSize: 13,
+    color: '#333',
+  },
   editedBadge: {
     backgroundColor: '#FFF8E1',
     paddingHorizontal: 7,
@@ -181,12 +232,12 @@ const rowStyles = StyleSheet.create({
     borderRadius: 10,
   },
   editedText: { fontSize: 10, fontWeight: '700', color: '#F57F17' },
-  names: { fontSize: 13, color: '#555' },
   badgeRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
     flexWrap: 'wrap',
+    marginTop: 2,
   },
   ordersLabel: { fontSize: 11, color: '#888' },
   total: { fontSize: 16, fontWeight: '700', color: '#1a1a1a', textAlign: 'right' },

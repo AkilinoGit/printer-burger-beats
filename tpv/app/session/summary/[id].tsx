@@ -118,6 +118,11 @@ function formatDateTime(iso: string | null): string {
   });
 }
 
+function formatTime(iso: string | null): string {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+}
+
 function ticketTotal(ticket: Ticket): number {
   return ticket.orders.reduce((sum, o) => sum + o.total, 0);
 }
@@ -427,6 +432,13 @@ export default function SessionSummaryScreen(): React.JSX.Element {
   const groups     = buildProductGroups(tickets);
   const sauces     = buildSauceSummary(tickets);
 
+  const ticketTimes = tickets
+    .map((t) => new Date(t.createdAt).getTime())
+    .filter((n) => !isNaN(n))
+    .sort((a, b) => a - b);
+  const firstTicketAt = ticketTimes.length > 0 ? new Date(ticketTimes[0]).toISOString() : null;
+  const lastTicketAt  = ticketTimes.length > 0 ? new Date(ticketTimes[ticketTimes.length - 1]).toISOString() : null;
+
   // ── render ────────────────────────────────────────────────────────────────
   return (
     <View style={styles.root}>
@@ -445,11 +457,11 @@ export default function SessionSummaryScreen(): React.JSX.Element {
         {/* Summary header card */}
         <Surface style={[styles.headerCard, isOpen && styles.headerCardOpen]} elevation={2}>
           <Text style={styles.locationName}>{location?.name ?? '—'}</Text>
+          <View style={styles.metaCol}>
+            <Text style={styles.metaLabel}>Apertura</Text>
+            <Text style={styles.metaValue}>{formatDateTime(session.openedAt ?? session.createdAt)}</Text>
+          </View>
           <View style={styles.metaRow}>
-            <View style={styles.metaCol}>
-              <Text style={styles.metaLabel}>Apertura</Text>
-              <Text style={styles.metaValue}>{formatDateTime(session.openedAt ?? session.createdAt)}</Text>
-            </View>
             <View style={styles.metaCol}>
               <Text style={styles.metaLabel}>Tickets</Text>
               <Text style={styles.metaValue}>{tickets.length}</Text>
@@ -463,6 +475,18 @@ export default function SessionSummaryScreen(): React.JSX.Element {
               <Text style={[styles.metaValue, styles.totalBlue]}>{formatPrice(Math.round(grandTotal * 0.7 * 2) / 2)}</Text>
             </View>
           </View>
+          {tickets.length > 0 && (
+            <View style={styles.metaRow}>
+              <View style={styles.metaCol}>
+                <Text style={styles.metaLabel}>1er pedido</Text>
+                <Text style={styles.metaValue}>{formatTime(firstTicketAt)}</Text>
+              </View>
+              <View style={styles.metaCol}>
+                <Text style={styles.metaLabel}>Último pedido</Text>
+                <Text style={styles.metaValue}>{formatTime(lastTicketAt)}</Text>
+              </View>
+            </View>
+          )}
           {isOpen ? (
             <Text style={styles.note}>La sesión se cierra automáticamente mañana a las 12:00</Text>
           ) : session.closedAt != null ? (
