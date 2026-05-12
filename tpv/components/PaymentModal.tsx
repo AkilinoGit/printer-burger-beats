@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Button, Dialog, Divider, Portal, Text, TextInput } from 'react-native-paper';
 import { calcChange, formatPrice } from '../lib/utils';
+import StableTextInput from './StableTextInput';
 
 interface Props {
   visible: boolean;
@@ -43,7 +44,7 @@ export default function PaymentModal({ visible, total, onConfirm, onDismiss }: P
           <Divider style={styles.divider} />
 
           {/* Importe entregado */}
-          <TextInput
+          <StableTextInput
             label="Importe entregado (€)"
             value={amountStr}
             onChangeText={(v) => setAmountStr(v)}

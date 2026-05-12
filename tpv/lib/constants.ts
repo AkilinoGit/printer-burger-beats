@@ -125,8 +125,8 @@ const MOD_BURGER_NINO: Modifier[] = [
 
 export const INITIAL_PRODUCTS: Product[] = [
   { id: 'fat-furious',     name: 'FAT & FURIOUS',   basePrice: 13.40, category: 'burger', modifiers: MOD_FAT_FURIOUS,   isCustom: false, isActive: true },
-  { id: 'ben-muerde',      name: 'BEN Y MUERDE',    basePrice: 12.50, category: 'burger', modifiers: MOD_BEN_MUERDE,      isCustom: false, isActive: true },
-  { id: 'doble-subwoofer', name: 'DOBLE SUBWOOFER', basePrice: 11.00, category: 'burger', modifiers: MOD_DOBLE_SUBWOOFER, isCustom: false, isActive: true },
+  { id: 'ben-muerde',      name: 'BEN Y MUERDE',    basePrice: 12.00, category: 'burger', modifiers: MOD_BEN_MUERDE,      isCustom: false, isActive: true },
+  { id: 'doble-subwoofer', name: 'DOBLE SUBWOOFER', basePrice: 12.00, category: 'burger', modifiers: MOD_DOBLE_SUBWOOFER, isCustom: false, isActive: true },
   { id: 'patatas',         name: 'PATATAS',          basePrice:  6.00, category: 'side',   modifiers: MOD_PATATAS, isCustom: false, isActive: true, alwaysShowModifiers: true },
   { id: 'alitas',          name: 'ALITAS',           basePrice:  8.00, category: 'side',   modifiers: [SALSA_RADIO_ALITAS],  isCustom: false, isActive: true },
   { id: 'tekenos',         name: 'TEKEÑOS',          basePrice:  8.00, category: 'side',   modifiers: [SALSA_RADIO_TEKENOS], isCustom: false, isActive: true },

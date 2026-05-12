@@ -26,6 +26,34 @@ import {
 } from '../../services/db';
 import { DEFAULT_FERIANTE_PRICES } from '../../lib/constants';
 import type { Location } from '../../lib/types';
+import StableTextInput from '../../components/StableTextInput';
+
+interface PriceRowProps {
+  id: string;
+  name: string;
+  value: string;
+  styleRow: any;
+  styleName: any;
+  styleInput: any;
+  onChange: (id: string, v: string) => void;
+}
+
+const PriceRow = React.memo(function PriceRow({ id, name, value, styleRow, styleName, styleInput, onChange }: PriceRowProps): React.JSX.Element {
+  const handleChange = useCallback((v: string) => onChange(id, v), [id, onChange]);
+  return (
+    <View style={styleRow}>
+      <Text style={styleName}>{name}</Text>
+      <StableTextInput
+        value={value}
+        onChangeText={handleChange}
+        mode="outlined"
+        keyboardType="decimal-pad"
+        style={styleInput}
+        right={<TextInput.Affix text="€" />}
+      />
+    </View>
+  );
+});
 
 // ---------------------------------------------------------------------------
 // Main screen
@@ -47,12 +75,18 @@ export default function SettingsScreen(): React.JSX.Element {
   const [basePricesVisible, setBasePricesVisible] = useState(false);
   const [baseDraft, setBaseDraft]                 = useState<Record<string, string>>({});
   const [savingBase, setSavingBase]               = useState(false);
+  const setBaseForId = useCallback((id: string, v: string) => {
+    setBaseDraft((prev) => ({ ...prev, [id]: v }));
+  }, []);
 
   // Feriante prices dialog
   const ferianteProductIds = Object.keys(DEFAULT_FERIANTE_PRICES);
   const [ferianteVisible, setFerianteVisible] = useState(false);
   const [ferianteDraft, setFerianteDraft]     = useState<Record<string, string>>({});
   const [savingFeriante, setSavingFeriante]   = useState(false);
+  const setFerianteForId = useCallback((id: string, v: string) => {
+    setFerianteDraft((prev) => ({ ...prev, [id]: v }));
+  }, []);
 
   // Location management
   const [locationDialogVisible, setLocationDialogVisible] = useState(false);
@@ -347,17 +381,15 @@ export default function SettingsScreen(): React.JSX.Element {
               {editableProducts.map((p, idx) => (
                 <React.Fragment key={p.id}>
                   {idx > 0 && <Divider />}
-                  <View style={styles.priceRow}>
-                    <Text style={styles.priceName}>{p.name}</Text>
-                    <TextInput
-                      value={baseDraft[p.id] ?? ''}
-                      onChangeText={(v) => setBaseDraft((prev) => ({ ...prev, [p.id]: v }))}
-                      mode="outlined"
-                      keyboardType="decimal-pad"
-                      style={styles.priceInput}
-                      right={<TextInput.Affix text="€" />}
-                    />
-                  </View>
+                  <PriceRow
+                    id={p.id}
+                    name={p.name}
+                    value={baseDraft[p.id] ?? ''}
+                    styleRow={styles.priceRow}
+                    styleName={styles.priceName}
+                    styleInput={styles.priceInput}
+                    onChange={setBaseForId}
+                  />
                 </React.Fragment>
               ))}
             </ScrollView>
@@ -387,17 +419,15 @@ export default function SettingsScreen(): React.JSX.Element {
                 return (
                   <React.Fragment key={id}>
                     {idx > 0 && <Divider />}
-                    <View style={styles.priceRow}>
-                      <Text style={styles.priceName}>{name}</Text>
-                      <TextInput
-                        value={ferianteDraft[id] ?? ''}
-                        onChangeText={(v) => setFerianteDraft((prev) => ({ ...prev, [id]: v }))}
-                        mode="outlined"
-                        keyboardType="decimal-pad"
-                        style={styles.priceInput}
-                        right={<TextInput.Affix text="€" />}
-                      />
-                    </View>
+                    <PriceRow
+                      id={id}
+                      name={name}
+                      value={ferianteDraft[id] ?? ''}
+                      styleRow={styles.priceRow}
+                      styleName={styles.priceName}
+                      styleInput={styles.priceInput}
+                      onChange={setFerianteForId}
+                    />
                   </React.Fragment>
                 );
               })}
@@ -423,7 +453,7 @@ export default function SettingsScreen(): React.JSX.Element {
             {editingLocation ? 'Editar local' : 'Nuevo local'}
           </Dialog.Title>
           <Dialog.Content>
-            <TextInput
+            <StableTextInput
               label="Nombre del local"
               value={locationName}
               onChangeText={(v) => {

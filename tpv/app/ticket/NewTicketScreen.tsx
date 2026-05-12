@@ -17,6 +17,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import PaymentModal from '../../components/PaymentModal';
 import ProductGrid from '../../components/ProductGrid';
 import ModifierSheet from '../../components/ModifierSheet';
+import StableTextInput from '../../components/StableTextInput';
 
 import { formatPrice } from '../../lib/utils';
 import type { Modifier, Order, OrderItem, Product, Ticket } from '../../lib/types';
@@ -348,7 +349,7 @@ export default function NewTicketScreen({
         <Dialog visible={renameVisible} onDismiss={() => setRenameVisible(false)}>
           <Dialog.Title>Nombre del cliente</Dialog.Title>
           <Dialog.Content>
-            <TextInput
+            <StableTextInput
               value={renameText}
               onChangeText={setRenameText}
               mode="outlined"

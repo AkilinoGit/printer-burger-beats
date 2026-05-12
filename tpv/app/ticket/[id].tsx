@@ -17,6 +17,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 
 import ProductGrid from '../../components/ProductGrid';
 import ModifierSheet from '../../components/ModifierSheet';
+import StableTextInput from '../../components/StableTextInput';
 
 import { formatPrice } from '../../lib/utils';
 import { generateId } from '../../lib/utils';
@@ -719,7 +720,7 @@ function EditModeScreen({
         <Dialog visible={renameOrder !== null} onDismiss={onRenameDismiss}>
           <Dialog.Title>Nombre del comensal</Dialog.Title>
           <Dialog.Content>
-            <TextInput
+            <StableTextInput
               value={renameText}
               onChangeText={onRenameTextChange}
               mode="outlined"

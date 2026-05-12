@@ -6,6 +6,7 @@ import { ActivityIndicator, Banner, Button, Dialog, Portal, Text, TextInput } fr
 import CartSummary from '../../components/CartSummary';
 import ModifierSheet from '../../components/ModifierSheet';
 import ProductGrid from '../../components/ProductGrid';
+import StableTextInput from '../../components/StableTextInput';
 import NewTicketScreen from '../ticket/NewTicketScreen';
 
 import type { Product } from '../../lib/types';
@@ -237,7 +238,7 @@ export default function HomeScreen(): React.JSX.Element {
 
       {/* Client name input */}
       <View style={styles.nameRow}>
-        <TextInput
+        <StableTextInput
           label="Nombre del cliente"
           value={clientName}
           onChangeText={setClientName}
@@ -316,7 +317,7 @@ export default function HomeScreen(): React.JSX.Element {
         <Dialog visible={otrosVisible} onDismiss={() => setOtrosVisible(false)}>
           <Dialog.Title>Añadir producto</Dialog.Title>
           <Dialog.Content style={styles.otrosContent}>
-            <TextInput
+            <StableTextInput
               label="Concepto"
               value={otrosLabel}
               onChangeText={setOtrosLabel}
@@ -326,7 +327,7 @@ export default function HomeScreen(): React.JSX.Element {
               placeholder="OTROS"
               style={styles.otrosInput}
             />
-            <TextInput
+            <StableTextInput
               label="Precio (€) *"
               value={otrosPrice}
               onChangeText={(v) => { setOtrosPrice(v); setOtrosPriceError(''); }}

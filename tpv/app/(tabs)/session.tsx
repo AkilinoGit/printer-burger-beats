@@ -32,6 +32,34 @@ import {
 } from '../../services/db';
 import { formatPrice } from '../../lib/utils';
 import type { Location, Session } from '../../lib/types';
+import StableTextInput from '../../components/StableTextInput';
+
+interface PriceRowProps {
+  id: string;
+  name: string;
+  value: string;
+  styleRow: any;
+  styleName: any;
+  styleInput: any;
+  onChange: (id: string, v: string) => void;
+}
+
+const PriceRow = React.memo(function PriceRow({ id, name, value, styleRow, styleName, styleInput, onChange }: PriceRowProps): React.JSX.Element {
+  const handleChange = useCallback((v: string) => onChange(id, v), [id, onChange]);
+  return (
+    <View style={styleRow}>
+      <Text style={styleName}>{name}</Text>
+      <StableTextInput
+        value={value}
+        onChangeText={handleChange}
+        mode="outlined"
+        keyboardType="decimal-pad"
+        style={styleInput}
+        right={<TextInput.Affix text="€" />}
+      />
+    </View>
+  );
+});
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -354,6 +382,9 @@ export default function SessionScreen(): React.JSX.Element {
   // Price dialog before opening session
   const [priceDialogVisible, setPriceDialogVisible] = useState(false);
   const [priceDraft, setPriceDraft] = useState<Record<string, string>>({});
+  const setPriceForId = useCallback((id: string, v: string) => {
+    setPriceDraft((prev) => ({ ...prev, [id]: v }));
+  }, []);
 
   // New session selector
   const [selectedLocationId, setSelectedLocationId] = useState<string>('');
@@ -596,17 +627,15 @@ export default function SessionScreen(): React.JSX.Element {
                 .filter((p) => p.isActive && !p.isCustom)
                 .map((p, idx, arr) => (
                   <React.Fragment key={p.id}>
-                    <View style={styles.priceRow}>
-                      <Text style={styles.priceName}>{p.name}</Text>
-                      <TextInput
-                        value={priceDraft[p.id] ?? ''}
-                        onChangeText={(v) => setPriceDraft((prev) => ({ ...prev, [p.id]: v }))}
-                        mode="outlined"
-                        keyboardType="decimal-pad"
-                        style={styles.priceInput}
-                        right={<TextInput.Affix text="€" />}
-                      />
-                    </View>
+                    <PriceRow
+                      id={p.id}
+                      name={p.name}
+                      value={priceDraft[p.id] ?? ''}
+                      styleRow={styles.priceRow}
+                      styleName={styles.priceName}
+                      styleInput={styles.priceInput}
+                      onChange={setPriceForId}
+                    />
                     {idx < arr.length - 1 && <Divider />}
                   </React.Fragment>
                 ))}
