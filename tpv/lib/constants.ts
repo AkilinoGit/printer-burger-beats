@@ -100,11 +100,11 @@ const MOD_DOBLE_SUBWOOFER: Modifier[] = [
 ];
 
 const MOD_PATATAS: Modifier[] = [
-  { id: 'patatas-sin-nada',       label: 'Sin nada',       type: 'add' },
-  { id: 'patatas-con-todo',       label: 'Con todo',       type: 'add' },
-  { id: 'patatas-ketchup',        label: 'Ketchup',        type: 'add' },
-  { id: 'patatas-mostaza-dulce',  label: 'Mostaza dulce',  type: 'add' },
-  { id: 'patatas-ali-oli',        label: 'Ali Oli',        type: 'add' },
+  { id: 'patatas-sin-nada',       label: 'Sin nada',       type: 'add', section: 'queso-salsa', order: 1 },
+  { id: 'patatas-con-todo',       label: 'Con todo',       type: 'add', section: 'queso-salsa', order: 2 },
+  { id: 'patatas-ketchup',        label: 'Ketchup',        type: 'add', section: 'queso-salsa', order: 3 },
+  { id: 'patatas-mostaza-dulce',  label: 'Mostaza dulce',  type: 'add', section: 'queso-salsa', order: 4 },
+  { id: 'patatas-ali-oli',        label: 'Ali Oli',        type: 'add', section: 'queso-salsa', order: 5 },
 ];
 
 const MOD_BURGER_NINO: Modifier[] = [

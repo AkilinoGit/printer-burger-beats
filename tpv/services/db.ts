@@ -19,7 +19,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 const DB_NAME = 'tpv_v12.db';
-const SCHEMA_VERSION = 20;
+const SCHEMA_VERSION = 21;
 
 let _db: SQLite.SQLiteDatabase | null = null;
 let _initPromise: Promise<void> | null = null;
@@ -120,6 +120,9 @@ export async function initDb(): Promise<void> {
     }
     if (currentVersion < 20) {
       await migrate_v20(db); // add section + sort_order columns to modifiers and reseed
+    }
+    if (currentVersion < 21) {
+      await migrate_v20(db); // reseed: patatas modifiers now have section assigned
     }
     await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
 
