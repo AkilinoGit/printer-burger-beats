@@ -48,12 +48,22 @@ export function currentTime(): string {
 // Verdura modifier collapsing
 // ---------------------------------------------------------------------------
 
-const VERDURA_SIN_IDS = ['sin-cebolla', 'sin-lechuga', 'sin-tomate'] as const;
-const VERDURA_LABEL: Record<(typeof VERDURA_SIN_IDS)[number], string> = {
+// Verdura "sin" modifiers, by short suffix. Modifiers may be stored with
+// a productId prefix (e.g. "doble-subwoofer-sin-cebolla") or bare ("sin-cebolla").
+const VERDURA_SUFFIX_LABEL: Record<string, string> = {
   'sin-cebolla': 'Cebolla',
   'sin-lechuga': 'Lechuga',
   'sin-tomate':  'Tomate',
 };
+const VERDURA_SUFFIXES = Object.keys(VERDURA_SUFFIX_LABEL);
+
+/** Returns the verdura suffix matched in `id`, or null. */
+function _verduraSuffix(id: string): string | null {
+  for (const suf of VERDURA_SUFFIXES) {
+    if (id === suf || id.endsWith('-' + suf)) return suf;
+  }
+  return null;
+}
 
 /**
  * Sentinel id injected at print/preview time only — never persisted.
@@ -67,30 +77,31 @@ export const SOLO_VERDURA_ID = '__solo_verdura__';
  * Returns the modifier id list to render for a single item, applying the
  * verdura collapse rule. Pure presentation — does not mutate the item.
  *
- * Rule: if selectedModifiers contains exactly 2 of {sin-cebolla, sin-lechuga,
- * sin-tomate}, drop those 2 ids and insert SOLO_VERDURA_ID (with a dynamic
- * label "Solo <remaining>") in place of the first one.
+ * Rule: if selectedModifiers contains exactly 2 of the verdura "sin"
+ * modifiers (sin-cebolla / sin-lechuga / sin-tomate, with or without product
+ * prefix), drop those 2 ids and insert SOLO_VERDURA_ID in place of the first
+ * one, labelled "Solo <remaining>".
  */
 export function collapseVerduraModifiers(
   selectedModifiers: readonly string[],
 ): { ids: string[]; extraLabels: Record<string, string> } {
-  const present = VERDURA_SIN_IDS.filter((id) => selectedModifiers.includes(id));
-  if (present.length !== 2) {
+  const presentSuffixes: string[] = [];
+  for (const id of selectedModifiers) {
+    const suf = _verduraSuffix(id);
+    if (suf && !presentSuffixes.includes(suf)) presentSuffixes.push(suf);
+  }
+  if (presentSuffixes.length !== 2) {
     return { ids: [...selectedModifiers], extraLabels: {} };
   }
-  const remaining = VERDURA_SIN_IDS.find((id) => !present.includes(id))!;
-  const label = 'Solo ' + VERDURA_LABEL[remaining];
+  const remainingSuf = VERDURA_SUFFIXES.find((s) => !presentSuffixes.includes(s))!;
+  const label = 'Solo ' + VERDURA_SUFFIX_LABEL[remainingSuf];
 
-  const firstIdx = selectedModifiers.findIndex((id) => present.includes(id as typeof present[number]));
+  const firstMatchIdx = selectedModifiers.findIndex((id) => _verduraSuffix(id) !== null);
   const ids: string[] = [];
-  let inserted = false;
   for (let i = 0; i < selectedModifiers.length; i++) {
     const id = selectedModifiers[i];
-    if (present.includes(id as typeof present[number])) {
-      if (i === firstIdx && !inserted) {
-        ids.push(SOLO_VERDURA_ID);
-        inserted = true;
-      }
+    if (_verduraSuffix(id) !== null) {
+      if (i === firstMatchIdx) ids.push(SOLO_VERDURA_ID);
       continue;
     }
     ids.push(id);

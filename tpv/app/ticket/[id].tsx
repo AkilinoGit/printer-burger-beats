@@ -19,7 +19,7 @@ import ProductGrid from '../../components/ProductGrid';
 import ModifierSheet from '../../components/ModifierSheet';
 import StableTextInput from '../../components/StableTextInput';
 
-import { formatPrice } from '../../lib/utils';
+import { collapseVerduraModifiers, formatPrice } from '../../lib/utils';
 import { generateId } from '../../lib/utils';
 import type { Order, OrderItem, Product } from '../../lib/types';
 
@@ -53,7 +53,8 @@ function OrderItemRow({
   modifierLabels: Record<string, string>;
   onLongPress: () => void;
 }): React.JSX.Element {
-  const modLabels = item.selectedModifiers.map((id) => modifierLabels[id] ?? id);
+  const { ids: collapsedIds, extraLabels } = collapseVerduraModifiers(item.selectedModifiers);
+  const modLabels = collapsedIds.map((id) => extraLabels[id] ?? modifierLabels[id] ?? id);
   const linePrice = (item.unitPrice + item.modifierPriceAdd) * item.qty;
 
   return (
@@ -91,7 +92,8 @@ function EditableItemRow({
   onDecrement: () => void;
   onRemove: () => void;
 }): React.JSX.Element {
-  const modLabels = item.selectedModifiers.map((id) => modifierLabels[id] ?? id);
+  const { ids: collapsedIds, extraLabels } = collapseVerduraModifiers(item.selectedModifiers);
+  const modLabels = collapsedIds.map((id) => extraLabels[id] ?? modifierLabels[id] ?? id);
   const linePrice = (item.unitPrice + item.modifierPriceAdd) * item.qty;
 
   return (
