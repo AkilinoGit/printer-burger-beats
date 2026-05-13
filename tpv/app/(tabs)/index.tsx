@@ -5,6 +5,7 @@ import { ActivityIndicator, Banner, Button, Dialog, Portal, Text, TextInput } fr
 
 import CartSummary from '../../components/CartSummary';
 import ModifierSheet from '../../components/ModifierSheet';
+import PaymentModal from '../../components/PaymentModal';
 import ProductGrid from '../../components/ProductGrid';
 import StableTextInput from '../../components/StableTextInput';
 import NewTicketScreen from '../ticket/NewTicketScreen';
@@ -369,10 +370,7 @@ export default function HomeScreen(): React.JSX.Element {
           hasItems={hasItems}
           modifierLabels={MODIFIER_LABELS}
           products={products}
-          paymentVisible={paymentVisible}
           onCobrar={handleCobrar}
-          onPaymentConfirm={handlePaymentConfirm}
-          onPaymentDismiss={() => setPaymentVisible(false)}
           onAddAnother={() => void handleAddAnother()}
           onPrint={() => void handlePrint()}
           onIncrementItem={incrementItem}
@@ -383,6 +381,13 @@ export default function HomeScreen(): React.JSX.Element {
           onBack={() => setTicketVisible(false)}
         />
       </Modal>
+
+      <PaymentModal
+        visible={paymentVisible}
+        total={total}
+        onConfirm={handlePaymentConfirm}
+        onDismiss={() => setPaymentVisible(false)}
+      />
     </KeyboardAvoidingView>
   );
 }

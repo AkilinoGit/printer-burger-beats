@@ -14,7 +14,6 @@ import {
 } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import PaymentModal from '../../components/PaymentModal';
 import ProductGrid from '../../components/ProductGrid';
 import ModifierSheet from '../../components/ModifierSheet';
 import StableTextInput from '../../components/StableTextInput';
@@ -123,10 +122,7 @@ export interface NewTicketProps {
   hasItems: boolean;
   modifierLabels: Record<string, string>;
   products: Product[];
-  paymentVisible: boolean;
   onCobrar: () => void;
-  onPaymentConfirm: (amount: number, change: number) => void;
-  onPaymentDismiss: () => void;
   onAddAnother: () => void;
   onPrint: () => void;
   onIncrementItem: (id: string) => void;
@@ -140,7 +136,7 @@ export interface NewTicketProps {
 export default function NewTicketScreen({
   activeTicket, pendingOrders, clientName, cartItems, cartTotal,
   paidAmount, paidChange, actionState, isBusy, hasItems, modifierLabels,
-  paymentVisible, onCobrar, onPaymentConfirm, onPaymentDismiss,
+  onCobrar,
   onAddAnother, onPrint,
   onIncrementItem, onDecrementItem, onRemoveItem,
   onSetClientName, onAddProduct, products,
@@ -310,13 +306,6 @@ export default function NewTicketScreen({
           </View>
         </View>
       </Surface>
-
-      <PaymentModal
-        visible={paymentVisible}
-        total={cartTotal}
-        onConfirm={onPaymentConfirm}
-        onDismiss={onPaymentDismiss}
-      />
 
       {/* Product grid modal */}
       <Modal
