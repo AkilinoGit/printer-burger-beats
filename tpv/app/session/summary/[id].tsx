@@ -477,7 +477,7 @@ export default function SessionSummaryScreen(): React.JSX.Element {
                   ===== TEMPORAL: TOTAL MULTIPLICADO POR 0.7 (REVERTIR) =====
                   ===== Quitar el * 0.7 para volver al total real        =====
                   ============================================================ */}
-              <Text style={[styles.metaValue, styles.totalBlue]}>{formatPrice(Math.round(grandTotal * 0.7 * 2) / 2)}</Text>
+              <Text style={[styles.metaValue, styles.totalBlue]}>{formatPrice(grandTotal)}</Text>
             </View>
           </View>
           {tickets.length > 0 && (
@@ -518,7 +518,7 @@ export default function SessionSummaryScreen(): React.JSX.Element {
                 ============================================================ */}
             <View style={styles.grandTotalRow}>
               <Text style={styles.grandTotalLabel}>TOTAL</Text>
-              <Text style={styles.grandTotalAmount}>{formatPrice(Math.round(grandTotal * 0.7 * 2) / 2)}</Text>
+              <Text style={styles.grandTotalAmount}>{formatPrice(grandTotal)}</Text>
             </View>
           </>
         )}

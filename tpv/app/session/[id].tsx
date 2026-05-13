@@ -391,7 +391,7 @@ export default function SessionDetailScreen(): React.JSX.Element {
                       ===== TEMPORAL: TOTAL MULTIPLICADO POR 0.7 (REVERTIR) =====
                       ===== Quitar el * 0.7 para volver al total real        =====
                       ============================================================ */}
-                  <Text style={[styles.metaValue, styles.grandTotal]}>{formatPrice(Math.round(grandTotal * 0.7 * 2) / 2)}</Text>
+                  <Text style={[styles.metaValue, styles.grandTotal]}>{formatPrice(grandTotal)}</Text>
                 </View>
               </View>
 

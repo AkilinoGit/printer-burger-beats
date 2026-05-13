@@ -123,7 +123,7 @@ function SessionCard({ session, locationName, onPress, onViewSummary }: SessionC
                 ===== TEMPORAL: TOTAL MULTIPLICADO POR 0.7 (REVERTIR) =====
                 ===== Quitar el * 0.7 para volver al total real        =====
                 ============================================================ */}
-            <Text style={cardStyles.total}>{formatPrice(Math.round(summary.total * 0.7 * 2) / 2)}</Text>
+            <Text style={cardStyles.total}>{formatPrice(summary.total)}</Text>
             <Text style={cardStyles.tickets}>{summary.ticketCount} ticket{summary.ticketCount !== 1 ? 's' : ''}</Text>
           </View>
         </View>
@@ -230,7 +230,7 @@ function ActiveSessionCard({ session, locationName, summary, firstTicketAt, last
                 ===== TEMPORAL: TOTAL MULTIPLICADO POR 0.7 (REVERTIR) =====
                 ===== Quitar el * 0.7 para volver al total real        =====
                 ============================================================ */}
-            <Text style={[activeStyles.metaValue, activeStyles.totalBlue]}>{formatPrice(Math.round(summary.total * 0.7 * 2) / 2)}</Text>
+            <Text style={[activeStyles.metaValue, activeStyles.totalBlue]}>{formatPrice(summary.total)}</Text>
           </View>
         </View>
 
