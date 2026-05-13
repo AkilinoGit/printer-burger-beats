@@ -15,7 +15,7 @@
 
 import * as IntentLauncher from 'expo-intent-launcher';
 import type { Session, Ticket } from '../lib/types';
-import { buildTicketBuffer, buildMultiTicketBuffer, buildSessionSummaryBuffer } from './escpos';
+import { buildTicketBuffer, buildSessionSummaryBuffer } from './escpos';
 import { log, perf } from './logger';
 
 // ---------------------------------------------------------------------------
@@ -81,14 +81,15 @@ export async function printTicket(
   modifierLabels: Record<string, string>,
   _radioNoSelection: Record<string, string> = {},
   _radioOptionSets: Record<string, Set<string>> = {},
+  repeatContent: boolean = false,
 ): Promise<PrintResult> {
   const orders = ticket.orders.length;
   const items  = ticket.orders.reduce((s, o) => s + o.items.length, 0);
-  log.info('PRINT', `ticket #${ticket.ticketNumber} — ${orders} order(s) ${items} item(s)`);
+  log.info('PRINT', `ticket #${ticket.ticketNumber} — ${orders} order(s) ${items} item(s)${repeatContent ? ' (x2)' : ''}`);
 
   try {
     const doneEscpos = perf.start('PRINT', 'buildTicketBuffer');
-    const bytes      = buildTicketBuffer(ticket, isTest, modifierLabels);
+    const bytes      = buildTicketBuffer(ticket, isTest, modifierLabels, repeatContent);
     doneEscpos();
 
     const doneB64 = perf.start('PRINT', 'base64 encode');
@@ -134,41 +135,6 @@ export async function openRawBT(): Promise<PrintResult> {
       ok: false,
       error: _isNotFoundError(msg) ? RAWBT_NOT_INSTALLED : msg,
     };
-  }
-}
-
-/**
- * Prints multiple tickets in a single print job (one Intent, one cut).
- * Used when several tickets have been queued via "Añadir otro".
- */
-export async function printTickets(
-  tickets: Ticket[],
-  isTest: boolean,
-  modifierLabels: Record<string, string>,
-): Promise<PrintResult> {
-  if (tickets.length === 0) return { ok: true };
-
-  const totalOrders = tickets.reduce((s, t) => s + t.orders.length, 0);
-  log.info('PRINT', `multi-ticket: ${tickets.length} ticket(s) ${totalOrders} order(s)`);
-
-  try {
-    const bytes = buildMultiTicketBuffer(tickets, isTest, modifierLabels);
-    const base64Data = _uint8ArrayToBase64(bytes);
-
-    IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
-      data: 'rawbt:base64,' + base64Data,
-      packageName: RAWBT_PACKAGE,
-    }).catch((e: unknown) => {
-      const msg = e instanceof Error ? e.message : String(e);
-      log.error('PRINT', _isNotFoundError(msg) ? RAWBT_NOT_INSTALLED : msg);
-    });
-
-    log.info('PRINT', 'multi-ticket intent fired');
-    return { ok: true };
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    log.error('PRINT', msg);
-    return { ok: false, error: _isNotFoundError(msg) ? RAWBT_NOT_INSTALLED : msg };
   }
 }
 

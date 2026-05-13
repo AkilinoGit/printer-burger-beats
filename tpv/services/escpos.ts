@@ -64,6 +64,9 @@ export const CMD_FEED: readonly number[] = [ESC, 0x64, 0x04];
 /** ESC d 10 — Feed 10 lines (~2cm top margin) */
 export const CMD_FEED_TOP: readonly number[] = [ESC, 0x64, 0x0a];
 
+/** ESC d 9 — Feed 9 lines (~1.8cm), used between copies when printing x2 */
+export const CMD_FEED_BETWEEN_COPIES: readonly number[] = [ESC, 0x64, 0x09];
+
 /** GS V 66 48 — Partial cut with feed */
 export const CMD_CUT: readonly number[] = [GS, 0x56, 0x42, 0x30];
 
@@ -134,6 +137,7 @@ export function buildTicketBuffer(
   ticket: Ticket,
   isTest: boolean,
   modifierLabels: Record<string, string>,
+  repeatContent: boolean = false,
 ): Uint8Array {
   const parts: (readonly number[] | Uint8Array)[] = [];
 
@@ -142,28 +146,34 @@ export function buildTicketBuffer(
   // Init + top margin (~2cm)
   parts.push(CMD_INIT, CMD_FEED_TOP);
 
-  // ── Test-mode watermark (top) ─────────────────────────────────────────────
-  if (isTest) {
-    parts.push(CMD_ALIGN_CENTER, CMD_BOLD_ON);
-    rawLine('*** PRUEBA - NO VALIDO ***');
-    parts.push(CMD_BOLD_OFF);
+  const copies = repeatContent ? 2 : 1;
+  for (let c = 0; c < copies; c++) {
+    if (c > 0) {
+      // Separator between copies: ~1cm less than CMD_FEED + CMD_FEED_TOP would be
+      parts.push(CMD_FEED_BETWEEN_COPIES);
+    }
+
+    // ── Test-mode watermark (top) ─────────────────────────────────────────────
+    if (isTest) {
+      parts.push(CMD_ALIGN_CENTER, CMD_BOLD_ON);
+      rawLine('*** PRUEBA - NO VALIDO ***');
+      parts.push(CMD_BOLD_OFF);
+    }
+
+    // ── Orders ────────────────────────────────────────────────────────────────
+    for (let i = 0; i < ticket.orders.length; i++) {
+      _appendOrderBytes(parts, ticket.orders[i], modifierLabels, ticket.ticketNumber, i);
+    }
+
+    // ── Footer ────────────────────────────────────────────────────────────────
+    if (isTest) {
+      parts.push(CMD_ALIGN_CENTER, CMD_BOLD_ON);
+      rawLine('*** PRUEBA - NO VALIDO ***');
+      parts.push(CMD_BOLD_OFF);
+    }
   }
 
-  // ── Orders ────────────────────────────────────────────────────────────────
-  for (let i = 0; i < ticket.orders.length; i++) {
-    _appendOrderBytes(parts, ticket.orders[i], modifierLabels, ticket.ticketNumber, i);
-  }
-
-  // ── Footer ────────────────────────────────────────────────────────────────
-  // The last order's closing separator is already the footer sep.
-  // Add test watermark below it if needed.
-  if (isTest) {
-    parts.push(CMD_ALIGN_CENTER, CMD_BOLD_ON);
-    rawLine('*** PRUEBA - NO VALIDO ***');
-    parts.push(CMD_BOLD_OFF);
-  }
-
-  // Feed + cut
+  // Feed + cut (single cut at the very end, regardless of copies)
   parts.push(CMD_FEED, CMD_CUT);
 
   return concatBytes(...parts);
@@ -359,46 +369,6 @@ function _appendItemBytes(
     const modLabel = sanitizeForPrinter(extraLabels[id] ?? modifierLabels[id] ?? id);
     rawLine('  ' + modLabel);
   }
-}
-
-// ---------------------------------------------------------------------------
-// Multi-ticket buffer — all tickets in one print job, single cut at the end
-// ---------------------------------------------------------------------------
-
-export function buildMultiTicketBuffer(
-  tickets: Ticket[],
-  isTest: boolean,
-  modifierLabels: Record<string, string>,
-): Uint8Array {
-  if (tickets.length === 0) return new Uint8Array(0);
-  if (tickets.length === 1) return buildTicketBuffer(tickets[0], isTest, modifierLabels);
-
-  const parts: (readonly number[] | Uint8Array)[] = [];
-  const rawLine = (text: string) => parts.push(encodeText(text + '\n'));
-
-  parts.push(CMD_INIT, CMD_FEED_TOP);
-
-  if (isTest) {
-    parts.push(CMD_ALIGN_CENTER, CMD_BOLD_ON);
-    rawLine('*** PRUEBA - NO VALIDO ***');
-    parts.push(CMD_BOLD_OFF);
-  }
-
-  for (const ticket of tickets) {
-    for (let i = 0; i < ticket.orders.length; i++) {
-      _appendOrderBytes(parts, ticket.orders[i], modifierLabels, ticket.ticketNumber, i);
-    }
-  }
-
-  if (isTest) {
-    parts.push(CMD_ALIGN_CENTER, CMD_BOLD_ON);
-    rawLine('*** PRUEBA - NO VALIDO ***');
-    parts.push(CMD_BOLD_OFF);
-  }
-
-  parts.push(CMD_FEED, CMD_CUT);
-
-  return concatBytes(...parts);
 }
 
 // ---------------------------------------------------------------------------

@@ -22,10 +22,10 @@ import {
   markTicketPrinted,
   saveOrderWithItems,
 } from '../../services/db';
-import { printTicket, printTickets } from '../../services/printer';
+import { printTicket } from '../../services/printer';
 import { log, perf } from '../../services/logger';
 
-type ActionState = 'idle' | 'saving' | 'printing';
+type ActionState = 'idle' | 'printing';
 
 export default function HomeScreen(): React.JSX.Element {
   const router = useRouter();
@@ -50,10 +50,8 @@ export default function HomeScreen(): React.JSX.Element {
   const removeItem    = useCartStore((s) => s.removeItem);
 
   const activeTicket    = useTicketStore((s) => s.activeTicket);
-  const pendingTickets  = useTicketStore((s) => s.pendingTickets);
   const openTicket      = useTicketStore((s) => s.openTicket);
   const addOrder        = useTicketStore((s) => s.addOrder);
-  const parkTicket      = useTicketStore((s) => s.parkTicket);
   const markPrinted     = useTicketStore((s) => s.markPrinted);
   const clearActiveTicket = useTicketStore((s) => s.clearActiveTicket);
 
@@ -69,6 +67,7 @@ export default function HomeScreen(): React.JSX.Element {
   const [paidAmount, setPaidAmount]         = useState<number | null>(null);
   const [paidChange, setPaidChange]         = useState<number | null>(null);
   const [actionState, setActionState]       = useState<ActionState>('idle');
+  const [printTwice, setPrintTwice]         = useState(false);
 
   // ── modifier sheet state (index grid) ────────────────────────────────────
   const [sheetProduct, setSheetProduct] = useState<Product | null>(null);
@@ -121,28 +120,6 @@ export default function HomeScreen(): React.JSX.Element {
     setPaymentVisible(false);
   }
 
-  async function handleAddAnother(): Promise<void> {
-    if (!hasItems) return;
-    setActionState('saving');
-    try {
-      const done = perf.start('TICKET', 'handleAddAnother');
-      const ticketId = await ensureTicket();
-      await persistCurrentOrder(ticketId);
-      parkTicket();
-      done();
-      log.info('TICKET', 'order parked, back to grid');
-      clearCart();
-      setPaidAmount(null);
-      setPaidChange(null);
-      setTicketVisible(false);
-    } catch (e) {
-      log.error('TICKET', 'handleAddAnother failed', e instanceof Error ? e.message : String(e));
-      Alert.alert('Error', e instanceof Error ? e.message : 'No se pudo guardar el pedido');
-    } finally {
-      setActionState('idle');
-    }
-  }
-
   async function handlePrint(): Promise<void> {
     if (!hasItems) return;
     setActionState('printing');
@@ -154,16 +131,11 @@ export default function HomeScreen(): React.JSX.Element {
       const currentTicket = useTicketStore.getState().activeTicket;
       if (!currentTicket) throw new Error('Ticket no encontrado en store');
 
-      const allTickets = [...pendingTickets, currentTicket];
-      log.info('TICKET', 'printing', { tickets: allTickets.length });
+      log.info('TICKET', 'printing', { twice: printTwice });
 
-      const result = allTickets.length === 1
-        ? await printTicket(currentTicket, false, MODIFIER_LABELS, RADIO_NO_SELECTION, RADIO_OPTION_SETS)
-        : await printTickets(allTickets, false, MODIFIER_LABELS);
+      const result = await printTicket(currentTicket, false, MODIFIER_LABELS, RADIO_NO_SELECTION, RADIO_OPTION_SETS, printTwice);
 
-      for (const t of allTickets) {
-        await markTicketPrinted(t.id);
-      }
+      await markTicketPrinted(currentTicket.id);
       markPrinted();
       doneAll();
 
@@ -176,6 +148,7 @@ export default function HomeScreen(): React.JSX.Element {
       clearCart();
       setPaidAmount(null);
       setPaidChange(null);
+      setPrintTwice(false);
       setTicketVisible(false);
     } catch (e) {
       log.error('TICKET', 'handlePrint failed', e instanceof Error ? e.message : String(e));
@@ -257,15 +230,6 @@ export default function HomeScreen(): React.JSX.Element {
           }
         />
       </View>
-
-      {/* Pending tickets badge */}
-      {pendingTickets.length > 0 && (
-        <View style={styles.ticketBadge}>
-          <Text style={styles.ticketBadgeText}>
-            {pendingTickets.length} comanda{pendingTickets.length > 1 ? 's' : ''} en cola de impresión
-          </Text>
-        </View>
-      )}
 
       {/* Product grid */}
       <View style={styles.gridWrapper}>
@@ -358,8 +322,6 @@ export default function HomeScreen(): React.JSX.Element {
         onRequestClose={() => setTicketVisible(false)}
       >
         <NewTicketScreen
-          activeTicket={activeTicket}
-          pendingOrders={activeTicket?.orders ?? []}
           clientName={clientName}
           cartItems={items}
           cartTotal={total}
@@ -368,11 +330,12 @@ export default function HomeScreen(): React.JSX.Element {
           actionState={actionState}
           isBusy={isBusy}
           hasItems={hasItems}
+          printTwice={printTwice}
           modifierLabels={MODIFIER_LABELS}
           products={products}
           onCobrar={handleCobrar}
-          onAddAnother={() => void handleAddAnother()}
           onPrint={() => void handlePrint()}
+          onTogglePrintTwice={() => setPrintTwice((v) => !v)}
           onIncrementItem={incrementItem}
           onDecrementItem={decrementItem}
           onRemoveItem={removeItem}
@@ -414,17 +377,6 @@ const styles = StyleSheet.create({
   nameInput: {
     fontSize: 17,
     backgroundColor: '#fff',
-  },
-  ticketBadge: {
-    backgroundColor: '#E3F2FD',
-    paddingVertical: 2,
-    paddingLeft: 16,
-    paddingRight: 4,
-  },
-  ticketBadgeText: {
-    fontSize: 13,
-    color: '#1565C0',
-    fontWeight: '600',
   },
   gridWrapper: { flex: 1 },
   gridCenter: {

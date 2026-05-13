@@ -19,7 +19,7 @@ import ModifierSheet from '../../components/ModifierSheet';
 import StableTextInput from '../../components/StableTextInput';
 
 import { collapseVerduraModifiers, formatPrice } from '../../lib/utils';
-import type { Modifier, Order, OrderItem, Product, Ticket } from '../../lib/types';
+import type { Modifier, OrderItem, Product } from '../../lib/types';
 
 // ---------------------------------------------------------------------------
 // buildMaps — exported for use in index.tsx
@@ -110,21 +110,20 @@ const editItemStyles = StyleSheet.create({
 // ---------------------------------------------------------------------------
 
 export interface NewTicketProps {
-  activeTicket: Ticket | null;
-  pendingOrders: Order[];
   clientName: string;
   cartItems: OrderItem[];
   cartTotal: number;
   paidAmount: number | null;
   paidChange: number | null;
-  actionState: 'idle' | 'saving' | 'printing';
+  actionState: 'idle' | 'printing';
   isBusy: boolean;
   hasItems: boolean;
+  printTwice: boolean;
   modifierLabels: Record<string, string>;
   products: Product[];
   onCobrar: () => void;
-  onAddAnother: () => void;
   onPrint: () => void;
+  onTogglePrintTwice: () => void;
   onIncrementItem: (id: string) => void;
   onDecrementItem: (id: string) => void;
   onRemoveItem: (id: string) => void;
@@ -134,10 +133,10 @@ export interface NewTicketProps {
 }
 
 export default function NewTicketScreen({
-  activeTicket, pendingOrders, clientName, cartItems, cartTotal,
-  paidAmount, paidChange, actionState, isBusy, hasItems, modifierLabels,
+  clientName, cartItems, cartTotal,
+  paidAmount, paidChange, actionState, isBusy, hasItems, printTwice, modifierLabels,
   onCobrar,
-  onAddAnother, onPrint,
+  onPrint, onTogglePrintTwice,
   onIncrementItem, onDecrementItem, onRemoveItem,
   onSetClientName, onAddProduct, products,
   onBack: _onBack,
@@ -179,11 +178,6 @@ export default function NewTicketScreen({
       {/* Ticket header */}
       <Surface style={styles.ticketHeader} elevation={1}>
         <Text style={styles.ticketHeaderText}>RESUMEN DEL PEDIDO</Text>
-        {activeTicket && activeTicket.orders.length > 0 && (
-          <Text style={styles.ticketHeaderSub}>
-            Comanda #{activeTicket.ticketNumber}  ·  {activeTicket.orders.length} pedido{activeTicket.orders.length > 1 ? 's' : ''} previo{activeTicket.orders.length > 1 ? 's' : ''}
-          </Text>
-        )}
       </Surface>
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
@@ -250,16 +244,6 @@ export default function NewTicketScreen({
             </View>
           )}
 
-          {pendingOrders.length > 0 && (
-            <View style={styles.prevOrdersBox}>
-              <Text style={styles.prevOrdersTitle}>Pedidos anteriores en esta comanda</Text>
-              {pendingOrders.map((o) => (
-                <Text key={o.id} style={styles.prevOrderRow}>
-                  {o.clientName} — {formatPrice(o.total)}
-                </Text>
-              ))}
-            </View>
-          )}
         </View>
       </ScrollView>
 
@@ -280,16 +264,17 @@ export default function NewTicketScreen({
           </Button>
           <View style={styles.btnRow}>
             <Button
-              mode="contained"
-              onPress={onAddAnother}
-              disabled={!hasItems || isBusy}
-              buttonColor="#1E88E5"
-              style={[styles.btn, styles.btnHalf]}
+              mode={printTwice ? 'contained' : 'outlined'}
+              onPress={onTogglePrintTwice}
+              disabled={isBusy}
+              buttonColor={printTwice ? '#1E88E5' : undefined}
+              textColor={printTwice ? '#fff' : '#1E88E5'}
+              style={[styles.btn, styles.btnHalf, !printTwice && styles.btnOutlineBlue]}
               contentStyle={styles.btnContent}
               labelStyle={styles.btnLabel}
-              icon={actionState === 'saving' ? undefined : 'plus'}
+              icon={printTwice ? 'check-bold' : 'checkbox-blank-outline'}
             >
-              {actionState === 'saving' ? <ActivityIndicator color="#fff" size={20} /> : 'Añadir otro'}
+              Imprimir 2x
             </Button>
             <Button
               mode="contained"
@@ -372,7 +357,6 @@ const styles = StyleSheet.create({
 
   ticketHeader: { backgroundColor: '#E3F2FD', paddingVertical: 10, paddingHorizontal: 16 },
   ticketHeaderText: { fontSize: 13, color: '#1565C0', fontWeight: '800', letterSpacing: 0.8, textTransform: 'uppercase' },
-  ticketHeaderSub: { fontSize: 12, color: '#1565C0', fontWeight: '500', marginTop: 2, opacity: 0.8 },
 
   editOrderCard: {
     backgroundColor: '#fff',
@@ -405,10 +389,6 @@ const styles = StyleSheet.create({
   paidLabel: { fontSize: 12, color: '#888', marginBottom: 2 },
   paidValue: { fontSize: 18, fontWeight: '700', color: '#333' },
   changeValue: { color: '#43A047' },
-  prevOrdersBox: { backgroundColor: '#F3F8FF', borderRadius: 8, padding: 12, marginTop: 8 },
-  prevOrdersTitle: { fontSize: 12, fontWeight: '700', color: '#1565C0', marginBottom: 6, letterSpacing: 0.5 },
-  prevOrderRow: { fontSize: 14, color: '#333', paddingVertical: 2 },
-
   previewRow: { paddingHorizontal: 16, paddingBottom: 2, alignItems: 'flex-end', backgroundColor: '#f5f5f5' },
 
   actions: { backgroundColor: '#fff' },
@@ -416,6 +396,7 @@ const styles = StyleSheet.create({
   btnRow: { flexDirection: 'row', gap: 10 },
   btn: { borderRadius: 10 },
   btnHalf: { flex: 1 },
+  btnOutlineBlue: { borderColor: '#1E88E5', borderWidth: 1.5 },
   btnContent: { height: 56 },
   btnLabel: { fontSize: 16, fontWeight: '800', letterSpacing: 0.3 },
 

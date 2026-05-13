@@ -5,8 +5,6 @@ import type { Order, OrderItem, PriceProfile, Ticket } from '../lib/types';
 interface TicketState {
   // --- data ---
   activeTicket: Ticket | null;
-  /** Tickets already saved & waiting to be printed together with the next one. */
-  pendingTickets: Ticket[];
 
   /**
    * Open a brand-new ticket (called before the first Order of a sale).
@@ -30,18 +28,12 @@ interface TicketState {
   }) => Order;
 
   /**
-   * Move activeTicket to pendingTickets and clear activeTicket.
-   * Called by "Añadir otro" after saving the current ticket to SQLite.
-   */
-  parkTicket: () => void;
-
-  /**
    * Mark the active ticket as printed (sets printedAt).
    * Does NOT clear the ticket — caller clears after successful BT print.
    */
   markPrinted: () => void;
 
-  /** Dispose of activeTicket and pendingTickets after printing. */
+  /** Dispose of activeTicket after printing. */
   clearActiveTicket: () => void;
 
   // --- selectors ---
@@ -51,7 +43,6 @@ interface TicketState {
 
 export const useTicketStore = create<TicketState>((set, get) => ({
   activeTicket: null,
-  pendingTickets: [],
 
   openTicket: (sessionId, ticketNumber, id) => {
     const ticket: Ticket = {
@@ -110,13 +101,7 @@ export const useTicketStore = create<TicketState>((set, get) => ({
     });
   },
 
-  parkTicket: () => {
-    const ticket = get().activeTicket;
-    if (!ticket) return;
-    set((s) => ({ pendingTickets: [...s.pendingTickets, ticket], activeTicket: null }));
-  },
-
-  clearActiveTicket: () => set({ activeTicket: null, pendingTickets: [] }),
+  clearActiveTicket: () => set({ activeTicket: null }),
 
   ticketTotal: () => {
     const orders = get().activeTicket?.orders ?? [];
