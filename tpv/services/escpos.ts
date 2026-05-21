@@ -55,7 +55,9 @@ export const CMD_SIZE_WIDE_OFF: readonly number[] = [ESC, 0x21, 0x00];
 /** Short name substitutions applied only at print time (not in DB). */
 const PRINT_NAME_OVERRIDES: Record<string, string> = {
   'DOBLE SUBWOOFER': 'DOBLE SUB',
-  'BURGER VEGETARIANA': 'BURGER VEGET.',
+  'BURGER VEGETARIANA': 'BURG. VEGET.',
+  'GYOZAS POLLO': 'GYOZ. POLLO',
+  'GYOZAS VERDURA': 'GYOZ. VERDU',
 };
 
 /** ESC d 4 — Feed 4 lines */
