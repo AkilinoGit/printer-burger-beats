@@ -49,6 +49,7 @@ export default function RootLayout(): React.JSX.Element {
         <Stack.Screen name="ticket/[id]" options={{ title: 'Ticket' }} />
         <Stack.Screen name="session/[id]" options={{ title: 'Sesión' }} />
         <Stack.Screen name="session/summary/[id]" options={{ title: 'Resumen de sesión' }} />
+        <Stack.Screen name="sessions-history" options={{ title: 'Historial de sesiones' }} />
       </Stack>
     </PaperProvider>
   );

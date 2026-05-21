@@ -33,6 +33,7 @@ import {
 import { formatPrice } from '../../lib/utils';
 import type { Location, Session } from '../../lib/types';
 import StableTextInput from '../../components/StableTextInput';
+import { SessionDetailView } from '../session/[id]';
 
 interface PriceRowProps {
   id: string;
@@ -530,6 +531,11 @@ export default function SessionScreen(): React.JSX.Element {
         <ActivityIndicator size="large" />
       </View>
     );
+  }
+
+  // ── render: active session → show its detail view inline ────────────────
+  if (activeSession && activeSession.status === 'open') {
+    return <SessionDetailView sessionId={activeSession.id} />;
   }
 
   // ── render ────────────────────────────────────────────────────────────────

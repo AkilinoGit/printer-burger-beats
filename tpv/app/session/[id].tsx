@@ -11,7 +11,7 @@ import {
   Text,
   TouchableRipple,
 } from 'react-native-paper';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 
 import { getLocations, getSessions, getTicketsBySession, markTicketPrinted } from '../../services/db';
 import { printTicket } from '../../services/printer';
@@ -248,9 +248,14 @@ const rowStyles = StyleSheet.create({
 // Screen
 // ---------------------------------------------------------------------------
 
-export default function SessionDetailScreen(): React.JSX.Element {
-  const { id }   = useLocalSearchParams<{ id: string }>();
-  const router   = useRouter();
+interface SessionDetailProps {
+  sessionId?: string;
+}
+
+export function SessionDetailView({ sessionId }: SessionDetailProps): React.JSX.Element {
+  const params  = useLocalSearchParams<{ id: string }>();
+  const id      = sessionId ?? params.id;
+  const router  = useRouter();
   const storeProducts = useSessionStore((s) => s.products);
   const closeCurrentSession = useSessionStore((s) => s.closeCurrentSession);
   const forcePrintTwice = useSessionStore((s) => s.forcePrintTwice);
@@ -290,6 +295,10 @@ export default function SessionDetailScreen(): React.JSX.Element {
   }, [id]);
 
   useEffect(() => { void loadData(); }, [loadData]);
+
+  // Reload whenever the screen regains focus (needed when this view is
+  // rendered inside a persistent tab and tickets are created elsewhere).
+  useFocusEffect(useCallback(() => { void loadData(); }, [loadData]));
 
   // ── reprint ───────────────────────────────────────────────────────────────
   async function handleReprint(ticket: Ticket): Promise<void> {
@@ -445,6 +454,19 @@ export default function SessionDetailScreen(): React.JSX.Element {
                   Cerrar sesión
                 </Button>
               )}
+
+              {/* History button — only when active, to reach closed sessions */}
+              {isOpen && (
+                <Button
+                  mode="outlined"
+                  icon="history"
+                  onPress={() => router.push('/sessions-history')}
+                  style={styles.summaryBtn}
+                  contentStyle={styles.closeBtnContent}
+                >
+                  Ver historial de sesiones
+                </Button>
+              )}
             </Surface>
 
             {/* Tickets section header */}
@@ -496,6 +518,10 @@ export default function SessionDetailScreen(): React.JSX.Element {
       </Portal>
     </View>
   );
+}
+
+export default function SessionDetailScreen(): React.JSX.Element {
+  return <SessionDetailView />;
 }
 
 // ---------------------------------------------------------------------------
