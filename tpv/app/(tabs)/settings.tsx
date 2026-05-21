@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import {
   Alert,
   ScrollView,
@@ -26,6 +26,7 @@ import {
   updateLocation,
   updateProductBasePrice,
 } from '../../services/db';
+import { getPairedPrinter, printTest, type PrinterDevice } from '../../services/printer';
 import { DEFAULT_FERIANTE_PRICES } from '../../lib/constants';
 import type { Location } from '../../lib/types';
 import StableTextInput from '../../components/StableTextInput';
@@ -78,6 +79,31 @@ export default function SettingsScreen(): React.JSX.Element {
   const [pendingCount, setPendingCount]     = useState(0);
   const [syncing, setSyncing]               = useState(false);
   const [loadingData, setLoadingData]       = useState(true);
+  const [pairedPrinter, setPairedPrinter]   = useState<PrinterDevice | null>(null);
+  const [testingPrinter, setTestingPrinter] = useState(false);
+
+  const reloadPairedPrinter = useCallback(async () => {
+    const p = await getPairedPrinter();
+    setPairedPrinter(p);
+  }, []);
+
+  useFocusEffect(useCallback(() => {
+    void reloadPairedPrinter();
+  }, [reloadPairedPrinter]));
+
+  async function handleTestPrint(): Promise<void> {
+    setTestingPrinter(true);
+    try {
+      const result = await printTest();
+      if (!result.ok) {
+        Alert.alert('Error al imprimir', result.error ?? 'Fallo desconocido.');
+      } else {
+        Alert.alert('OK', 'Prueba enviada a la impresora.');
+      }
+    } finally {
+      setTestingPrinter(false);
+    }
+  }
 
   // Base prices dialog
   const [basePricesVisible, setBasePricesVisible] = useState(false);
@@ -259,6 +285,58 @@ export default function SettingsScreen(): React.JSX.Element {
   return (
     <ScrollView style={styles.root} contentContainerStyle={styles.scrollContent}>
 
+      {/* ── PRINTER SETTINGS ──────────────────────────────────────────────── */}
+      <Text variant="labelLarge" style={styles.sectionLabel}>AJUSTES DE IMPRESORA</Text>
+      <Surface style={styles.card} elevation={1}>
+        {pairedPrinter ? (
+          <>
+            <View style={styles.printerCurrentRow}>
+              <Text style={styles.printerCurrentName}>{pairedPrinter.name}</Text>
+              <Text style={styles.printerCurrentAddress}>{pairedPrinter.address}</Text>
+            </View>
+            <Divider />
+            <View style={styles.printerActions}>
+              <Button
+                mode="contained"
+                icon="printer-check"
+                onPress={() => void handleTestPrint()}
+                loading={testingPrinter}
+                disabled={testingPrinter}
+                buttonColor="#43A047"
+                style={styles.printerActionBtn}
+              >
+                Imprimir prueba
+              </Button>
+              <Button
+                mode="outlined"
+                icon="printer-settings"
+                onPress={() => router.push('/settings/printer')}
+                style={styles.printerActionBtn}
+              >
+                Abrir
+              </Button>
+            </View>
+          </>
+        ) : (
+          <View style={styles.priceActionRow}>
+            <View style={styles.priceActionText}>
+              <Text style={styles.priceActionTitle}>Seleccionar impresora Bluetooth</Text>
+              <Text style={styles.priceActionSubtitle}>
+                Elige la impresora térmica emparejada con el teléfono y prueba la conexión.
+              </Text>
+            </View>
+            <Button
+              mode="outlined"
+              icon="printer-settings"
+              onPress={() => router.push('/settings/printer')}
+              style={styles.priceActionBtn}
+            >
+              Abrir
+            </Button>
+          </View>
+        )}
+      </Surface>
+
       {/* ── PRECIOS ───────────────────────────────────────────────────────── */}
       <Text variant="labelLarge" style={styles.sectionLabel}>PRECIOS</Text>
       <Surface style={styles.card} elevation={1}>
@@ -307,27 +385,6 @@ export default function SettingsScreen(): React.JSX.Element {
             value={forcePrintTwice}
             onValueChange={(v) => void setForcePrintTwice(v)}
           />
-        </View>
-      </Surface>
-
-      {/* ── PRINTER SETTINGS ──────────────────────────────────────────────── */}
-      <Text variant="labelLarge" style={styles.sectionLabel}>AJUSTES DE IMPRESORA</Text>
-      <Surface style={styles.card} elevation={1}>
-        <View style={styles.priceActionRow}>
-          <View style={styles.priceActionText}>
-            <Text style={styles.priceActionTitle}>Seleccionar impresora Bluetooth</Text>
-            <Text style={styles.priceActionSubtitle}>
-              Elige la impresora térmica emparejada con el teléfono y prueba la conexión.
-            </Text>
-          </View>
-          <Button
-            mode="outlined"
-            icon="printer-settings"
-            onPress={() => router.push('/settings/printer')}
-            style={styles.priceActionBtn}
-          >
-            Abrir
-          </Button>
         </View>
       </Surface>
 
@@ -682,6 +739,31 @@ const styles = StyleSheet.create({
   },
   addLocationBtn: {
     margin: 4,
+  },
+
+  // ── printer current ──
+  printerCurrentRow: {
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+  },
+  printerCurrentName: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#111',
+  },
+  printerCurrentAddress: {
+    fontSize: 13,
+    color: '#666',
+    marginTop: 2,
+  },
+  printerActions: {
+    flexDirection: 'row',
+    padding: 12,
+    gap: 8,
+  },
+  printerActionBtn: {
+    flex: 1,
+    borderRadius: 8,
   },
 
   // ── location dialog ──

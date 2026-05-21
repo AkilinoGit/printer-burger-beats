@@ -177,7 +177,7 @@ export default function PrinterSettingsScreen(): React.JSX.Element {
       <Surface style={styles.card} elevation={1}>
         <Button
           mode="contained"
-          icon="bluetooth-search"
+          icon="bluetooth"
           onPress={() => void handleScan()}
           loading={scanning}
           disabled={scanning}
