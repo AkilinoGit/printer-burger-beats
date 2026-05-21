@@ -12,6 +12,7 @@ import {
   Divider,
   Portal,
   Surface,
+  Switch,
   Text,
   TextInput,
 } from 'react-native-paper';
@@ -64,6 +65,11 @@ export default function SettingsScreen(): React.JSX.Element {
   const loadProducts      = useSessionStore((s) => s.loadProducts);
   const feriantePrices    = useSessionStore((s) => s.feriantePrices);
   const setFeriantePrices = useSessionStore((s) => s.setFeriantePrices);
+  const forcePrintTwice    = useSessionStore((s) => s.forcePrintTwice);
+  const setForcePrintTwice = useSessionStore((s) => s.setForcePrintTwice);
+  const loadForcePrintTwice = useSessionStore((s) => s.loadForcePrintTwice);
+
+  useEffect(() => { void loadForcePrintTwice(); }, [loadForcePrintTwice]);
 
   // ── local state ───────────────────────────────────────────────────────────
   const [locations, setLocations]           = useState<Location[]>([]);
@@ -282,6 +288,23 @@ export default function SettingsScreen(): React.JSX.Element {
           >
             Editar
           </Button>
+        </View>
+      </Surface>
+
+      {/* ── PRINTING ──────────────────────────────────────────────────────── */}
+      <Text variant="labelLarge" style={styles.sectionLabel}>IMPRESIÓN</Text>
+      <Surface style={styles.card} elevation={1}>
+        <View style={styles.priceActionRow}>
+          <View style={styles.priceActionText}>
+            <Text style={styles.priceActionTitle}>Imprimir siempre 2 copias</Text>
+            <Text style={styles.priceActionSubtitle}>
+              Cada ticket se imprime por duplicado, como si "Imprimir 2x" estuviera siempre activo.
+            </Text>
+          </View>
+          <Switch
+            value={forcePrintTwice}
+            onValueChange={(v) => void setForcePrintTwice(v)}
+          />
         </View>
       </Surface>
 

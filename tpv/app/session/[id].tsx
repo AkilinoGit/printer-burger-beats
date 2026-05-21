@@ -253,6 +253,7 @@ export default function SessionDetailScreen(): React.JSX.Element {
   const router   = useRouter();
   const storeProducts = useSessionStore((s) => s.products);
   const closeCurrentSession = useSessionStore((s) => s.closeCurrentSession);
+  const forcePrintTwice = useSessionStore((s) => s.forcePrintTwice);
 
   const [session,  setSession]  = useState<Session | null>(null);
   const [tickets,  setTickets]  = useState<Ticket[]>([]);
@@ -294,7 +295,7 @@ export default function SessionDetailScreen(): React.JSX.Element {
   async function handleReprint(ticket: Ticket): Promise<void> {
     setReprintingId(ticket.id);
     try {
-      const result = await printTicket(ticket, false, modifierLabels, radioNoSelection, radioOptionSets);
+      const result = await printTicket(ticket, false, modifierLabels, radioNoSelection, radioOptionSets, forcePrintTwice);
       if (!result.ok) {
         Alert.alert('Error de impresión', result.error ?? 'No se pudo conectar con la impresora');
         return;

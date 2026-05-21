@@ -5,6 +5,7 @@ import { DEFAULT_FERIANTE_PRICES } from '../lib/constants';
 import { closeSession, getActiveSession, getNextTicketNumber, getProducts, initDb } from '../services/db';
 
 const FERIANTE_PRICES_KEY = 'tpv:feriantePrices';
+const FORCE_PRINT_TWICE_KEY = 'tpv:forcePrintTwice';
 
 interface SessionState {
   // --- data ---
@@ -13,6 +14,8 @@ interface SessionState {
   products: Product[];
   isLoadingProducts: boolean;
   feriantePrices: Record<string, number>;
+  /** When true, every print is forced to emit two copies (as if "Imprimir 2x" were always on). */
+  forcePrintTwice: boolean;
   /** Last ticket number used in the active session. Incremented in-memory — no DB query needed. */
   lastTicketNumber: number;
 
@@ -58,6 +61,12 @@ interface SessionState {
   loadFeriantePrices: () => Promise<void>;
   /** Update feriante prices and persist to AsyncStorage. */
   setFeriantePrices: (prices: Record<string, number>) => Promise<void>;
+
+  // --- force print twice ---
+  /** Load persisted forcePrintTwice flag from AsyncStorage. Call once on app start. */
+  loadForcePrintTwice: () => Promise<void>;
+  /** Update forcePrintTwice flag and persist to AsyncStorage. */
+  setForcePrintTwice: (value: boolean) => Promise<void>;
 }
 
 export const useSessionStore = create<SessionState>((set, get) => ({
@@ -66,6 +75,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   products: [],
   isLoadingProducts: true,
   feriantePrices: DEFAULT_FERIANTE_PRICES,
+  forcePrintTwice: false,
   lastTicketNumber: 0,
 
   setActiveLocation: (location) => set({ activeLocation: location }),
@@ -105,6 +115,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     set({ isLoadingProducts: true });
     try {
       await initDb();
+      // Restore persisted forcePrintTwice flag — fire-and-forget, defaults to false
+      void get().loadForcePrintTwice();
       const [session, products] = await Promise.all([getActiveSession(), getProducts()]);
       if (session) {
         const lastNum = await getNextTicketNumber(session.id) - 1;
@@ -149,6 +161,26 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     set({ feriantePrices: prices });
     try {
       await AsyncStorage.setItem(FERIANTE_PRICES_KEY, JSON.stringify(prices));
+    } catch {
+      // silently ignore
+    }
+  },
+
+  loadForcePrintTwice: async () => {
+    try {
+      const stored = await AsyncStorage.getItem(FORCE_PRINT_TWICE_KEY);
+      if (stored !== null) {
+        set({ forcePrintTwice: stored === 'true' });
+      }
+    } catch {
+      // silently ignore — defaults to false
+    }
+  },
+
+  setForcePrintTwice: async (value) => {
+    set({ forcePrintTwice: value });
+    try {
+      await AsyncStorage.setItem(FORCE_PRINT_TWICE_KEY, value ? 'true' : 'false');
     } catch {
       // silently ignore
     }

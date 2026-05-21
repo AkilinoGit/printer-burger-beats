@@ -36,6 +36,7 @@ export default function HomeScreen(): React.JSX.Element {
   const loadProducts      = useSessionStore((s) => s.loadProducts);
   const activeSession     = useSessionStore((s) => s.activeSession);
   const nextTicketNumber  = useSessionStore((s) => s.nextTicketNumber);
+  const forcePrintTwice   = useSessionStore((s) => s.forcePrintTwice);
 
   const clientName    = useCartStore((s) => s.clientName);
   const items         = useCartStore((s) => s.items);
@@ -131,9 +132,10 @@ export default function HomeScreen(): React.JSX.Element {
       const currentTicket = useTicketStore.getState().activeTicket;
       if (!currentTicket) throw new Error('Ticket no encontrado en store');
 
-      log.info('TICKET', 'printing', { twice: printTwice });
+      const effectiveTwice = printTwice || forcePrintTwice;
+      log.info('TICKET', 'printing', { twice: effectiveTwice, forced: forcePrintTwice });
 
-      const result = await printTicket(currentTicket, false, MODIFIER_LABELS, RADIO_NO_SELECTION, RADIO_OPTION_SETS, printTwice);
+      const result = await printTicket(currentTicket, false, MODIFIER_LABELS, RADIO_NO_SELECTION, RADIO_OPTION_SETS, effectiveTwice);
 
       await markTicketPrinted(currentTicket.id);
       markPrinted();
