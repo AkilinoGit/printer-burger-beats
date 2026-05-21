@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { useRouter } from 'expo-router';
 import {
   Alert,
   ScrollView,
@@ -61,6 +62,7 @@ const PriceRow = React.memo(function PriceRow({ id, name, value, styleRow, style
 // ---------------------------------------------------------------------------
 
 export default function SettingsScreen(): React.JSX.Element {
+  const router = useRouter();
   const products          = useSessionStore((s) => s.products);
   const loadProducts      = useSessionStore((s) => s.loadProducts);
   const feriantePrices    = useSessionStore((s) => s.feriantePrices);
@@ -305,6 +307,27 @@ export default function SettingsScreen(): React.JSX.Element {
             value={forcePrintTwice}
             onValueChange={(v) => void setForcePrintTwice(v)}
           />
+        </View>
+      </Surface>
+
+      {/* ── PRINTER SETTINGS ──────────────────────────────────────────────── */}
+      <Text variant="labelLarge" style={styles.sectionLabel}>AJUSTES DE IMPRESORA</Text>
+      <Surface style={styles.card} elevation={1}>
+        <View style={styles.priceActionRow}>
+          <View style={styles.priceActionText}>
+            <Text style={styles.priceActionTitle}>Seleccionar impresora Bluetooth</Text>
+            <Text style={styles.priceActionSubtitle}>
+              Elige la impresora térmica emparejada con el teléfono y prueba la conexión.
+            </Text>
+          </View>
+          <Button
+            mode="outlined"
+            icon="printer-settings"
+            onPress={() => router.push('/settings/printer')}
+            style={styles.priceActionBtn}
+          >
+            Abrir
+          </Button>
         </View>
       </Surface>
 

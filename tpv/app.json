@@ -29,7 +29,12 @@
       "predictiveBackGestureEnabled": false,
       "package": "com.akisoftware.burgerbeats",
       "versionCode": 2,
-      "permissions": []
+      "permissions": [
+        "BLUETOOTH",
+        "BLUETOOTH_ADMIN",
+        "BLUETOOTH_CONNECT",
+        "BLUETOOTH_SCAN"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
