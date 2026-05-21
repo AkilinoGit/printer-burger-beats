@@ -8,6 +8,7 @@
 
 import type { Order, OrderItem, Session, Ticket } from '../lib/types';
 import { collapseVerduraModifiers, currentTime } from '../lib/utils';
+import { LOGO_RASTER_BYTES, IG_LOGO_RASTER_BYTES } from './logo-bytes';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -112,6 +113,25 @@ export function sanitizeForPrinter(text: string): string {
     .replace(/[ÚÙÛÜ]/g, 'U').replace(/[úùûü]/g, 'u');
 }
 
+/** Word-wraps a string to the given column width, breaking on spaces. */
+function _wrapText(text: string, width: number): string[] {
+  const words = text.split(/\s+/);
+  const lines: string[] = [];
+  let current = '';
+  for (const word of words) {
+    if (!current) {
+      current = word;
+    } else if (current.length + 1 + word.length <= width) {
+      current += ' ' + word;
+    } else {
+      lines.push(current);
+      current = word;
+    }
+  }
+  if (current) lines.push(current);
+  return lines;
+}
+
 // ---------------------------------------------------------------------------
 // Raw Uint8Array buffer — used by printer.ts via RawBT Intent
 // ---------------------------------------------------------------------------
@@ -145,13 +165,45 @@ export function buildTicketBuffer(
 
   const rawLine = (text: string) => parts.push(encodeText(text + '\n'));
 
-  // Init + top margin (~2cm)
-  parts.push(CMD_INIT, CMD_FEED_TOP);
+  // Init
+  parts.push(CMD_INIT);
 
   const copies = repeatContent ? 2 : 1;
+
+  // Promotional header at the very top, only when printing twice:
+  // logo + catering message + Instagram handle. The normal top margin is
+  // skipped here because the logo already provides visual breathing room.
+  if (repeatContent) {
+    parts.push(CMD_ALIGN_CENTER);
+    parts.push(LOGO_RASTER_BYTES);
+    rawLine('');
+    const promoLines = _wrapText(
+      sanitizeForPrinter(
+        'Escríbenos para reservar tu pedido o servicio de catering ' +
+        'para eventos privados o comidas populares (paellas, ' +
+        'almuerzo segador, bocadillos, etc ...)',
+      ),
+      CHARS_PER_LINE,
+    );
+    for (const line of promoLines) rawLine(line);
+    rawLine('');
+    // Instagram icon + @handle on the same line (composed in logo-bytes.ts).
+    parts.push(IG_LOGO_RASTER_BYTES);
+    parts.push(CMD_ALIGN_LEFT);
+    rawLine('');
+    rawLine('');
+  } else {
+    // Single-copy mode keeps the original ~2cm top margin.
+    parts.push(CMD_FEED_TOP);
+  }
+
   for (let c = 0; c < copies; c++) {
     if (c > 0) {
-      // Separator between copies: ~1cm less than CMD_FEED + CMD_FEED_TOP would be
+      // After first copy (only in double-print mode): thank-you message,
+      // then the original large feed before the second copy.
+      parts.push(CMD_ALIGN_CENTER, CMD_BOLD_ON);
+      rawLine('GRACIAS POR VENIR :)');
+      parts.push(CMD_BOLD_OFF, CMD_ALIGN_LEFT);
       parts.push(CMD_FEED_BETWEEN_COPIES);
     }
 
