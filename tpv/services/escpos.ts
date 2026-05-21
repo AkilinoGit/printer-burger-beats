@@ -29,6 +29,9 @@ const GS  = 0x1d;
 /** ESC @ — Initialize printer */
 export const CMD_INIT: readonly number[] = [ESC, 0x40];
 
+/** ESC t 19 — Select codepage CP858 (Latin-1 + €). Required for ñ/á/é/í/ó/ú. */
+export const CMD_CODEPAGE_CP858: readonly number[] = [ESC, 0x74, 0x13];
+
 /** ESC E 1 — Bold on */
 export const CMD_BOLD_ON: readonly number[] = [ESC, 0x45, 0x01];
 
@@ -77,11 +80,30 @@ export const CMD_CUT: readonly number[] = [GS, 0x56, 0x42, 0x30];
 // Text helpers
 // ---------------------------------------------------------------------------
 
-/** Encodes an ASCII/Latin-1 string to a Uint8Array. */
+/**
+ * CP858 codepage mapping for the characters used in Spanish text.
+ * CP858 is selected at print start via CMD_CODEPAGE_CP858. Any character
+ * not in this map falls back to its raw char code (works for ASCII 0x20–0x7E).
+ */
+const CP858_MAP: Record<string, number> = {
+  'á': 0xa0, 'é': 0x82, 'í': 0xa1, 'ó': 0xa2, 'ú': 0xa3,
+  'Á': 0xb5, 'É': 0x90, 'Í': 0xd6, 'Ó': 0xe0, 'Ú': 0xe9,
+  'ñ': 0xa4, 'Ñ': 0xa5,
+  'ü': 0x81, 'Ü': 0x9a,
+  'à': 0x85, 'è': 0x8a, 'ì': 0x8d, 'ò': 0x95, 'ù': 0x97,
+  'À': 0xb7, 'È': 0xd4, 'Ì': 0xde, 'Ò': 0xe3, 'Ù': 0xeb,
+  'â': 0x83, 'ê': 0x88, 'î': 0x8c, 'ô': 0x93, 'û': 0x96,
+  'ä': 0x84, 'ë': 0x89, 'ï': 0x8b, 'ö': 0x94,
+  '¿': 0xa8, '¡': 0xad, '€': 0xd5, 'º': 0xa7, 'ª': 0xa6,
+};
+
+/** Encodes a string to CP858 bytes for the printer. */
 export function encodeText(text: string): Uint8Array {
   const bytes = new Uint8Array(text.length);
   for (let i = 0; i < text.length; i++) {
-    bytes[i] = text.charCodeAt(i) & 0xff;
+    const ch = text[i];
+    const mapped = CP858_MAP[ch];
+    bytes[i] = mapped !== undefined ? mapped : text.charCodeAt(i) & 0xff;
   }
   return bytes;
 }
@@ -99,18 +121,12 @@ export function concatBytes(...parts: (readonly number[] | Uint8Array)[]): Uint8
 }
 
 /**
- * Replaces characters unsupported by basic ESC/POS Latin-1 codepages
- * (accented vowels, ñ, ü) with their ASCII equivalents.
- * Must be applied to ALL text before encoding.
+ * Pass-through. Accented characters are now handled by encodeText() via the
+ * CP858 codepage (selected at print start with CMD_CODEPAGE_CP858).
+ * Kept for backwards compatibility with existing call sites.
  */
 export function sanitizeForPrinter(text: string): string {
-  return text
-    .replace(/Ñ/g, 'N').replace(/ñ/g, 'n')
-    .replace(/[ÁÀÂÄ]/g, 'A').replace(/[áàâä]/g, 'a')
-    .replace(/[ÉÈÊË]/g, 'E').replace(/[éèêë]/g, 'e')
-    .replace(/[ÍÌÎÏ]/g, 'I').replace(/[íìîï]/g, 'i')
-    .replace(/[ÓÒÔÖ]/g, 'O').replace(/[óòôö]/g, 'o')
-    .replace(/[ÚÙÛÜ]/g, 'U').replace(/[úùûü]/g, 'u');
+  return text;
 }
 
 /** Word-wraps a string to the given column width, breaking on spaces. */
@@ -165,8 +181,8 @@ export function buildTicketBuffer(
 
   const rawLine = (text: string) => parts.push(encodeText(text + '\n'));
 
-  // Init
-  parts.push(CMD_INIT);
+  // Init + select CP858 for accented characters (á, é, í, ó, ú, ñ, ü…)
+  parts.push(CMD_INIT, CMD_CODEPAGE_CP858);
 
   const copies = repeatContent ? 2 : 1;
 
@@ -677,7 +693,7 @@ export function buildSessionSummaryBuffer(
   const SEP     = '='.repeat(CHARS_PER_LINE);
   const isOpen  = session.status === 'open';
 
-  parts.push(CMD_INIT, CMD_FEED_TOP);
+  parts.push(CMD_INIT, CMD_CODEPAGE_CP858, CMD_FEED_TOP);
 
   // ── Header ────────────────────────────────────────────────────────────────
   parts.push(CMD_ALIGN_CENTER);
