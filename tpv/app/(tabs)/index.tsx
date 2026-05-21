@@ -321,36 +321,37 @@ export default function HomeScreen(): React.JSX.Element {
         animationType="slide"
         onRequestClose={() => setTicketVisible(false)}
       >
-        <NewTicketScreen
-          clientName={clientName}
-          cartItems={items}
-          cartTotal={total}
-          paidAmount={paidAmount}
-          paidChange={paidChange}
-          actionState={actionState}
-          isBusy={isBusy}
-          hasItems={hasItems}
-          printTwice={printTwice}
-          modifierLabels={MODIFIER_LABELS}
-          products={products}
-          onCobrar={handleCobrar}
-          onPrint={() => void handlePrint()}
-          onTogglePrintTwice={() => setPrintTwice((v) => !v)}
-          onIncrementItem={incrementItem}
-          onDecrementItem={decrementItem}
-          onRemoveItem={removeItem}
-          onSetClientName={setClientName}
-          onAddProduct={addProduct}
-          onBack={() => setTicketVisible(false)}
-        />
+        <Portal.Host>
+          <NewTicketScreen
+            clientName={clientName}
+            cartItems={items}
+            cartTotal={total}
+            paidAmount={paidAmount}
+            paidChange={paidChange}
+            actionState={actionState}
+            isBusy={isBusy}
+            hasItems={hasItems}
+            printTwice={printTwice}
+            modifierLabels={MODIFIER_LABELS}
+            products={products}
+            onCobrar={handleCobrar}
+            onPrint={() => void handlePrint()}
+            onTogglePrintTwice={() => setPrintTwice((v) => !v)}
+            onIncrementItem={incrementItem}
+            onDecrementItem={decrementItem}
+            onRemoveItem={removeItem}
+            onSetClientName={setClientName}
+            onAddProduct={addProduct}
+            onBack={() => setTicketVisible(false)}
+          />
+          <PaymentModal
+            visible={paymentVisible}
+            total={total}
+            onConfirm={handlePaymentConfirm}
+            onDismiss={() => setPaymentVisible(false)}
+          />
+        </Portal.Host>
       </Modal>
-
-      <PaymentModal
-        visible={paymentVisible}
-        total={total}
-        onConfirm={handlePaymentConfirm}
-        onDismiss={() => setPaymentVisible(false)}
-      />
     </KeyboardAvoidingView>
   );
 }
