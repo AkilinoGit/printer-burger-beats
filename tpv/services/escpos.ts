@@ -179,6 +179,7 @@ export function buildTicketBuffer(
   isTest: boolean,
   modifierLabels: Record<string, string>,
   repeatContent: boolean = false,
+  normalPrices: Record<string, number> = {},
 ): Uint8Array {
   const parts: (readonly number[] | Uint8Array)[] = [];
 
@@ -235,7 +236,7 @@ export function buildTicketBuffer(
 
     // ── Orders ────────────────────────────────────────────────────────────────
     for (let i = 0; i < ticket.orders.length; i++) {
-      _appendOrderBytes(parts, ticket.orders[i], modifierLabels, ticket.ticketNumber, i);
+      _appendOrderBytes(parts, ticket.orders[i], modifierLabels, ticket.ticketNumber, i, normalPrices);
     }
 
     // ── Footer ────────────────────────────────────────────────────────────────
@@ -277,6 +278,7 @@ function _appendOrderBytes(
   modifierLabels: Record<string, string>,
   ticketNumber: number,
   orderIndex: number,
+  normalPrices: Record<string, number> = {},
 ): void {
   const rawLine = (text: string) => parts.push(encodeText(text + '\n'));
 
@@ -325,19 +327,40 @@ function _appendOrderBytes(
       parts.push(encodeText('---* COMPLEMENTOS *---\n'));
       parts.push(CMD_ALIGN_LEFT);
     }
-    _appendItemBytes(parts, sorted[i], profile, modifierLabels);
+    _appendItemBytes(parts, sorted[i], profile, modifierLabels, normalPrices);
   }
 
   // ── Closing separator with order total ──────────────────────────────────
-  const orderTotal = order.items.reduce(
-    (sum, it) => sum + (it.unitPrice + it.modifierPriceAdd) * it.qty,
-    0,
-  );
-  const totalStr = profile === 'invitacion' ? '0.00' : orderTotal.toFixed(2);
-  const sepLine  = '-'.repeat(CHARS_PER_LINE - totalStr.length) + totalStr;
+  // For feriante orders, compute original total (normal prices) and discount.
+  let originalTotal = 0;
+  let totalDiscount = 0;
+  for (const it of order.items) {
+    const normalUnitPrice = (profile === 'feriante' ? normalPrices[it.productId] : undefined) ?? it.unitPrice;
+    const hasDiscount = profile === 'feriante' && normalUnitPrice > it.unitPrice + 0.001;
+    originalTotal += (normalUnitPrice + it.modifierPriceAdd) * it.qty;
+    if (hasDiscount) totalDiscount += (normalUnitPrice - it.unitPrice) * it.qty;
+  }
+  const ferianteTotal = originalTotal - totalDiscount;
+
+  const _sepLabel = (label: string, amount: string): string => {
+    const dashes = Math.max(1, CHARS_PER_LINE - label.length - amount.length);
+    return label + '-'.repeat(dashes) + amount;
+  };
 
   parts.push(CMD_ALIGN_LEFT);
-  rawLine(sepLine);
+
+  if (profile === 'invitacion') {
+    rawLine(_sepLabel('TOTAL', '0.00'));
+  } else if (profile === 'feriante' && totalDiscount > 0.001) {
+    rawLine(_sepLabel('TOTAL', originalTotal.toFixed(2)));
+    const dtoStr = '-' + totalDiscount.toFixed(2);
+    rawLine('DESCUENTO' + '.'.repeat(Math.max(1, CHARS_PER_LINE - 9 - dtoStr.length)) + dtoStr);
+    parts.push(CMD_BOLD_ON);
+    rawLine(_sepLabel('TOTAL CON DTO', ferianteTotal.toFixed(2)));
+    parts.push(CMD_BOLD_OFF);
+  } else {
+    rawLine(_sepLabel('TOTAL', (profile === 'feriante' ? ferianteTotal : originalTotal).toFixed(2)));
+  }
 }
 
 /**
@@ -402,13 +425,19 @@ function _appendItemBytes(
   item: OrderItem,
   priceProfile: Order['priceProfile'],
   modifierLabels: Record<string, string>,
+  normalPrices: Record<string, number> = {},
 ): void {
   const rawLine = (text: string) => parts.push(encodeText(text + '\n'));
 
   const baseLabel = sanitizeForPrinter(item.customLabel ?? item.productName);
   const rawLabel  = PRINT_NAME_OVERRIDES[baseLabel.toUpperCase()] ?? baseLabel;
 
-  const unitTotal  = (item.unitPrice + item.modifierPriceAdd) * item.qty;
+  // For feriante items with a known normal price, show the original (pre-discount) price on the line.
+  const normalUnitPrice = (priceProfile === 'feriante' ? normalPrices[item.productId] : undefined) ?? item.unitPrice;
+  const displayUnitPrice = (priceProfile === 'feriante' && normalUnitPrice > item.unitPrice + 0.001)
+    ? normalUnitPrice
+    : item.unitPrice;
+  const unitTotal  = (displayUnitPrice + item.modifierPriceAdd) * item.qty;
   const priceStr   = priceProfile === 'invitacion' ? '0.00' : unitTotal.toFixed(2);
   // Price always occupies PRICE_FIELD chars, right-aligned, preceded by a space.
   const priceBlock = ' ' + priceStr.padStart(PRICE_FIELD); // e.g. " 99.99" (6 chars)
@@ -443,6 +472,17 @@ function _appendItemBytes(
   for (const id of sortedModifiers) {
     const modLabel = sanitizeForPrinter(extraLabels[id] ?? modifierLabels[id] ?? id);
     rawLine('  ' + modLabel);
+  }
+
+  // Feriante discount line: shown when the normal price is higher than the feriante unit price.
+  if (priceProfile === 'feriante' && normalUnitPrice > item.unitPrice + 0.001) {
+    const discountTotal = (normalUnitPrice - item.unitPrice) * item.qty;
+    const dStr   = '-' + discountTotal.toFixed(2);
+    const dBlock = ' ' + dStr.padStart(PRICE_FIELD + 1); // +1 for the minus sign
+    const dLabel = '  DTO. FERIANTE';
+    const dotsLen = CHARS_PER_LINE - dLabel.length - dBlock.length;
+    const dots = dotsLen > 0 ? '.'.repeat(dotsLen) : '';
+    rawLine(dLabel + dots + dBlock);
   }
 }
 

@@ -135,7 +135,11 @@ export default function HomeScreen(): React.JSX.Element {
       const effectiveTwice = printTwice || forcePrintTwice;
       log.info('TICKET', 'printing', { twice: effectiveTwice, forced: forcePrintTwice });
 
-      const result = await printTicket(currentTicket, false, MODIFIER_LABELS, RADIO_NO_SELECTION, RADIO_OPTION_SETS, effectiveTwice);
+      const normalPrices: Record<string, number> = {};
+      for (const p of products) {
+        normalPrices[p.id] = activeSession?.priceOverrides[p.id] ?? p.basePrice;
+      }
+      const result = await printTicket(currentTicket, false, MODIFIER_LABELS, RADIO_NO_SELECTION, RADIO_OPTION_SETS, effectiveTwice, normalPrices);
 
       await markTicketPrinted(currentTicket.id);
       markPrinted();

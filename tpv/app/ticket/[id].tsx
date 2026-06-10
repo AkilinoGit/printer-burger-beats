@@ -143,7 +143,8 @@ export default function TicketScreen(): React.JSX.Element {
   const router  = useRouter();
 
   // ── stores ────────────────────────────────────────────────────────────────
-  const products = useSessionStore((s) => s.products);
+  const products      = useSessionStore((s) => s.products);
+  const activeSession = useSessionStore((s) => s.activeSession);
   const forcePrintTwice = useSessionStore((s) => s.forcePrintTwice);
 
   const { labels: MODIFIER_LABELS, radioNoSelection: RADIO_NO_SELECTION, radioOptionSets: RADIO_OPTION_SETS } =
@@ -327,7 +328,11 @@ export default function TicketScreen(): React.JSX.Element {
       setEditOrders([]);
 
       if (refreshed) {
-        const result = await printTicket(refreshed, false, MODIFIER_LABELS, RADIO_NO_SELECTION, RADIO_OPTION_SETS, forcePrintTwice);
+        const normalPrices: Record<string, number> = {};
+        for (const p of products) {
+          normalPrices[p.id] = activeSession?.priceOverrides[p.id] ?? p.basePrice;
+        }
+        const result = await printTicket(refreshed, false, MODIFIER_LABELS, RADIO_NO_SELECTION, RADIO_OPTION_SETS, forcePrintTwice, normalPrices);
         if (!result.ok) {
           Alert.alert('Error de impresión', result.error ?? 'No se pudo conectar con la impresora');
         } else {

@@ -19,7 +19,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 const DB_NAME = 'tpv_v12.db';
-const SCHEMA_VERSION = 22;
+const SCHEMA_VERSION = 23;
 
 let _db: SQLite.SQLiteDatabase | null = null;
 let _initPromise: Promise<void> | null = null;
@@ -127,6 +127,9 @@ export async function initDb(): Promise<void> {
     if (currentVersion < 22) {
       await migrate_v22(db); // rename product id 'gyozas' → 'gyozas-pollo' and add 'gyozas-verdura'
     }
+    if (currentVersion < 23) {
+      await migrate_v23(db); // clear always_show_modifiers for patatas
+    }
     await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
 
     // Self-heal: if for any reason modifiers have no section populated
@@ -145,6 +148,11 @@ export async function initDb(): Promise<void> {
       console.log('[db] Self-heal check failed (column may not exist yet) — running reseed', e);
       await migrate_v20(db);
     }
+
+    // Always ensure patatas does not force the modifier sheet on every tap.
+    try {
+      await db.runAsync("UPDATE products SET always_show_modifiers = 0 WHERE id = 'patatas'");
+    } catch { /* column may not exist on very old schemas — safe to ignore */ }
   })();
   return _initPromise;
 }
@@ -476,6 +484,12 @@ async function migrate_v22(db: SQLite.SQLiteDatabase): Promise<void> {
       }
     }
   });
+}
+
+async function migrate_v23(db: SQLite.SQLiteDatabase): Promise<void> {
+  await db.runAsync(
+    "UPDATE products SET always_show_modifiers = 0 WHERE id = 'patatas'",
+  );
 }
 
 // ---------------------------------------------------------------------------

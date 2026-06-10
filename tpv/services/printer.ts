@@ -281,6 +281,7 @@ export async function printTicket(
   _radioNoSelection: Record<string, string> = {},
   _radioOptionSets: Record<string, Set<string>> = {},
   repeatContent: boolean = false,
+  normalPrices: Record<string, number> = {},
 ): Promise<PrintResult> {
   const orders = ticket.orders.length;
   const items  = ticket.orders.reduce((s, o) => s + o.items.length, 0);
@@ -288,7 +289,7 @@ export async function printTicket(
 
   try {
     const doneEscpos = perf.start('PRINT', 'buildTicketBuffer');
-    const bytes      = buildTicketBuffer(ticket, isTest, modifierLabels, repeatContent);
+    const bytes      = buildTicketBuffer(ticket, isTest, modifierLabels, repeatContent, normalPrices);
     doneEscpos();
 
     const doneWrite = perf.start('PRINT', 'BT write');

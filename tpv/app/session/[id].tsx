@@ -304,7 +304,9 @@ export function SessionDetailView({ sessionId }: SessionDetailProps): React.JSX.
   async function handleReprint(ticket: Ticket): Promise<void> {
     setReprintingId(ticket.id);
     try {
-      const result = await printTicket(ticket, false, modifierLabels, radioNoSelection, radioOptionSets, forcePrintTwice);
+      const normalPrices: Record<string, number> = {};
+      for (const p of storeProducts) normalPrices[p.id] = p.basePrice;
+      const result = await printTicket(ticket, false, modifierLabels, radioNoSelection, radioOptionSets, forcePrintTwice, normalPrices);
       if (!result.ok) {
         Alert.alert('Error de impresión', result.error ?? 'No se pudo conectar con la impresora');
         return;
