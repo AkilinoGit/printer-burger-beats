@@ -85,13 +85,16 @@ export const useCartStore = create<CartState>((set, get) => ({
     }, 0);
 
     // Deduplicate: same product + same sorted modifier list
+    // Custom products ("OTROS") are always unique — never merge them.
     const modKey = [...selectedModifiers].sort().join(',');
-    const existing = get().items.find(
-      (i) =>
-        i.productId === product.id &&
-        [...i.selectedModifiers].sort().join(',') === modKey &&
-        i.customLabel === (customLabel ?? null),
-    );
+    const existing = product.isCustom
+      ? undefined
+      : get().items.find(
+          (i) =>
+            i.productId === product.id &&
+            [...i.selectedModifiers].sort().join(',') === modKey &&
+            i.customLabel === (customLabel ?? null),
+        );
 
     if (existing) {
       set((s) => ({
