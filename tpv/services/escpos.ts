@@ -50,6 +50,9 @@ export const CMD_SIZE_DOUBLE: readonly number[] = [GS, 0x21, 0x11];
 /** GS ! 0x00 — Normal size */
 export const CMD_SIZE_NORMAL: readonly number[] = [GS, 0x21, 0x00];
 
+/** GS ! 0x33 — 4× width + 4× height */
+export const CMD_SIZE_4X: readonly number[] = [GS, 0x21, 0x33];
+
 /** ESC ! 0x20 — Double width only (chars per line halved: 32 → 16) */
 export const CMD_SIZE_WIDE: readonly number[] = [ESC, 0x21, 0x20];
 
@@ -284,18 +287,20 @@ function _appendOrderBytes(
     parts.push(encodeText('\n'));
   }
 
-  // ── Per-order header: NAME #num (centred, double-width) + time (centred) ──
+  // ── Per-order header: NAME (double-width) + #num (double-width+height) ──
   const nameBase  = sanitizeForPrinter(order.clientName.toUpperCase());
-  const numSuffix = ' #' + String(ticketNumber);
-  const nameNum   = nameBase + numSuffix;
-
-  // Double-width gives 16 logical chars — truncate the name accordingly.
-  const nameWide = nameNum.slice(0, 16);
+  // Double-width gives 16 logical chars max for the name.
+  const nameWide  = nameBase.slice(0, 16);
+  // CMD_SIZE_DOUBLE (2× width + 2× height) → 8 logical chars per line.
+  const numLabel  = '#' + String(ticketNumber);
 
   parts.push(CMD_ALIGN_CENTER);
   parts.push(CMD_SIZE_WIDE);
   rawLine(nameWide);
   parts.push(CMD_SIZE_WIDE_OFF);
+  parts.push(CMD_SIZE_4X);
+  rawLine(numLabel);
+  parts.push(CMD_SIZE_NORMAL);
   if (orderIndex === 0) {
     const time = currentTime();
     rawLine(time);
