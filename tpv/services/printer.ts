@@ -16,7 +16,7 @@ import RNBluetoothClassic, {
 import { PermissionsAndroid, Platform } from 'react-native';
 
 import type { Session, Ticket } from '../lib/types';
-import { buildTicketBuffer, buildSessionSummaryBuffer } from './escpos';
+import { buildTicketBuffer, buildSessionSummaryBuffer, buildPromoBuffer } from './escpos';
 import { log, perf } from './logger';
 
 // ---------------------------------------------------------------------------
@@ -314,6 +314,40 @@ export async function printSessionSummary(
     const bytes = buildSessionSummaryBuffer(session, tickets, locationName);
     await writeBytes(bytes);
     log.info('PRINT', `session summary sent (${bytes.length}b)`);
+    return { ok: true };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    log.error('PRINT', msg);
+    return { ok: false, error: msg };
+  }
+}
+
+/**
+ * Prints N copies of the company logo followed by a custom message, one copy
+ * at a time so printing can be cancelled between copies.
+ *
+ * @param onProgress   Called after each successful copy: (printedSoFar, total).
+ * @param shouldContinue  Return false to stop before the next copy.
+ */
+export async function printPromo(
+  message: string,
+  copies: number,
+  validityDate?: string,
+  onProgress?: (current: number, total: number) => void,
+  shouldContinue?: () => boolean,
+): Promise<PrintResult> {
+  log.info('PRINT', `printPromo — ${copies} copia(s)`);
+  try {
+    for (let i = 1; i <= copies; i++) {
+      if (shouldContinue && !shouldContinue()) {
+        log.info('PRINT', `promo cancelado tras ${i - 1} copia(s)`);
+        return { ok: true };
+      }
+      const bytes = buildPromoBuffer(message, 1, validityDate);
+      await writeBytes(bytes);
+      log.info('PRINT', `promo copia ${i}/${copies} (${bytes.length}b)`);
+      onProgress?.(i, copies);
+    }
     return { ok: true };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

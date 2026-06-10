@@ -769,6 +769,58 @@ export function buildSessionSummaryBuffer(
 }
 
 // ---------------------------------------------------------------------------
+// Promotional flyer buffer — logo + custom message, N copies
+// ---------------------------------------------------------------------------
+
+/**
+ * Builds an ESC/POS buffer that prints N copies of the company logo followed
+ * by a centred custom message. Each copy ends with a full cut.
+ *
+ * @param message  Free-text message to print below the logo (word-wrapped).
+ * @param copies   Number of copies (clamped to 1–20).
+ */
+/** ESC d 5 — Feed 5 lines (~half of CMD_FEED_TOP), used between promo copies */
+const CMD_FEED_PROMO: readonly number[] = [ESC, 0x64, 0x05];
+
+function _todayDDMMYYYY(): string {
+  const d = new Date();
+  const dd   = String(d.getDate()).padStart(2, '0');
+  const mm   = String(d.getMonth() + 1).padStart(2, '0');
+  const yyyy = String(d.getFullYear());
+  return `${dd}/${mm}/${yyyy}`;
+}
+
+export function buildPromoBuffer(
+  message: string,
+  copies: number,
+  validityDate?: string,
+): Uint8Array {
+  const n    = Math.max(1, Math.floor(copies));
+  const date = validityDate?.trim() || _todayDDMMYYYY();
+  const parts: (readonly number[] | Uint8Array)[] = [];
+  const rawLine = (text: string) => parts.push(encodeText(text + '\n'));
+
+  parts.push(CMD_INIT, CMD_CODEPAGE_CP858);
+
+  for (let i = 0; i < n; i++) {
+    parts.push(CMD_FEED_PROMO);
+    parts.push(CMD_ALIGN_CENTER);
+    parts.push(LOGO_RASTER_BYTES);
+    rawLine('');
+    const wrapped = _wrapText(sanitizeForPrinter(message), CHARS_PER_LINE);
+    for (const line of wrapped) rawLine(line);
+    rawLine('');
+    const validity = _wrapText(`Válido únicamente el día ${date}`, CHARS_PER_LINE);
+    for (const line of validity) rawLine(line);
+    rawLine('Gracias por su visita');
+    parts.push(CMD_FEED);
+    parts.push(CMD_CUT);
+  }
+
+  return concatBytes(...parts);
+}
+
+// ---------------------------------------------------------------------------
 // Legacy string-tag payload (react-native-thermal-printer format)
 // No longer used for printing — kept for reference only.
 // ---------------------------------------------------------------------------
