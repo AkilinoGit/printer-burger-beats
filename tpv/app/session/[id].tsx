@@ -322,7 +322,10 @@ export function SessionDetailView({ sessionId }: SessionDetailProps): React.JSX.
     setClosing(true);
     try {
       await closeCurrentSession();
-      setSession((prev) => prev ? { ...prev, status: 'closed' } : prev);
+      // Reload from DB so the view reflects the real persisted state.
+      await loadData();
+    } catch {
+      Alert.alert('Error', 'No se pudo cerrar la sesión. Inténtalo de nuevo.');
     } finally {
       setClosing(false);
       setCloseDialogVisible(false);

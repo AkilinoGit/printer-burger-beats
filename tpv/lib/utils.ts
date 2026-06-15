@@ -44,6 +44,17 @@ export function currentTime(): string {
   return `${hh}:${mm}`;
 }
 
+export const SESSION_STALE_HOURS = 20;
+
+/**
+ * Returns true if a session's openedAt timestamp is older than SESSION_STALE_HOURS.
+ * Used to warn the user they may be writing tickets onto yesterday's session.
+ */
+export function isSessionStale(openedAt: string | null): boolean {
+  if (!openedAt) return false;
+  return Date.now() - new Date(openedAt).getTime() >= SESSION_STALE_HOURS * 60 * 60 * 1000;
+}
+
 // ---------------------------------------------------------------------------
 // Verdura modifier collapsing
 // ---------------------------------------------------------------------------

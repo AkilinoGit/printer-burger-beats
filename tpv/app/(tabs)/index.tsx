@@ -1,6 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { Alert, KeyboardAvoidingView, Modal, Platform, StyleSheet, View } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { ActivityIndicator, Banner, Button, Dialog, Portal, Text, TextInput } from 'react-native-paper';
 
 import CartSummary from '../../components/CartSummary';
@@ -12,6 +12,7 @@ import NewTicketScreen from '../ticket/NewTicketScreen';
 
 import type { Product } from '../../lib/types';
 import type { Order } from '../../lib/types';
+import { isSessionStale } from '../../lib/utils';
 import { useCartStore } from '../../stores/useCartStore';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useTicketStore } from '../../stores/useTicketStore';
@@ -34,9 +35,10 @@ export default function HomeScreen(): React.JSX.Element {
   const products          = useSessionStore((s) => s.products);
   const isLoadingProducts = useSessionStore((s) => s.isLoadingProducts);
   const loadProducts      = useSessionStore((s) => s.loadProducts);
-  const activeSession     = useSessionStore((s) => s.activeSession);
-  const nextTicketNumber  = useSessionStore((s) => s.nextTicketNumber);
-  const forcePrintTwice   = useSessionStore((s) => s.forcePrintTwice);
+  const activeSession       = useSessionStore((s) => s.activeSession);
+  const nextTicketNumber    = useSessionStore((s) => s.nextTicketNumber);
+  const forcePrintTwice     = useSessionStore((s) => s.forcePrintTwice);
+  const closeCurrentSession = useSessionStore((s) => s.closeCurrentSession);
 
   const clientName    = useCartStore((s) => s.clientName);
   const items         = useCartStore((s) => s.items);
@@ -59,6 +61,30 @@ export default function HomeScreen(): React.JSX.Element {
   // ── modifier maps ─────────────────────────────────────────────────────────
   const { labels: MODIFIER_LABELS, radioNoSelection: RADIO_NO_SELECTION, radioOptionSets: RADIO_OPTION_SETS } =
     useMemo(() => buildMaps(products.flatMap((p) => p.modifiers)), [products]);
+
+  // ── stale session warning ─────────────────────────────────────────────────
+  const [staleDialogVisible, setStaleDialogVisible] = useState(false);
+  const [closingStale, setClosingStale]             = useState(false);
+
+  useFocusEffect(useCallback(() => {
+    if (activeSession && isSessionStale(activeSession.openedAt)) {
+      setStaleDialogVisible(true);
+    }
+  }, [activeSession]));
+
+  async function handleCloseStaleSession(): Promise<void> {
+    setClosingStale(true);
+    try {
+      await closeCurrentSession();
+      setStaleDialogVisible(false);
+      router.navigate('/(tabs)/session');
+    } catch {
+      Alert.alert('Error', 'No se pudo cerrar la sesión. Inténtalo desde la pestaña Sesión.');
+      setStaleDialogVisible(false);
+    } finally {
+      setClosingStale(false);
+    }
+  }
 
   // ── modal state ───────────────────────────────────────────────────────────
   const [ticketVisible, setTicketVisible] = useState(false);
@@ -282,6 +308,29 @@ export default function HomeScreen(): React.JSX.Element {
         onConfirm={handleModifierConfirm}
         onDismiss={() => setSheetProduct(null)}
       />
+
+      {/* Stale session warning */}
+      <Portal>
+        <Dialog visible={staleDialogVisible} onDismiss={() => setStaleDialogVisible(false)}>
+          <Dialog.Title>Sesión antigua activa</Dialog.Title>
+          <Dialog.Content>
+            <Text>La sesión actual lleva más de 20 horas abierta. Los nuevos pedidos se añadirán a la sesión anterior.{'\n\n'}¿Quieres cerrarla y abrir una sesión nueva?</Text>
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button onPress={() => setStaleDialogVisible(false)} disabled={closingStale}>
+              Continuar así
+            </Button>
+            <Button
+              mode="contained"
+              onPress={() => void handleCloseStaleSession()}
+              loading={closingStale}
+              buttonColor="#E53935"
+            >
+              Cerrar y nueva sesión
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
+      </Portal>
 
       {/* OTROS dialog */}
       <Portal>

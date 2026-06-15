@@ -449,12 +449,15 @@ export default function SessionScreen(): React.JSX.Element {
 
   useEffect(() => { void loadData(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Refresh active session summary every time the tab comes into focus
+  // Reload history list and session summary every time the tab gains focus.
+  // Needed because SessionDetailView can close the session without going through
+  // this screen's loadData (inline render case introduced in eb18125).
   useFocusEffect(useCallback(() => {
+    void loadData();
     if (activeSession?.id) {
       getSessionSummary(activeSession.id).then(setActiveSummary).catch(() => {});
     }
-  }, [activeSession?.id]));
+  }, [activeSession?.id])); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── open session ──────────────────────────────────────────────────────────
   function handleOpenSessionPress(): void {

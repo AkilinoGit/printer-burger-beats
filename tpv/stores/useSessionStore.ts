@@ -132,11 +132,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   closeCurrentSession: async () => {
     const session = useSessionStore.getState().activeSession;
     if (!session) return;
-    try {
-      await closeSession(session.id);
-    } catch {
-      // DB error — still clear the store so UI stays consistent
-    }
+    // Let the error propagate so the caller can show feedback.
+    // Never clear the store unless the DB write succeeds — otherwise memory
+    // and disk diverge and the session appears "open" again on next launch.
+    await closeSession(session.id);
     set({ activeSession: null, lastTicketNumber: 0 });
   },
 

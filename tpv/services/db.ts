@@ -875,8 +875,14 @@ export async function getActiveSession(): Promise<Session | null> {
   const session = mapSession(row);
 
   if (session.autoCloseAt && session.autoCloseAt <= now) {
-    // Session has expired — close it automatically
-    await closeSession(session.id);
+    // Session has expired — try to close it. If the write fails, leave the
+    // session open in memory rather than silently losing it; the next call
+    // will retry and the UI will still see the session as closeable.
+    try {
+      await closeSession(session.id);
+    } catch {
+      return session;
+    }
     return null;
   }
 
