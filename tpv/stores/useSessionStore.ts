@@ -6,6 +6,9 @@ import { closeSession, getActiveSession, getNextTicketNumber, getProducts, initD
 
 const FERIANTE_PRICES_KEY = 'tpv:feriantePrices';
 const FORCE_PRINT_TWICE_KEY = 'tpv:forcePrintTwice';
+const PRINT_MODE_KEY = 'tpv:printMode';
+
+export type PrintCopies = 'x1' | 'x2';
 
 interface SessionState {
   // --- data ---
@@ -16,6 +19,10 @@ interface SessionState {
   feriantePrices: Record<string, number>;
   /** When true, every print is forced to emit two copies (as if "Imprimir 2x" were always on). */
   forcePrintTwice: boolean;
+  /** Red toggle in the order summary: when true the "Imprimir" action saves the order but does NOT print. */
+  printNoPrint: boolean;
+  /** Blue toggle in the order summary: how many copies to print when printNoPrint is false. */
+  printCopies: PrintCopies;
   /** Last ticket number used in the active session. Incremented in-memory — no DB query needed. */
   lastTicketNumber: number;
 
@@ -67,6 +74,17 @@ interface SessionState {
   loadForcePrintTwice: () => Promise<void>;
   /** Update forcePrintTwice flag and persist to AsyncStorage. */
   setForcePrintTwice: (value: boolean) => Promise<void>;
+
+  // --- print mode (order summary toggles) ---
+  /** Load persisted print mode (red/blue toggles) from AsyncStorage. Call once on app start. */
+  loadPrintMode: () => Promise<void>;
+  /** Activate the red "no print" toggle (deactivates the blue copies toggle). */
+  setPrintNoPrint: () => Promise<void>;
+  /**
+   * Press the blue copies toggle: if "no print" was active it resumes the last copies value;
+   * otherwise it alternates between x1 and x2. Always deactivates the red toggle.
+   */
+  togglePrintCopies: () => Promise<void>;
 }
 
 export const useSessionStore = create<SessionState>((set, get) => ({
@@ -76,6 +94,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   isLoadingProducts: true,
   feriantePrices: DEFAULT_FERIANTE_PRICES,
   forcePrintTwice: false,
+  printNoPrint: false,
+  printCopies: 'x1',
   lastTicketNumber: 0,
 
   setActiveLocation: (location) => set({ activeLocation: location }),
@@ -117,6 +137,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       await initDb();
       // Restore persisted forcePrintTwice flag — fire-and-forget, defaults to false
       void get().loadForcePrintTwice();
+      // Restore persisted print mode (red/blue toggles) — fire-and-forget
+      void get().loadPrintMode();
       const [session, products] = await Promise.all([getActiveSession(), getProducts()]);
       if (session) {
         const lastNum = await getNextTicketNumber(session.id) - 1;
@@ -184,4 +206,41 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       // silently ignore
     }
   },
+
+  loadPrintMode: async () => {
+    try {
+      const stored = await AsyncStorage.getItem(PRINT_MODE_KEY);
+      if (stored !== null) {
+        const parsed = JSON.parse(stored) as { noPrint?: boolean; copies?: PrintCopies };
+        set({
+          printNoPrint: parsed.noPrint === true,
+          printCopies: parsed.copies === 'x2' ? 'x2' : 'x1',
+        });
+      }
+    } catch {
+      // silently ignore — defaults to { noPrint: false, copies: 'x1' }
+    }
+  },
+
+  setPrintNoPrint: async () => {
+    set({ printNoPrint: true });
+    await persistPrintMode(get);
+  },
+
+  togglePrintCopies: async () => {
+    const { printNoPrint, printCopies } = get();
+    // Resume previous copies value when coming back from "no print"; otherwise flip x1<->x2.
+    const nextCopies: PrintCopies = printNoPrint ? printCopies : (printCopies === 'x1' ? 'x2' : 'x1');
+    set({ printNoPrint: false, printCopies: nextCopies });
+    await persistPrintMode(get);
+  },
 }));
+
+async function persistPrintMode(get: () => SessionState): Promise<void> {
+  const { printNoPrint, printCopies } = get();
+  try {
+    await AsyncStorage.setItem(PRINT_MODE_KEY, JSON.stringify({ noPrint: printNoPrint, copies: printCopies }));
+  } catch {
+    // silently ignore
+  }
+}

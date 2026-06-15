@@ -118,12 +118,14 @@ export interface NewTicketProps {
   actionState: 'idle' | 'printing';
   isBusy: boolean;
   hasItems: boolean;
-  printTwice: boolean;
+  printNoPrint: boolean;
+  printCopies: 'x1' | 'x2';
   modifierLabels: Record<string, string>;
   products: Product[];
   onCobrar: () => void;
   onPrint: () => void;
-  onTogglePrintTwice: () => void;
+  onPressNoPrint: () => void;
+  onPressCopies: () => void;
   onIncrementItem: (id: string) => void;
   onDecrementItem: (id: string) => void;
   onRemoveItem: (id: string) => void;
@@ -134,9 +136,9 @@ export interface NewTicketProps {
 
 export default function NewTicketScreen({
   clientName, cartItems, cartTotal,
-  paidAmount, paidChange, actionState, isBusy, hasItems, printTwice, modifierLabels,
+  paidAmount, paidChange, actionState, isBusy, hasItems, printNoPrint, printCopies, modifierLabels,
   onCobrar,
-  onPrint, onTogglePrintTwice,
+  onPrint, onPressNoPrint, onPressCopies,
   onIncrementItem, onDecrementItem, onRemoveItem,
   onSetClientName, onAddProduct, products,
   onBack: _onBack,
@@ -263,25 +265,41 @@ export default function NewTicketScreen({
             {paidAmount !== null ? 'Recobrar' : 'Cobrar'}
           </Button>
           <View style={styles.btnRow}>
+            {/* Red "no print" toggle — circle crossed out */}
             <Button
-              mode={printTwice ? 'contained' : 'outlined'}
-              onPress={onTogglePrintTwice}
+              mode="contained"
+              onPress={onPressNoPrint}
               disabled={isBusy}
-              buttonColor={printTwice ? '#1E88E5' : undefined}
-              textColor={printTwice ? '#fff' : '#1E88E5'}
-              style={[styles.btn, styles.btnHalf, !printTwice && styles.btnOutlineBlue]}
+              buttonColor={printNoPrint ? '#E53935' : '#7A2E2E'}
+              textColor={printNoPrint ? '#fff' : '#F0B4B4'}
+              style={[styles.btn, styles.btnToggle]}
               contentStyle={styles.btnContent}
               labelStyle={styles.btnLabel}
-              icon={printTwice ? 'check-bold' : 'checkbox-blank-outline'}
+              icon="cancel"
             >
-              Imprimir 2x
+              {''}
             </Button>
+            {/* Blue copies toggle — alternates x1 / x2 */}
+            <Button
+              mode="contained"
+              onPress={onPressCopies}
+              disabled={isBusy}
+              buttonColor={!printNoPrint ? '#1E88E5' : '#14385C'}
+              textColor={!printNoPrint ? '#fff' : '#9CC4E8'}
+              style={[styles.btn, styles.btnToggle]}
+              contentStyle={styles.btnContent}
+              labelStyle={styles.btnLabel}
+              icon="printer"
+            >
+              {printCopies === 'x2' ? '2x' : '1x'}
+            </Button>
+            {/* Print action */}
             <Button
               mode="contained"
               onPress={onPrint}
               disabled={!hasItems || isBusy}
               buttonColor="#E53935"
-              style={[styles.btn, styles.btnHalf]}
+              style={[styles.btn, styles.btnPrint]}
               contentStyle={styles.btnContent}
               labelStyle={styles.btnLabel}
               icon={actionState === 'printing' ? undefined : 'printer'}
@@ -393,10 +411,10 @@ const styles = StyleSheet.create({
 
   actions: { backgroundColor: '#fff' },
   actionsInner: { padding: 12, gap: 10 },
-  btnRow: { flexDirection: 'row', gap: 10 },
+  btnRow: { flexDirection: 'row', gap: 10, alignItems: 'center' },
   btn: { borderRadius: 10 },
-  btnHalf: { flex: 1 },
-  btnOutlineBlue: { borderColor: '#1E88E5', borderWidth: 1.5 },
+  btnToggle: { minWidth: 0 },
+  btnPrint: { flex: 1 },
   btnContent: { height: 56 },
   btnLabel: { fontSize: 16, fontWeight: '800', letterSpacing: 0.3 },
 

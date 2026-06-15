@@ -38,6 +38,10 @@ export default function HomeScreen(): React.JSX.Element {
   const activeSession       = useSessionStore((s) => s.activeSession);
   const nextTicketNumber    = useSessionStore((s) => s.nextTicketNumber);
   const forcePrintTwice     = useSessionStore((s) => s.forcePrintTwice);
+  const printNoPrint        = useSessionStore((s) => s.printNoPrint);
+  const printCopies         = useSessionStore((s) => s.printCopies);
+  const setPrintNoPrint     = useSessionStore((s) => s.setPrintNoPrint);
+  const togglePrintCopies   = useSessionStore((s) => s.togglePrintCopies);
   const closeCurrentSession = useSessionStore((s) => s.closeCurrentSession);
 
   const clientName    = useCartStore((s) => s.clientName);
@@ -94,7 +98,6 @@ export default function HomeScreen(): React.JSX.Element {
   const [paidAmount, setPaidAmount]         = useState<number | null>(null);
   const [paidChange, setPaidChange]         = useState<number | null>(null);
   const [actionState, setActionState]       = useState<ActionState>('idle');
-  const [printTwice, setPrintTwice]         = useState(false);
 
   // ── modifier sheet state (index grid) ────────────────────────────────────
   const [sheetProduct, setSheetProduct] = useState<Product | null>(null);
@@ -158,29 +161,30 @@ export default function HomeScreen(): React.JSX.Element {
       const currentTicket = useTicketStore.getState().activeTicket;
       if (!currentTicket) throw new Error('Ticket no encontrado en store');
 
-      const effectiveTwice = printTwice || forcePrintTwice;
-      log.info('TICKET', 'printing', { twice: effectiveTwice, forced: forcePrintTwice });
+      const effectiveTwice = printCopies === 'x2' || forcePrintTwice;
+      log.info('TICKET', 'printing', { noPrint: printNoPrint, twice: effectiveTwice, forced: forcePrintTwice });
 
-      const normalPrices: Record<string, number> = {};
-      for (const p of products) {
-        normalPrices[p.id] = activeSession?.priceOverrides[p.id] ?? p.basePrice;
+      // Red "no print" toggle: save and finalize the order but skip the physical print.
+      if (!printNoPrint) {
+        const normalPrices: Record<string, number> = {};
+        for (const p of products) {
+          normalPrices[p.id] = activeSession?.priceOverrides[p.id] ?? p.basePrice;
+        }
+        const result = await printTicket(currentTicket, false, MODIFIER_LABELS, RADIO_NO_SELECTION, RADIO_OPTION_SETS, effectiveTwice, normalPrices);
+        if (!result.ok) {
+          Alert.alert('Error de impresión', result.error ?? 'No se pudo conectar con la impresora',
+            [{ text: 'Continuar', style: 'default' }]);
+        }
       }
-      const result = await printTicket(currentTicket, false, MODIFIER_LABELS, RADIO_NO_SELECTION, RADIO_OPTION_SETS, effectiveTwice, normalPrices);
 
       await markTicketPrinted(currentTicket.id);
       markPrinted();
       doneAll();
 
-      if (!result.ok) {
-        Alert.alert('Error de impresión', result.error ?? 'No se pudo conectar con la impresora',
-          [{ text: 'Continuar', style: 'default' }]);
-      }
-
       clearActiveTicket();
       clearCart();
       setPaidAmount(null);
       setPaidChange(null);
-      setPrintTwice(false);
       setTicketVisible(false);
     } catch (e) {
       log.error('TICKET', 'handlePrint failed', e instanceof Error ? e.message : String(e));
@@ -386,12 +390,14 @@ export default function HomeScreen(): React.JSX.Element {
             actionState={actionState}
             isBusy={isBusy}
             hasItems={hasItems}
-            printTwice={printTwice}
+            printNoPrint={printNoPrint}
+            printCopies={printCopies}
             modifierLabels={MODIFIER_LABELS}
             products={products}
             onCobrar={handleCobrar}
             onPrint={() => void handlePrint()}
-            onTogglePrintTwice={() => setPrintTwice((v) => !v)}
+            onPressNoPrint={() => void setPrintNoPrint()}
+            onPressCopies={() => void togglePrintCopies()}
             onIncrementItem={incrementItem}
             onDecrementItem={decrementItem}
             onRemoveItem={removeItem}
