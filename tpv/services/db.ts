@@ -19,7 +19,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 const DB_NAME = 'tpv_v12.db';
-const SCHEMA_VERSION = 23;
+const SCHEMA_VERSION = 24;
 
 let _db: SQLite.SQLiteDatabase | null = null;
 let _initPromise: Promise<void> | null = null;
@@ -129,6 +129,9 @@ export async function initDb(): Promise<void> {
     }
     if (currentVersion < 23) {
       await migrate_v23(db); // clear always_show_modifiers for patatas
+    }
+    if (currentVersion < 24) {
+      await migrate_v24(db); // rescate: cierra sesiones huérfanas que quedaron 'open' tras un auto-cierre fallido
     }
     await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
 
@@ -492,6 +495,38 @@ async function migrate_v23(db: SQLite.SQLiteDatabase): Promise<void> {
   );
 }
 
+/**
+ * Rescate de sesiones huérfanas.
+ *
+ * Antes, getActiveSession solo evaluaba para auto-cierre la sesión 'open' más
+ * reciente (ORDER BY opened_at DESC LIMIT 1). Si una sesión no se cerraba bien y
+ * luego se abría otra más nueva, la antigua quedaba tapada: ni era la "activa"
+ * ni aparecía en el historial (que filtra status='closed'). Invisible para siempre,
+ * aunque sus tickets y totales siguen en la BD.
+ *
+ * Esta migración cierra de una vez TODAS las sesiones 'open' ya expiradas
+ * (auto_close_at en el pasado), dándoles closed_at = hora del último ticket de la
+ * sesión (o auto_close_at si no llegó a tener tickets). Así reaparecen en el
+ * historial con una fecha de cierre coherente. Nunca toca una sesión vigente.
+ */
+async function migrate_v24(db: SQLite.SQLiteDatabase): Promise<void> {
+  const now = new Date().toISOString();
+  await db.runAsync(
+    `UPDATE sessions
+        SET status = 'closed',
+            closed_at = COALESCE(
+              (SELECT MAX(t.created_at) FROM tickets t WHERE t.session_id = sessions.id),
+              auto_close_at,
+              opened_at,
+              created_at
+            )
+      WHERE status = 'open'
+        AND auto_close_at IS NOT NULL
+        AND auto_close_at <= ?`,
+    [now],
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Session helpers
 // ---------------------------------------------------------------------------
@@ -823,6 +858,13 @@ export async function getOpenSession(locationId: string): Promise<Session | null
 export async function insertSession(locationId: string, priceOverrides: Record<string, number> = {}, deviceId?: string): Promise<Session> {
   const db = await getDb();
   const now = new Date();
+  const baseCode = generateSessionCode(now);
+  const countRow = await db.getFirstAsync<{ n: number }>(
+    "SELECT COUNT(*) as n FROM sessions WHERE session_code = ? OR session_code LIKE ?",
+    [baseCode, baseCode + '-%'],
+  );
+  const count = countRow?.n ?? 0;
+  const sessionCode = count === 0 ? baseCode : `${baseCode}-${count + 1}`;
   const session: Session = {
     id: generateId(),
     locationId,
@@ -830,7 +872,7 @@ export async function insertSession(locationId: string, priceOverrides: Record<s
     status: 'open',
     priceOverrides,
     createdAt: now.toISOString(),
-    sessionCode: generateSessionCode(now),
+    sessionCode,
     openedAt: now.toISOString(),
     autoCloseAt: calculateAutoCloseAt(now),
     closedAt: null,
@@ -867,26 +909,36 @@ export async function getActiveSession(): Promise<Session | null> {
   const db = await getDb();
   const now = new Date().toISOString();
 
+  // Cierra de una vez TODAS las sesiones 'open' ya expiradas — no solo la más
+  // reciente. Antes, varias sesiones abiertas simultáneas dejaban huérfanas a
+  // todas menos la última (invisibles en el historial, que filtra status='closed').
+  // Un único UPDATE: en el caso normal el WHERE no encaja con ninguna fila, así
+  // que no escribe nada ni evalúa el subquery — coste despreciable.
+  // closed_at = hora del último ticket (o auto_close_at si la sesión no tuvo tickets).
+  try {
+    await db.runAsync(
+      `UPDATE sessions
+          SET status = 'closed',
+              closed_at = COALESCE(
+                (SELECT MAX(t.created_at) FROM tickets t WHERE t.session_id = sessions.id),
+                auto_close_at
+              )
+        WHERE status = 'open'
+          AND auto_close_at IS NOT NULL
+          AND auto_close_at <= ?`,
+      [now],
+    );
+  } catch {
+    // Si el cierre masivo falla, no abortamos: el SELECT de abajo devolverá la
+    // sesión expirada todavía como 'open' para que la UI permita cerrarla a mano.
+  }
+
   const row = await db.getFirstAsync<SessionRow>(
     "SELECT * FROM sessions WHERE status = 'open' ORDER BY opened_at DESC LIMIT 1",
   );
   if (!row) return null;
 
-  const session = mapSession(row);
-
-  if (session.autoCloseAt && session.autoCloseAt <= now) {
-    // Session has expired — try to close it. If the write fails, leave the
-    // session open in memory rather than silently losing it; the next call
-    // will retry and the UI will still see the session as closeable.
-    try {
-      await closeSession(session.id);
-    } catch {
-      return session;
-    }
-    return null;
-  }
-
-  return session;
+  return mapSession(row);
 }
 
 export async function getSessions(locationId?: string): Promise<Session[]> {
