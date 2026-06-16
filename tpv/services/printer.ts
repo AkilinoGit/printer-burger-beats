@@ -53,6 +53,8 @@ function failResult(e: unknown): PrintResult {
 export interface PrinterDevice {
   name: string;
   address: string;
+  /** Nombre propio asignado por el usuario (persistido por MAC). */
+  alias?: string;
 }
 
 export interface ScanResult {
@@ -74,15 +76,23 @@ export interface ConnectResult {
 
 const STORAGE_KEY_ADDRESS = 'printer.address';
 const STORAGE_KEY_NAME    = 'printer.name';
+const STORAGE_KEY_ALIASES = 'printer.aliases';   // JSON { [address]: alias }
 
 let cachedAddress: string | null = null;
 let cachedName:    string | null = null;
 let cacheLoaded = false;
 
+let cachedAliases: Record<string, string> | null = null;
+
 let connectedDevice: BluetoothDevice | null = null;
 
 // SPP UUID for serial-over-Bluetooth (standard for ESC/POS thermal printers)
 const SPP_UUID = '00001101-0000-1000-8000-00805F9B34FB';
+
+// Max time we wait for a Bluetooth connection before giving up. Without this,
+// connecting to a powered-off printer hangs for a long time before the native
+// layer surfaces a "printer null" error.
+const CONNECT_TIMEOUT_MS = 8000;
 
 // ---------------------------------------------------------------------------
 // Persistence
@@ -104,10 +114,53 @@ async function loadCache(): Promise<void> {
   cacheLoaded = true;
 }
 
+async function loadAliases(): Promise<Record<string, string>> {
+  if (cachedAliases) return cachedAliases;
+  try {
+    const raw = await AsyncStorage.getItem(STORAGE_KEY_ALIASES);
+    cachedAliases = raw ? (JSON.parse(raw) as Record<string, string>) : {};
+  } catch {
+    cachedAliases = {};
+  }
+  return cachedAliases;
+}
+
+/** Devuelve el alias guardado para una MAC, o null si no tiene. */
+export async function getAlias(address: string): Promise<string | null> {
+  const aliases = await loadAliases();
+  return aliases[address] ?? null;
+}
+
+/** Guarda (o borra, si se pasa vacío) el alias de una MAC. */
+export async function setAlias(address: string, alias: string): Promise<void> {
+  const aliases = await loadAliases();
+  const trimmed = alias.trim();
+  if (trimmed) aliases[address] = trimmed;
+  else delete aliases[address];
+  cachedAliases = aliases;
+  await AsyncStorage.setItem(STORAGE_KEY_ALIASES, JSON.stringify(aliases));
+  log.info('PRINT', `alias ${trimmed ? 'set' : 'cleared'} for ${address}: ${trimmed || '(none)'}`);
+}
+
 export async function getPairedPrinter(): Promise<PrinterDevice | null> {
   await loadCache();
   if (!cachedAddress) return null;
-  return { address: cachedAddress, name: cachedName ?? cachedAddress };
+  const alias = await getAlias(cachedAddress);
+  return {
+    address: cachedAddress,
+    name: cachedName ?? cachedAddress,
+    alias: alias ?? undefined,
+  };
+}
+
+/** True si hay un socket abierto y vivo con la impresora actual. */
+export async function isPrinterConnected(): Promise<boolean> {
+  if (!connectedDevice) return false;
+  try {
+    return await connectedDevice.isConnected();
+  } catch {
+    return false;
+  }
 }
 
 /** Legacy sync accessor — returns last cached value without loading. */
@@ -211,9 +264,11 @@ export async function scanPrinters(): Promise<ScanResult> {
     }
 
     const devices = await RNBluetoothClassic.getBondedDevices();
+    const aliases = await loadAliases();
     const mapped: PrinterDevice[] = devices.map((d) => ({
       name: d.name ?? d.address,
       address: d.address,
+      alias: aliases[d.address],
     }));
     log.info('PRINT', `found ${mapped.length} paired device(s)`);
     return { ok: true, devices: mapped };
@@ -242,14 +297,37 @@ async function openConnection(address: string): Promise<BluetoothDevice> {
   // Drop any stale connection
   await disconnectPrinter();
 
-  const device = await RNBluetoothClassic.connectToDevice(address, {
-    CONNECTOR_TYPE: 'rfcomm',
-    DELIMITER: '',
-    DEVICE_CHARSET: 'utf-8',
-    SECURE_SOCKET: false,
-    CONNECTION_TYPE: 'binary',
-    UUID: SPP_UUID,
-  } as any);
+  // Bound the connect attempt: a powered-off / out-of-range printer otherwise
+  // hangs for a long time before the native layer reports failure.
+  const device = await new Promise<BluetoothDevice>((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      settled = true;
+      reject(new Error(
+        'No se pudo conectar (tiempo de espera agotado). ¿Está encendida y al alcance la impresora?',
+      ));
+    }, CONNECT_TIMEOUT_MS);
+
+    RNBluetoothClassic.connectToDevice(address, {
+      CONNECTOR_TYPE: 'rfcomm',
+      DELIMITER: '',
+      DEVICE_CHARSET: 'utf-8',
+      SECURE_SOCKET: false,
+      CONNECTION_TYPE: 'binary',
+      UUID: SPP_UUID,
+    } as any).then(
+      (d) => {
+        clearTimeout(timer);
+        // If it arrives after the timeout already fired, drop the late socket.
+        if (settled) { void d.disconnect().catch(() => {}); return; }
+        resolve(d);
+      },
+      (e) => {
+        clearTimeout(timer);
+        if (!settled) reject(e);
+      },
+    );
+  });
 
   connectedDevice = device;
   return device;

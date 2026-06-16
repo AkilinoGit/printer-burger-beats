@@ -8,7 +8,7 @@ App móvil TPV (Terminal Punto de Venta) para una hamburguesería. Genera comand
 - **Stack**: React Native + Expo SDK 52, TypeScript estricto
 - **BD local**: expo-sqlite (offline-first)
 - **Backend**: por definir — la app funciona sin él. El sync queda en cola local hasta que exista API.
-- **Impresión**: RawBT vía Android Intents (`expo-intent-launcher`) — ver sección impresión
+- **Impresión**: conexión Bluetooth directa (Bluetooth Classic/SPP) con `react-native-bluetooth-classic` — la app envía los bytes ESC/POS directamente a la impresora, ver sección impresión
 - **Gestión de estado**: Zustand
 - **Navegación**: Expo Router (file-based)
 
@@ -167,7 +167,7 @@ Activable desde Ajustes (toggle). Cuando está activo:
       |
       +---> [IMPRIMIR]      → cierra el Ticket
                               genera ESC/POS con TODOS los Orders del Ticket
-                              envía a RawBT vía Intent
+                              abre conexión Bluetooth directa y envía los bytes
                               persiste en SQLite + intenta sync
 ```
 
@@ -183,30 +183,33 @@ Activable desde Ajustes (toggle). Cuando está activo:
 
 ---
 
-## Impresión ESC/POS vía RawBT
+## Impresión ESC/POS vía Bluetooth directo
 
-**Arquitectura**: la app genera bytes ESC/POS raw, los codifica en Base64 y los envía a la app RawBT instalada en Android mediante `expo-intent-launcher`. RawBT gestiona la conexión Bluetooth con la impresora.
+**Arquitectura**: la app genera bytes ESC/POS raw y los envía **directamente** a la impresora por Bluetooth Classic (SPP) usando `react-native-bluetooth-classic`. Ya **no se usa RawBT** ni `expo-intent-launcher` — la conexión Bluetooth la gestiona la propia app. La impresora seleccionada (su MAC) se guarda y cachea localmente.
 
-**No se necesitan permisos Bluetooth** en la app — RawBT los gestiona por su cuenta.
+**Sí se necesitan permisos Bluetooth** en la app (Android): `BLUETOOTH_CONNECT` / `BLUETOOTH_SCAN` (Android 12+) y emparejamiento previo de la impresora desde los ajustes del sistema.
 
-### Método de Intent activo (en `services/printer.ts`)
+### Envío directo (en `services/printer.ts`)
+
+Todo el envío físico pasa por un único `writeBytes(bytes)`:
 
 ```typescript
-// Método principal (printTicket usa este):
-await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
-  data: 'rawbt:base64,' + base64Data,
-  packageName: 'ru.a402d.rawbtprinter',
-});
+// 1. Recupera la MAC cacheada de la impresora seleccionada (loadCache)
+// 2. Abre/reusa la conexión SPP con openConnection(cachedAddress)
+// 3. device.write(base64Data, 'base64') — la capa nativa decodifica y emite los bytes
 ```
 
-Hay un segundo método de diagnóstico (`diagMethod2`) con intent: URI scheme como fallback.
-Ambos son testables desde Ajustes con el botón "Test Intent (diagnóstico)".
+`writeBytes` es además el único punto donde se controla el overlay global de impresión
+(contador de ms + botón Cancelar), de modo que una conexión colgada se puede abortar
+(`PrintCancelledError` / `withCancel`). En cancelación se cierra el socket con `disconnectPrinter()`.
+
+La impresora se selecciona/empareja y se prueba desde Ajustes → Impresora (`printTest()`).
 
 ### Generación de bytes (`services/escpos.ts`)
 
-- `buildTicketBuffer(ticket, isTest, modifierLabels)` → `Uint8Array` de bytes ESC/POS reales
+- `buildTicketBuffer(ticket, isTest, modifierLabels, repeatContent, normalPrices)` → `Uint8Array` de bytes ESC/POS reales
 - `buildTicketCommands(...)` → string con tags `[B]`/`[C]` (legado, ya no se usa para imprimir)
-- Los bytes se convierten a Base64 en `printer.ts` con `_uint8ArrayToBase64()`
+- Antes de enviarlos, `writeBytes` los convierte a Base64 con `_uint8ArrayToBase64()` (la API nativa los recibe en base64)
 
 ### Formato ticket de cocina
 
@@ -265,7 +268,7 @@ app/
   (tabs)/
     index.tsx          ← pantalla principal / selección de productos
     session.tsx        ← gestión de sesión del día + historial de tickets
-    settings.tsx       ← ajustes, impresora RawBT, sync, precios feriante, locales
+    settings.tsx       ← ajustes, impresora Bluetooth, sync, precios feriante, locales
   ticket/
     [id].tsx           ← revisión/edición de ticket activo
   session/
@@ -284,7 +287,7 @@ stores/
 services/
   db.ts               ← expo-sqlite: init, migrations, CRUD
   sync.ts             ← lógica de sync (preparada para API futura)
-  printer.ts          ← impresión vía RawBT Intent + funciones de diagnóstico
+  printer.ts          ← impresión vía Bluetooth directo (react-native-bluetooth-classic) + diagnóstico
   escpos.ts           ← generación de bytes ESC/POS y string commands (legado)
 lib/
   types.ts            ← todos los tipos TypeScript
@@ -301,9 +304,9 @@ lib/
   "expo": "~52.0.0",
   "expo-sqlite": "~14.0.0",
   "expo-router": "~4.0.0",
-  "expo-intent-launcher": "~12.0.2",
+  "react-native-bluetooth-classic": "^1.73.0-rc.17",
+  "expo-intent-launcher": "~12.0.2 (instalado, ya NO se usa para imprimir)",
   "zustand": "^5.0.12",
-  "react-native-thermal-printer": "(instalado pero sin usar — reservado)",
   "react-native-paper": "^5.15.0"
 }
 ```

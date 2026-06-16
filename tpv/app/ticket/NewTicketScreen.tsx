@@ -11,7 +11,9 @@ import {
   Surface,
   Text,
   TextInput,
+  TouchableRipple,
 } from 'react-native-paper';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import ProductGrid from '../../components/ProductGrid';
@@ -103,6 +105,60 @@ const editItemStyles = StyleSheet.create({
   controls: { flexDirection: 'row', alignItems: 'center', gap: 0 },
   iconBtn: { margin: 0 },
   qty: { fontSize: 17, fontWeight: '800', color: '#111', minWidth: 24, textAlign: 'center' },
+});
+
+// ---------------------------------------------------------------------------
+// ToggleSquare — square toggle button used in the print-action row.
+//
+// Selected   → solid fill in `color`, white icon/label.
+// Unselected → white background with a `color` outline and `color` icon/label
+//              (clean "segmented" look instead of a muddy dark fill).
+// The icon is centered and sized to fill the button; an optional label sits
+// underneath it.
+// ---------------------------------------------------------------------------
+
+function ToggleSquare({
+  icon, label, active, color, iconSize, disabled, onPress,
+}: {
+  icon: React.ComponentProps<typeof MaterialCommunityIcons>['name'];
+  label?: string;
+  active: boolean;
+  color: string;
+  iconSize: number;
+  disabled: boolean;
+  onPress: () => void;
+}): React.JSX.Element {
+  const fg = active ? '#fff' : color;
+  return (
+    <TouchableRipple
+      onPress={onPress}
+      disabled={disabled}
+      borderless
+      style={[
+        toggleStyles.square,
+        { borderColor: color, backgroundColor: active ? color : '#fff' },
+        disabled && toggleStyles.disabled,
+      ]}
+    >
+      <View style={toggleStyles.inner}>
+        <MaterialCommunityIcons name={icon} size={iconSize} color={fg} />
+        {label ? <Text style={[toggleStyles.label, { color: fg }]}>{label}</Text> : null}
+      </View>
+    </TouchableRipple>
+  );
+}
+
+const toggleStyles = StyleSheet.create({
+  square: {
+    width: 68,
+    height: 56,
+    borderRadius: 10,
+    borderWidth: 2,
+    overflow: 'hidden',
+  },
+  inner: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  label: { fontSize: 14, fontWeight: '800', letterSpacing: 0.3, marginTop: 1 },
+  disabled: { opacity: 0.4 },
 });
 
 // ---------------------------------------------------------------------------
@@ -265,34 +321,25 @@ export default function NewTicketScreen({
             {paidAmount !== null ? 'Recobrar' : 'Cobrar'}
           </Button>
           <View style={styles.btnRow}>
-            {/* Red "no print" toggle — circle crossed out */}
-            <Button
-              mode="contained"
-              onPress={onPressNoPrint}
-              disabled={isBusy}
-              buttonColor={printNoPrint ? '#E53935' : '#7A2E2E'}
-              textColor={printNoPrint ? '#fff' : '#F0B4B4'}
-              style={[styles.btn, styles.btnToggle]}
-              contentStyle={styles.btnContent}
-              labelStyle={styles.btnLabel}
+            {/* Red "no print" toggle — big centered crossed-out symbol */}
+            <ToggleSquare
               icon="cancel"
-            >
-              {''}
-            </Button>
-            {/* Blue copies toggle — alternates x1 / x2 */}
-            <Button
-              mode="contained"
-              onPress={onPressCopies}
+              active={printNoPrint}
+              color="#E53935"
+              iconSize={40}
               disabled={isBusy}
-              buttonColor={!printNoPrint ? '#1E88E5' : '#14385C'}
-              textColor={!printNoPrint ? '#fff' : '#9CC4E8'}
-              style={[styles.btn, styles.btnToggle]}
-              contentStyle={styles.btnContent}
-              labelStyle={styles.btnLabel}
+              onPress={onPressNoPrint}
+            />
+            {/* Blue copies toggle — alternates x1 / x2 */}
+            <ToggleSquare
               icon="printer"
-            >
-              {printCopies === 'x2' ? '2x' : '1x'}
-            </Button>
+              label={printCopies === 'x2' ? '2x' : '1x'}
+              active={!printNoPrint}
+              color="#1E88E5"
+              iconSize={22}
+              disabled={isBusy}
+              onPress={onPressCopies}
+            />
             {/* Print action */}
             <Button
               mode="contained"
@@ -413,7 +460,6 @@ const styles = StyleSheet.create({
   actionsInner: { padding: 12, gap: 10 },
   btnRow: { flexDirection: 'row', gap: 10, alignItems: 'center' },
   btn: { borderRadius: 10 },
-  btnToggle: { minWidth: 0 },
   btnPrint: { flex: 1 },
   btnContent: { height: 56 },
   btnLabel: { fontSize: 16, fontWeight: '800', letterSpacing: 0.3 },

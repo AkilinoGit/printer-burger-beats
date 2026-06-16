@@ -12,6 +12,7 @@ import {
   Dialog,
   Divider,
   Icon,
+  IconButton,
   Portal,
   Surface,
   Switch,
@@ -28,10 +29,23 @@ import {
   updateLocation,
   updateProductBasePrice,
 } from '../../services/db';
-import { getPairedPrinter, printTest, printPromo, type PrinterDevice } from '../../services/printer';
+import {
+  clearPairedPrinter,
+  getPairedPrinter,
+  isPrinterConnected,
+  printPromo,
+  printTest,
+  setAlias,
+  type PrinterDevice,
+} from '../../services/printer';
 import { DEFAULT_FERIANTE_PRICES } from '../../lib/constants';
 import type { Location } from '../../lib/types';
 import StableTextInput from '../../components/StableTextInput';
+
+/** Etiqueta a mostrar: alias del usuario si existe, si no el nombre Bluetooth. */
+function labelOf(d: PrinterDevice): string {
+  return d.alias && d.alias.trim() ? d.alias : d.name;
+}
 
 interface PriceRowProps {
   id: string;
@@ -83,10 +97,16 @@ export default function SettingsScreen(): React.JSX.Element {
   const [loadingData, setLoadingData]       = useState(true);
   const [pairedPrinter, setPairedPrinter]   = useState<PrinterDevice | null>(null);
   const [testingPrinter, setTestingPrinter] = useState(false);
+  const [printerConnected, setPrinterConnected] = useState(false);
+
+  // Edición de alias de la impresora
+  const [printerEditTarget, setPrinterEditTarget] = useState<PrinterDevice | null>(null);
+  const [printerAliasInput, setPrinterAliasInput] = useState('');
 
   const reloadPairedPrinter = useCallback(async () => {
     const p = await getPairedPrinter();
     setPairedPrinter(p);
+    setPrinterConnected(p ? await isPrinterConnected() : false);
   }, []);
 
   useFocusEffect(useCallback(() => {
@@ -104,7 +124,38 @@ export default function SettingsScreen(): React.JSX.Element {
       }
     } finally {
       setTestingPrinter(false);
+      await reloadPairedPrinter(); // refleja el estado real de conexión tras el intento
     }
+  }
+
+  function openEditPrinter(d: PrinterDevice): void {
+    setPrinterEditTarget(d);
+    setPrinterAliasInput(d.alias ?? '');
+  }
+
+  async function savePrinterAlias(): Promise<void> {
+    if (!printerEditTarget) return;
+    await setAlias(printerEditTarget.address, printerAliasInput.trim());
+    setPrinterEditTarget(null);
+    await reloadPairedPrinter();
+  }
+
+  function handleClearPrinter(): void {
+    Alert.alert(
+      'Quitar impresora',
+      '¿Olvidar la impresora actual? Tendrás que volver a seleccionarla.',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Quitar',
+          style: 'destructive',
+          onPress: async () => {
+            await clearPairedPrinter();
+            await reloadPairedPrinter();
+          },
+        },
+      ],
+    );
   }
 
   // Promo print dialog
@@ -358,8 +409,32 @@ export default function SettingsScreen(): React.JSX.Element {
         {pairedPrinter ? (
           <>
             <View style={styles.printerCurrentRow}>
-              <Text style={styles.printerCurrentName}>{pairedPrinter.name}</Text>
-              <Text style={styles.printerCurrentAddress}>{pairedPrinter.address}</Text>
+              <View style={styles.printerCurrentInfo}>
+                <Text style={styles.printerCurrentName}>{labelOf(pairedPrinter)}</Text>
+                <Text style={styles.printerCurrentAddress}>{pairedPrinter.address}</Text>
+                <View style={styles.printerStatusRow}>
+                  <View
+                    style={[
+                      styles.printerStatusDot,
+                      { backgroundColor: printerConnected ? '#43A047' : '#BDBDBD' },
+                    ]}
+                  />
+                  <Text
+                    style={[
+                      styles.printerStatusText,
+                      { color: printerConnected ? '#43A047' : '#999' },
+                    ]}
+                  >
+                    {printerConnected ? 'Conectada' : 'Desconectada'}
+                  </Text>
+                </View>
+              </View>
+              <IconButton
+                icon="pencil"
+                size={22}
+                onPress={() => openEditPrinter(pairedPrinter)}
+                accessibilityLabel="Editar nombre"
+              />
             </View>
             <Divider />
             <View style={styles.printerActions}>
@@ -372,15 +447,16 @@ export default function SettingsScreen(): React.JSX.Element {
                 buttonColor="#43A047"
                 style={styles.printerActionBtn}
               >
-                Imprimir prueba
+                {testingPrinter ? 'Conectando…' : 'Imprimir prueba'}
               </Button>
               <Button
                 mode="outlined"
-                icon="printer-settings"
-                onPress={() => router.push('/settings/printer')}
+                icon="link-off"
+                onPress={() => handleClearPrinter()}
+                textColor="#E53935"
                 style={styles.printerActionBtn}
               >
-                Abrir
+                Quitar
               </Button>
             </View>
           </>
@@ -558,6 +634,30 @@ export default function SettingsScreen(): React.JSX.Element {
 
       {/* ── DIALOGS ───────────────────────────────────────────────────────── */}
       <Portal>
+
+        {/* Printer alias dialog */}
+        <Dialog visible={printerEditTarget !== null} onDismiss={() => setPrinterEditTarget(null)}>
+          <Dialog.Title>Nombre de la impresora</Dialog.Title>
+          <Dialog.Content>
+            <Text style={styles.printerDialogMac}>{printerEditTarget?.address}</Text>
+            <StableTextInput
+              mode="outlined"
+              label="Nombre"
+              value={printerAliasInput}
+              onChangeText={setPrinterAliasInput}
+              placeholder={printerEditTarget?.name}
+              autoFocus
+              style={styles.locationInput}
+            />
+            <Text style={styles.printerDialogHint}>
+              Déjalo vacío para volver al nombre original del dispositivo.
+            </Text>
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button onPress={() => setPrinterEditTarget(null)}>Cancelar</Button>
+            <Button onPress={() => void savePrinterAlias()}>Guardar</Button>
+          </Dialog.Actions>
+        </Dialog>
 
         {/* Promo print dialog */}
         <Dialog visible={promoVisible} onDismiss={() => promoProgress === null && setPromoVisible(false)}>
@@ -904,9 +1004,12 @@ const styles = StyleSheet.create({
 
   // ── printer current ──
   printerCurrentRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingVertical: 14,
     paddingHorizontal: 16,
   },
+  printerCurrentInfo: { flex: 1 },
   printerCurrentName: {
     fontSize: 16,
     fontWeight: '700',
@@ -917,6 +1020,21 @@ const styles = StyleSheet.create({
     color: '#666',
     marginTop: 2,
   },
+  printerStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 6,
+  },
+  printerStatusDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+    marginRight: 6,
+  },
+  printerStatusText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
   printerActions: {
     flexDirection: 'row',
     padding: 12,
@@ -925,6 +1043,17 @@ const styles = StyleSheet.create({
   printerActionBtn: {
     flex: 1,
     borderRadius: 8,
+  },
+  printerDialogMac: {
+    fontSize: 13,
+    color: '#666',
+    marginBottom: 10,
+  },
+  printerDialogHint: {
+    fontSize: 12,
+    color: '#999',
+    marginTop: 8,
+    lineHeight: 16,
   },
 
   // ── promo card ──
