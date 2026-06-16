@@ -384,15 +384,72 @@ const FONT_8x16 = (() => {
     0b00000000,
     0b00000000,
   ];
+  // 'c'
+  g['c'] = [
+    0b00000000,
+    0b00000000,
+    0b00000000,
+    0b00000000,
+    0b00000000,
+    0b00111100,
+    0b01000010,
+    0b01000000,
+    0b01000000,
+    0b01000000,
+    0b01000010,
+    0b00111100,
+    0b00000000,
+    0b00000000,
+    0b00000000,
+    0b00000000,
+  ];
+  // 'o'
+  g['o'] = [
+    0b00000000,
+    0b00000000,
+    0b00000000,
+    0b00000000,
+    0b00000000,
+    0b00111100,
+    0b01000010,
+    0b01000010,
+    0b01000010,
+    0b01000010,
+    0b01000010,
+    0b00111100,
+    0b00000000,
+    0b00000000,
+    0b00000000,
+    0b00000000,
+  ];
+  // 'm'
+  g['m'] = [
+    0b00000000,
+    0b00000000,
+    0b00000000,
+    0b00000000,
+    0b00000000,
+    0b11011100,
+    0b11101110,
+    0b10101010,
+    0b10101010,
+    0b10101010,
+    0b10101010,
+    0b10101010,
+    0b00000000,
+    0b00000000,
+    0b00000000,
+    0b00000000,
+  ];
   return g;
 })();
 
 const FONT_W = 8;
 const FONT_H = 16;
 
-function renderTextBits(text) {
-  // Render at 2x scale so it visually matches the 48px icon better.
-  const SCALE = 2;
+function renderTextBits(text, scale = 2) {
+  // Render at `scale`x so the text visually matches the adjacent icon.
+  const SCALE = scale;
   const w = text.length * FONT_W * SCALE;
   const h = FONT_H * SCALE;
   const bits = new Uint8Array(w * h);
@@ -416,6 +473,31 @@ function renderTextBits(text) {
     }
   }
   return { bits, w, h };
+}
+
+// ---------------------------------------------------------------------------
+// Envelope (email) icon — drawn programmatically, no asset needed.
+// A rounded rectangle outline with the classic flap "V" from the top corners.
+// ---------------------------------------------------------------------------
+
+function drawEnvelopeBits(w, h) {
+  const bits = new Uint8Array(w * h);
+  const set = (x, y) => { if (x >= 0 && x < w && y >= 0 && y < h) bits[y * w + x] = 1; };
+  const thick = 4; // bold strokes to match the Instagram glyph weight
+  // Outer rectangle border.
+  for (let t = 0; t < thick; t++) {
+    for (let x = 0; x < w; x++) { set(x, t); set(x, h - 1 - t); }
+    for (let y = 0; y < h; y++) { set(t, y); set(w - 1 - t, y); }
+  }
+  // Flap: two diagonals from the top corners meeting at the vertical center, so
+  // the flap's tip sits on the icon's horizontal mid-line.
+  const midX = Math.floor(w / 2);
+  const flapDepth = Math.floor(h / 2);
+  for (let x = 0; x <= midX; x++) {
+    const y = Math.round((x / midX) * flapDepth);
+    for (let t = 0; t < thick; t++) { set(x, y + t); set(w - 1 - x, y + t); }
+  }
+  return bits;
 }
 
 const HANDLE = '@burguer.beats';
@@ -448,11 +530,85 @@ for (let y = 0; y < text.h; y++) {
   }
 }
 
-const igPacked = packBits(composed, composedW, composedH);
+// IG raster is packed further below, after both blocks are padded to a shared
+// width so the email and Instagram icons line up at the same x.
+
+// ---------------------------------------------------------------------------
+// Email block. The address is rendered at 2x. At that size the full address is
+// wider than the 58mm head (~384 px), so it wraps after the "@" onto two lines.
+// The envelope icon spans both lines and is vertically centered, so its
+// horizontal mid-line (the flap tip) lands exactly on the line break. Line 2
+// starts flush with the start of the text on line 1:
+//   line 1: [envelope] burguerbeats@
+//   line 2:            burguerbeats.com
+// Both lines are baked into a single raster so escpos.ts prints it in one shot.
+// ---------------------------------------------------------------------------
+
+const EMAIL_SCALE = 2;
+const ENV_W = igIconW;                  // same width as the Instagram icon
+const ENV_H = Math.round(igIconH * 0.8); // a touch shorter to keep envelope proportions
+const envBits = drawEnvelopeBits(ENV_W, ENV_H);
+
+const emailLine1 = renderTextBits('burguerbeats@', EMAIL_SCALE);
+const emailLine2 = renderTextBits('burguerbeats.com', EMAIL_SCALE);
+
+const textX = ENV_W + GAP;          // x where the address text begins (after icon)
+const textH = emailLine1.h;
+const LINE_GAP = 10; // px between the two wrapped lines
+const emailH = textH + LINE_GAP + textH;
+
+let emailW = Math.max(textX + emailLine1.w, textX + emailLine2.w);
+emailW = emailW + ((8 - (emailW % 8)) % 8); // round up to multiple of 8
+
+const emailComposed = new Uint8Array(emailW * emailH);
+const blit = (target, targetW, bits, bw, bh, ox, oy) => {
+  for (let y = 0; y < bh; y++) {
+    for (let x = 0; x < bw; x++) {
+      if (bits[y * bw + x]) target[(y + oy) * targetW + (x + ox)] = 1;
+    }
+  }
+};
+
+// Envelope icon, vertically centered over the whole two-line block.
+blit(emailComposed, emailW, envBits, ENV_W, ENV_H, 0, Math.floor((emailH - ENV_H) / 2));
+// Line 1: "burguerbeats@".
+blit(emailComposed, emailW, emailLine1.bits, emailLine1.w, emailLine1.h, textX, 0);
+// Line 2: "burguerbeats.com", aligned with the start of line 1's text.
+blit(emailComposed, emailW, emailLine2.bits, emailLine2.w, emailLine2.h, textX, textH + LINE_GAP);
+
+// ---------------------------------------------------------------------------
+// Pad both blocks to a common width (content kept at x=0) so that, once each is
+// centered at print time, the envelope and Instagram icons land at the same x.
+// ---------------------------------------------------------------------------
+
+let sharedW = Math.max(composedW, emailW);
+sharedW = sharedW + ((8 - (sharedW % 8)) % 8);
+
+function padToWidth(bits, w, h, newW) {
+  if (newW === w) return bits;
+  const out = new Uint8Array(newW * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (bits[y * w + x]) out[y * newW + x] = 1;
+    }
+  }
+  return out;
+}
+
+const igPadded = padToWidth(composed, composedW, composedH, sharedW);
+const igPacked = packBits(igPadded, sharedW, composedH);
 const ig = {
-  w: composedW,
+  w: sharedW,
   h: composedH,
-  raster: buildEscPosRaster(igPacked, composedW, composedH),
+  raster: buildEscPosRaster(igPacked, sharedW, composedH),
+};
+
+const emailPadded = padToWidth(emailComposed, emailW, emailH, sharedW);
+const emailPacked = packBits(emailPadded, sharedW, emailH);
+const email = {
+  w: sharedW,
+  h: emailH,
+  raster: buildEscPosRaster(emailPacked, sharedW, emailH),
 };
 
 const ts = `// AUTO-GENERATED by scripts/build-logo-bytes.js — do not edit by hand.
@@ -476,9 +632,18 @@ export const IG_LOGO_HEIGHT = ${ig.h};
 export const IG_LOGO_RASTER_BYTES: Uint8Array = new Uint8Array([
 ${formatBytes(ig.raster)}
 ]);
+
+export const EMAIL_LOGO_WIDTH  = ${email.w};
+export const EMAIL_LOGO_HEIGHT = ${email.h};
+
+/** ESC/POS GS v 0 raster image of the email icon + address. Header included. */
+export const EMAIL_LOGO_RASTER_BYTES: Uint8Array = new Uint8Array([
+${formatBytes(email.raster)}
+]);
 `;
 
 fs.writeFileSync(OUT_PATH, ts, 'utf8');
 console.log(`Wrote ${OUT_PATH}`);
 console.log(`Main logo: ${main.w}x${main.h}, ${main.raster.length} bytes`);
 console.log(`IG logo:   ${ig.w}x${ig.h}, ${ig.raster.length} bytes`);
+console.log(`Email:     ${email.w}x${email.h}, ${email.raster.length} bytes`);

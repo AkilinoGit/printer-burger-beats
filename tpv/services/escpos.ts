@@ -8,7 +8,7 @@
 
 import type { Order, OrderItem, Session, Ticket } from '../lib/types';
 import { collapseVerduraModifiers, currentTime } from '../lib/utils';
-import { LOGO_RASTER_BYTES, IG_LOGO_RASTER_BYTES } from './logo-bytes';
+import { LOGO_RASTER_BYTES, IG_LOGO_RASTER_BYTES, EMAIL_LOGO_RASTER_BYTES } from './logo-bytes';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -207,7 +207,10 @@ export function buildTicketBuffer(
     );
     for (const line of promoLines) rawLine(line);
     rawLine('');
-    // Instagram icon + @handle on the same line (composed in logo-bytes.ts).
+    // Email icon + address, then Instagram icon + @handle (each composed in
+    // logo-bytes.ts as a single raster row).
+    parts.push(EMAIL_LOGO_RASTER_BYTES);
+    rawLine('');
     parts.push(IG_LOGO_RASTER_BYTES);
     parts.push(CMD_ALIGN_LEFT);
     rawLine('');
