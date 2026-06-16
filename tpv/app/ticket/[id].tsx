@@ -333,10 +333,10 @@ export default function TicketScreen(): React.JSX.Element {
           normalPrices[p.id] = activeSession?.priceOverrides[p.id] ?? p.basePrice;
         }
         const result = await printTicket(refreshed, false, MODIFIER_LABELS, RADIO_NO_SELECTION, RADIO_OPTION_SETS, forcePrintTwice, normalPrices);
-        if (!result.ok) {
-          Alert.alert('Error de impresión', result.error ?? 'No se pudo conectar con la impresora');
-        } else {
+        if (result.ok) {
           await markTicketPrinted(refreshed.id);
+        } else if (!result.cancelled) {
+          Alert.alert('Error de impresión', result.error ?? 'No se pudo conectar con la impresora');
         }
       }
     } catch (e) {

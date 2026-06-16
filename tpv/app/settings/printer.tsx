@@ -88,10 +88,10 @@ export default function PrinterSettingsScreen(): React.JSX.Element {
     setTesting(true);
     try {
       const result = await printTest();
-      if (!result.ok) {
-        Alert.alert('Error al imprimir', result.error ?? 'Fallo desconocido.');
-      } else {
+      if (result.ok) {
         Alert.alert('OK', 'Prueba enviada a la impresora.');
+      } else if (!result.cancelled) {
+        Alert.alert('Error al imprimir', result.error ?? 'Fallo desconocido.');
       }
     } finally {
       setTesting(false);

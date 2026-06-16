@@ -97,10 +97,10 @@ export default function SettingsScreen(): React.JSX.Element {
     setTestingPrinter(true);
     try {
       const result = await printTest();
-      if (!result.ok) {
-        Alert.alert('Error al imprimir', result.error ?? 'Fallo desconocido.');
-      } else {
+      if (result.ok) {
         Alert.alert('OK', 'Prueba enviada a la impresora.');
+      } else if (!result.cancelled) {
+        Alert.alert('Error al imprimir', result.error ?? 'Fallo desconocido.');
       }
     } finally {
       setTestingPrinter(false);
@@ -145,10 +145,10 @@ export default function SettingsScreen(): React.JSX.Element {
         (current, total) => setPromoProgress({ current, total }),
         () => !promoCancelledRef.current,
       );
-      if (!result.ok) {
-        Alert.alert('Error al imprimir', result.error ?? 'Fallo desconocido.');
-      } else {
+      if (result.ok) {
         setPromoVisible(false);
+      } else if (!result.cancelled) {
+        Alert.alert('Error al imprimir', result.error ?? 'Fallo desconocido.');
       }
     } finally {
       setPromoProgress(null);

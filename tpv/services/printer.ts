@@ -18,6 +18,7 @@ import { PermissionsAndroid, Platform } from 'react-native';
 import type { Session, Ticket } from '../lib/types';
 import { buildTicketBuffer, buildSessionSummaryBuffer, buildPromoBuffer } from './escpos';
 import { log, perf } from './logger';
+import { usePrintJobStore } from '../stores/usePrintJobStore';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -26,6 +27,27 @@ import { log, perf } from './logger';
 export interface PrintResult {
   ok: boolean;
   error?: string;
+  /** True if the caller cancelled before the bytes reached the printer. */
+  cancelled?: boolean;
+}
+
+/** Thrown internally when the user cancels a send via the print overlay. */
+class PrintCancelledError extends Error {
+  constructor() {
+    super('Impresión cancelada');
+    this.name = 'PrintCancelledError';
+  }
+}
+
+/** Maps a caught printing error to a PrintResult, distinguishing user cancel. */
+function failResult(e: unknown): PrintResult {
+  if (e instanceof PrintCancelledError) {
+    log.info('PRINT', 'envío cancelado por el usuario');
+    return { ok: false, cancelled: true };
+  }
+  const msg = e instanceof Error ? e.message : String(e);
+  log.error('PRINT', msg);
+  return { ok: false, error: msg };
 }
 
 export interface PrinterDevice {
@@ -258,20 +280,57 @@ export async function disconnectPrinter(): Promise<void> {
 // Printing
 // ---------------------------------------------------------------------------
 
+/**
+ * Races a printer operation (connect / write) against the global cancel flag.
+ * If the user taps Cancel while the operation is hung (e.g. a dead connection),
+ * this rejects with PrintCancelledError so we stop waiting on it. The underlying
+ * promise may still settle later in the background; we clean up the socket.
+ */
+function withCancel<T>(op: Promise<T>): Promise<T> {
+  let poll: ReturnType<typeof setInterval> | undefined;
+  const cancelled = new Promise<never>((_, reject) => {
+    poll = setInterval(() => {
+      if (usePrintJobStore.getState().cancelRequested) reject(new PrintCancelledError());
+    }, 80);
+  });
+  return Promise.race([op, cancelled]).finally(() => {
+    if (poll) clearInterval(poll);
+  });
+}
+
 async function writeBytes(bytes: Uint8Array): Promise<void> {
   await loadCache();
   if (!cachedAddress) {
     throw new Error('No hay impresora seleccionada. Configúrala en Ajustes → Impresora.');
   }
 
-  const device = await openConnection(cachedAddress);
-  const base64Data = _uint8ArrayToBase64(bytes);
-  // The library accepts base64 when passed with the "base64:" prefix on some
-  // versions, but the safer path is writing the raw bytes. The library's
-  // write() accepts string | Buffer; we pass a base64 string and let the
-  // native side decode it.
-  const ok = await device.write(base64Data, 'base64' as any);
-  if (!ok) throw new Error('La impresora rechazó los datos.');
+  // Every physical send funnels through here, so this is the single point where
+  // we drive the global print overlay (elapsed-ms counter + Cancel button). The
+  // overlay exists so a hung/failed connection can be aborted; on success it
+  // simply disappears.
+  usePrintJobStore.getState().beginSend();
+
+  try {
+    if (usePrintJobStore.getState().cancelRequested) throw new PrintCancelledError();
+
+    const device = await withCancel(openConnection(cachedAddress));
+
+    if (usePrintJobStore.getState().cancelRequested) throw new PrintCancelledError();
+
+    const base64Data = _uint8ArrayToBase64(bytes);
+    // The library accepts base64 when passed with the "base64:" prefix on some
+    // versions, but the safer path is writing the raw bytes. The library's
+    // write() accepts string | Buffer; we pass a base64 string and let the
+    // native side decode it.
+    const ok = await withCancel(device.write(base64Data, 'base64' as any));
+    if (!ok) throw new Error('La impresora rechazó los datos.');
+  } catch (e) {
+    // On cancel, drop any socket that may still have opened in the background.
+    if (e instanceof PrintCancelledError) void disconnectPrinter().catch(() => {});
+    throw e;
+  } finally {
+    usePrintJobStore.getState().finishSend();
+  }
 }
 
 export async function printTicket(
@@ -299,9 +358,7 @@ export async function printTicket(
     log.info('PRINT', `sent ${bytes.length}b`);
     return { ok: true };
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    log.error('PRINT', msg);
-    return { ok: false, error: msg };
+    return failResult(e);
   }
 }
 
@@ -317,9 +374,7 @@ export async function printSessionSummary(
     log.info('PRINT', `session summary sent (${bytes.length}b)`);
     return { ok: true };
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    log.error('PRINT', msg);
-    return { ok: false, error: msg };
+    return failResult(e);
   }
 }
 
@@ -351,9 +406,7 @@ export async function printPromo(
     }
     return { ok: true };
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    log.error('PRINT', msg);
-    return { ok: false, error: msg };
+    return failResult(e);
   }
 }
 
@@ -372,8 +425,7 @@ export async function printTest(): Promise<PrintResult> {
     await writeBytes(bytes);
     return { ok: true };
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return { ok: false, error: msg };
+    return failResult(e);
   }
 }
 

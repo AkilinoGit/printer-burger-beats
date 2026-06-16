@@ -310,7 +310,9 @@ export function SessionDetailView({ sessionId }: SessionDetailProps): React.JSX.
       // "Imprimir siempre 2 copias".
       const result = await printTicket(ticket, false, modifierLabels, radioNoSelection, radioOptionSets, true, normalPrices);
       if (!result.ok) {
-        Alert.alert('Error de impresión', result.error ?? 'No se pudo conectar con la impresora');
+        if (!result.cancelled) {
+          Alert.alert('Error de impresión', result.error ?? 'No se pudo conectar con la impresora');
+        }
         return;
       }
       await markTicketPrinted(ticket.id);

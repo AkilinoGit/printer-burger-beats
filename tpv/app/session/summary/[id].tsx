@@ -406,7 +406,7 @@ export default function SessionSummaryScreen(): React.JSX.Element {
     setPrinting(true);
     try {
       const result = await printSessionSummary(session, tickets, location?.name ?? '—');
-      if (!result.ok) {
+      if (!result.ok && !result.cancelled) {
         Alert.alert('Error de impresión', result.error ?? 'No se pudo conectar con la impresora');
       }
     } finally {

@@ -171,7 +171,9 @@ export default function HomeScreen(): React.JSX.Element {
           normalPrices[p.id] = activeSession?.priceOverrides[p.id] ?? p.basePrice;
         }
         const result = await printTicket(currentTicket, false, MODIFIER_LABELS, RADIO_NO_SELECTION, RADIO_OPTION_SETS, effectiveTwice, normalPrices);
-        if (!result.ok) {
+        // result.cancelled = el usuario abortó el envío desde el overlay; no es
+        // un error real, así que no mostramos alerta.
+        if (!result.ok && !result.cancelled) {
           Alert.alert('Error de impresión', result.error ?? 'No se pudo conectar con la impresora',
             [{ text: 'Continuar', style: 'default' }]);
         }

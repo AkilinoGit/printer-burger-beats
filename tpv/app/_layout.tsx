@@ -5,6 +5,7 @@ import { ActivityIndicator, MD3LightTheme, PaperProvider } from 'react-native-pa
 import { initDb } from '../services/db';
 import { useSessionStore } from '../stores/useSessionStore';
 import { isSessionStale } from '../lib/utils';
+import PrintOverlay from '../components/PrintOverlay';
 
 const AUTO_CLOSE_CHECK_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -72,6 +73,7 @@ export default function RootLayout(): React.JSX.Element {
         <Stack.Screen name="sessions-history" options={{ title: 'Historial de sesiones' }} />
         <Stack.Screen name="settings/printer" options={{ title: 'Ajustes de impresora' }} />
       </Stack>
+      <PrintOverlay />
     </PaperProvider>
   );
 }
