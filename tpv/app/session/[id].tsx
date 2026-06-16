@@ -258,7 +258,6 @@ export function SessionDetailView({ sessionId }: SessionDetailProps): React.JSX.
   const router  = useRouter();
   const storeProducts = useSessionStore((s) => s.products);
   const closeCurrentSession = useSessionStore((s) => s.closeCurrentSession);
-  const forcePrintTwice = useSessionStore((s) => s.forcePrintTwice);
 
   const [session,  setSession]  = useState<Session | null>(null);
   const [tickets,  setTickets]  = useState<Ticket[]>([]);
@@ -306,7 +305,10 @@ export function SessionDetailView({ sessionId }: SessionDetailProps): React.JSX.
     try {
       const normalPrices: Record<string, number> = {};
       for (const p of storeProducts) normalPrices[p.id] = p.basePrice;
-      const result = await printTicket(ticket, false, modifierLabels, radioNoSelection, radioOptionSets, forcePrintTwice, normalPrices);
+      // Desde el resumen de sesión (activa y cerrada) siempre se imprime doble:
+      // una copia para cocina y otra para cliente, independientemente del ajuste
+      // "Imprimir siempre 2 copias".
+      const result = await printTicket(ticket, false, modifierLabels, radioNoSelection, radioOptionSets, true, normalPrices);
       if (!result.ok) {
         Alert.alert('Error de impresión', result.error ?? 'No se pudo conectar con la impresora');
         return;
