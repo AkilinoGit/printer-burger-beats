@@ -426,14 +426,30 @@ export async function printTicket(
 
   try {
     const doneEscpos = perf.start('PRINT', 'buildTicketBuffer');
-    const bytes      = buildTicketBuffer(ticket, isTest, modifierLabels, repeatContent, normalPrices);
+    // Double-print sends two DIFFERENT buffers as independent writes:
+    //  - Copy 1: full ticket (promo header + orders + "GRACIAS POR VENIR").
+    //  - Copy 2: plain ticket only (name/order, number, items with price) —
+    //    built with repeatContent=false so it has no promo header nor footer.
+    // A 3.5s pause between writes lets the printer flush the first copy before
+    // receiving the second.
+    const buffers: Uint8Array[] = repeatContent
+      ? [
+          buildTicketBuffer(ticket, isTest, modifierLabels, true, normalPrices),
+          buildTicketBuffer(ticket, isTest, modifierLabels, false, normalPrices),
+        ]
+      : [buildTicketBuffer(ticket, isTest, modifierLabels, false, normalPrices)];
     doneEscpos();
 
-    const doneWrite = perf.start('PRINT', 'BT write');
-    await writeBytes(bytes);
-    doneWrite();
+    let totalBytes = 0;
+    for (let c = 0; c < buffers.length; c++) {
+      if (c > 0) await new Promise((resolve) => setTimeout(resolve, 3500));
+      const doneWrite = perf.start('PRINT', 'BT write');
+      await writeBytes(buffers[c]);
+      doneWrite();
+      totalBytes += buffers[c].length;
+    }
 
-    log.info('PRINT', `sent ${bytes.length}b`);
+    log.info('PRINT', `sent ${totalBytes}b${buffers.length > 1 ? ` x${buffers.length}` : ''}`);
     return { ok: true };
   } catch (e) {
     return failResult(e);

@@ -73,9 +73,6 @@ export const CMD_FEED: readonly number[] = [ESC, 0x64, 0x04];
 /** ESC d 10 — Feed 10 lines (~2cm top margin) */
 export const CMD_FEED_TOP: readonly number[] = [ESC, 0x64, 0x0a];
 
-/** ESC d 9 — Feed 9 lines (~1.8cm), used between copies when printing x2 */
-export const CMD_FEED_BETWEEN_COPIES: readonly number[] = [ESC, 0x64, 0x09];
-
 /** GS V 66 48 — Partial cut with feed */
 export const CMD_CUT: readonly number[] = [GS, 0x56, 0x42, 0x30];
 
@@ -172,7 +169,12 @@ function _wrapText(text: string, width: number): string[] {
  *   ================================
  *   ...
  *   [*** PRUEBA - NO VALIDO ***]   ← test mode only
+ *   [GRACIAS POR VENIR :)]         ← double-print mode only
  *   [feed + cut]
+ *
+ * This always builds a SINGLE copy. In double-print mode (`repeatContent`),
+ * the copy gains a promo header (logo + catering message) and a thank-you
+ * footer; printer.ts sends the resulting buffer twice with a pause between.
  */
 export function buildTicketBuffer(
   ticket: Ticket,
@@ -187,8 +189,6 @@ export function buildTicketBuffer(
 
   // Init + select CP858 for accented characters (á, é, í, ó, ú, ñ, ü…)
   parts.push(CMD_INIT, CMD_CODEPAGE_CP858);
-
-  const copies = repeatContent ? 2 : 1;
 
   // Promotional header at the very top, only when printing twice:
   // logo + catering message + Instagram handle. The normal top margin is
@@ -217,37 +217,33 @@ export function buildTicketBuffer(
     parts.push(CMD_FEED_TOP);
   }
 
-  for (let c = 0; c < copies; c++) {
-    if (c > 0) {
-      // After first copy (only in double-print mode): thank-you message,
-      // then the original large feed before the second copy.
-      parts.push(CMD_ALIGN_CENTER, CMD_BOLD_ON);
-      rawLine('GRACIAS POR VENIR :)');
-      parts.push(CMD_BOLD_OFF, CMD_ALIGN_LEFT);
-      parts.push(CMD_FEED_BETWEEN_COPIES);
-    }
-
-    // ── Test-mode watermark (top) ─────────────────────────────────────────────
-    if (isTest) {
-      parts.push(CMD_ALIGN_CENTER, CMD_BOLD_ON);
-      rawLine('*** PRUEBA - NO VALIDO ***');
-      parts.push(CMD_BOLD_OFF);
-    }
-
-    // ── Orders ────────────────────────────────────────────────────────────────
-    for (let i = 0; i < ticket.orders.length; i++) {
-      _appendOrderBytes(parts, ticket.orders[i], modifierLabels, ticket.ticketNumber, i, normalPrices);
-    }
-
-    // ── Footer ────────────────────────────────────────────────────────────────
-    if (isTest) {
-      parts.push(CMD_ALIGN_CENTER, CMD_BOLD_ON);
-      rawLine('*** PRUEBA - NO VALIDO ***');
-      parts.push(CMD_BOLD_OFF);
-    }
+  // ── Test-mode watermark (top) ─────────────────────────────────────────────
+  if (isTest) {
+    parts.push(CMD_ALIGN_CENTER, CMD_BOLD_ON);
+    rawLine('*** PRUEBA - NO VALIDO ***');
+    parts.push(CMD_BOLD_OFF);
   }
 
-  // Feed + cut (single cut at the very end, regardless of copies)
+  // ── Orders ────────────────────────────────────────────────────────────────
+  for (let i = 0; i < ticket.orders.length; i++) {
+    _appendOrderBytes(parts, ticket.orders[i], modifierLabels, ticket.ticketNumber, i, normalPrices);
+  }
+
+  // ── Footer ────────────────────────────────────────────────────────────────
+  if (isTest) {
+    parts.push(CMD_ALIGN_CENTER, CMD_BOLD_ON);
+    rawLine('*** PRUEBA - NO VALIDO ***');
+    parts.push(CMD_BOLD_OFF);
+  }
+
+  // Thank-you message at the bottom of each copy (only in double-print mode).
+  if (repeatContent) {
+    parts.push(CMD_ALIGN_CENTER, CMD_BOLD_ON);
+    rawLine('GRACIAS POR VENIR :)');
+    parts.push(CMD_BOLD_OFF, CMD_ALIGN_LEFT);
+  }
+
+  // Feed + cut at the very end of this copy.
   parts.push(CMD_FEED, CMD_CUT);
 
   return concatBytes(...parts);
