@@ -14,6 +14,7 @@ import {
   Icon,
   IconButton,
   Portal,
+  SegmentedButtons,
   Surface,
   Switch,
   Text,
@@ -21,14 +22,19 @@ import {
   TouchableRipple,
 } from 'react-native-paper';
 
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
 import { useSessionStore } from '../../stores/useSessionStore';
 import {
   getLocations,
   getPendingSyncEntries,
   insertLocation,
+  replaceProductCatalog,
   updateLocation,
   updateProductBasePrice,
 } from '../../services/db';
+import { fetchProductCatalog } from '../../services/catalogApi';
+import { getApiBaseUrl, setApiBaseUrl, isApiBaseUrlFromEnv } from '../../services/apiConfig';
 import {
   clearPairedPrinter,
   getPairedPrinter,
@@ -87,8 +93,12 @@ export default function SettingsScreen(): React.JSX.Element {
   const forcePrintTwice    = useSessionStore((s) => s.forcePrintTwice);
   const setForcePrintTwice = useSessionStore((s) => s.setForcePrintTwice);
   const loadForcePrintTwice = useSessionStore((s) => s.loadForcePrintTwice);
+  const activeProductProfile    = useSessionStore((s) => s.activeProductProfile);
+  const setActiveProductProfile = useSessionStore((s) => s.setActiveProductProfile);
+  const loadActiveProductProfile = useSessionStore((s) => s.loadActiveProductProfile);
 
   useEffect(() => { void loadForcePrintTwice(); }, [loadForcePrintTwice]);
+  useEffect(() => { void loadActiveProductProfile(); }, [loadActiveProductProfile]);
 
   // ── local state ───────────────────────────────────────────────────────────
   const [locations, setLocations]           = useState<Location[]>([]);
@@ -98,6 +108,19 @@ export default function SettingsScreen(): React.JSX.Element {
   const [pairedPrinter, setPairedPrinter]   = useState<PrinterDevice | null>(null);
   const [testingPrinter, setTestingPrinter] = useState(false);
   const [printerConnected, setPrinterConnected] = useState(false);
+
+  // Productos desde el backend
+  const [apiBaseUrlInput, setApiBaseUrlInput]   = useState('');
+  const [updatingProducts, setUpdatingProducts] = useState(false);
+  const [catalogUpdatedAt, setCatalogUpdatedAt] = useState<string | null>(null);
+  const apiUrlLocked = isApiBaseUrlFromEnv(); // URL fijada por .env → solo lectura
+
+  useEffect(() => {
+    void (async () => {
+      setApiBaseUrlInput(await getApiBaseUrl());
+      setCatalogUpdatedAt(await AsyncStorage.getItem('tpv:catalogUpdatedAt'));
+    })();
+  }, []);
 
   // Edición de alias de la impresora
   const [printerEditTarget, setPrinterEditTarget] = useState<PrinterDevice | null>(null);
@@ -280,6 +303,59 @@ export default function SettingsScreen(): React.JSX.Element {
     } finally {
       setSyncing(false);
     }
+  }
+
+  // ── productos (backend) ─────────────────────────────────────────────────────
+  async function handleUpdateProducts(): Promise<void> {
+    // Persistir la URL introducida antes de descargar (salvo si la fija el .env).
+    if (!apiUrlLocked) {
+      try { await setApiBaseUrl(apiBaseUrlInput); } catch { /* ignore */ }
+    }
+
+    setUpdatingProducts(true);
+    try {
+      const res = await fetchProductCatalog();
+      if (!res.ok) {
+        Alert.alert(
+          'No se pudo actualizar',
+          `${res.error}\n\nSe mantienen los productos actuales.`,
+        );
+        return;
+      }
+      // Reemplazo total en SQLite (rollback seguro si falla).
+      await replaceProductCatalog(res.catalog.products);
+      const now = new Date().toISOString();
+      await AsyncStorage.multiSet([
+        ['tpv:catalogVersion', res.catalog.version ?? ''],
+        ['tpv:catalogUpdatedAt', now],
+      ]);
+      setCatalogUpdatedAt(now);
+      // Recargar el store desde SQLite (misma acción que el "reintentar").
+      await loadProducts();
+      Alert.alert(
+        'Productos actualizados',
+        `${res.catalog.products.length} ${res.catalog.products.length === 1 ? 'producto cargado' : 'productos cargados'}.`,
+      );
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : String(e);
+      Alert.alert(
+        'No se pudo actualizar',
+        `${detail}\n\nSe mantienen los productos actuales.`,
+      );
+    } finally {
+      setUpdatingProducts(false);
+    }
+  }
+
+  function formatUpdatedAt(iso: string | null): string {
+    if (!iso) return 'Nunca actualizado desde el servidor.';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return 'Nunca actualizado desde el servidor.';
+    const dd = String(d.getDate()).padStart(2, '0');
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mi = String(d.getMinutes()).padStart(2, '0');
+    return `Última actualización: ${dd}/${mm}/${d.getFullYear()} ${hh}:${mi}`;
   }
 
   // ── base prices ───────────────────────────────────────────────────────────
@@ -545,6 +621,66 @@ export default function SettingsScreen(): React.JSX.Element {
             <Icon source="chevron-right" size={22} color="#888" />
           </View>
         </TouchableRipple>
+      </Surface>
+
+      {/* ── PERFIL DE PRODUCTOS ───────────────────────────────────────────── */}
+      <Text variant="labelLarge" style={styles.sectionLabel}>PERFIL DE PRODUCTOS</Text>
+      <Surface style={styles.card} elevation={1}>
+        <View style={styles.profileSection}>
+          <Text style={styles.priceActionTitle}>Carta activa en venta</Text>
+          <Text style={styles.priceActionSubtitle}>
+            En la pantalla de venta solo se mostrarán los productos de este perfil.
+          </Text>
+          <SegmentedButtons
+            value={activeProductProfile}
+            onValueChange={(v) => void setActiveProductProfile(v as 'burger' | 'cafe')}
+            style={styles.profileButtons}
+            buttons={[
+              { value: 'burger', label: 'Burger', icon: 'hamburger' },
+              { value: 'cafe',   label: 'Cafetería', icon: 'coffee' },
+            ]}
+          />
+        </View>
+      </Surface>
+
+      {/* ── PRODUCTOS ─────────────────────────────────────────────────────── */}
+      <Text variant="labelLarge" style={styles.sectionLabel}>PRODUCTOS</Text>
+      <Surface style={styles.card} elevation={1}>
+        <Text style={styles.syncTitle}>Servidor</Text>
+        {apiUrlLocked ? (
+          <>
+            <Text style={styles.apiUrlValue}>{apiBaseUrlInput || '(sin configurar)'}</Text>
+            <Text style={styles.syncHint}>
+              Fijado en la app (variable de entorno). No editable aquí.
+            </Text>
+          </>
+        ) : (
+          <StableTextInput
+            value={apiBaseUrlInput}
+            onChangeText={setApiBaseUrlInput}
+            mode="outlined"
+            placeholder="http://192.168.1.50 o http://10.0.2.2"
+            autoCapitalize="none"
+            keyboardType="url"
+            style={styles.apiUrlInput}
+          />
+        )}
+        <Divider style={styles.cardDivider} />
+        <Button
+          mode="contained"
+          icon="download"
+          onPress={() => void handleUpdateProducts()}
+          loading={updatingProducts}
+          disabled={updatingProducts}
+          buttonColor="#43A047"
+          style={styles.syncBtn}
+        >
+          Actualizar productos
+        </Button>
+        <Text style={styles.syncHint}>
+          {formatUpdatedAt(catalogUpdatedAt)} Descarga la carta desde el servidor y
+          reemplaza la local. Sin conexión, se mantiene la actual.
+        </Text>
       </Surface>
 
       {/* ── SYNC ──────────────────────────────────────────────────────────── */}
@@ -906,6 +1042,16 @@ const styles = StyleSheet.create({
     flexShrink: 0,
   },
 
+  // ── product profile section ──
+  profileSection: {
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    gap: 6,
+  },
+  profileButtons: {
+    marginTop: 10,
+  },
+
   // ── price dialog rows ──
   dialogScroll: {
     maxHeight: 400,
@@ -965,6 +1111,20 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     marginHorizontal: 16,
     marginBottom: 8,
+  },
+  apiUrlInput: {
+    marginHorizontal: 16,
+    marginTop: 4,
+    marginBottom: 8,
+    backgroundColor: '#fff',
+  },
+  apiUrlValue: {
+    marginHorizontal: 16,
+    marginTop: 4,
+    marginBottom: 2,
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#222',
   },
   syncHint: {
     fontSize: 12,

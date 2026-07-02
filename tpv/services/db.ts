@@ -12,6 +12,7 @@ import type {
   PriceProfile,
   SyncStatus,
   SyncQueueEntry,
+  ApiProduct,
 } from '../lib/types';
 
 // ---------------------------------------------------------------------------
@@ -19,7 +20,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 const DB_NAME = 'tpv_v12.db';
-const SCHEMA_VERSION = 23;
+const SCHEMA_VERSION = 25;
 
 let _db: SQLite.SQLiteDatabase | null = null;
 let _initPromise: Promise<void> | null = null;
@@ -130,7 +131,35 @@ export async function initDb(): Promise<void> {
     if (currentVersion < 23) {
       await migrate_v23(db); // clear always_show_modifiers for patatas
     }
+    if (currentVersion < 24) {
+      await migrate_v24(db); // add profile column to products (all existing → 'burger')
+    }
+    if (currentVersion < 25) {
+      await migrate_v25(db); // category becomes free text: add category_order + rename burger keys to display names
+    }
     await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+
+    // Self-heal: guarantee products.profile exists even on devices whose
+    // user_version was already bumped to 24 while migrate_v24's ALTER was
+    // silently swallowed (same class of bug fixed for price_profile in v12/v13).
+    // Without this, replaceProductCatalog fails writing the profile column.
+    try {
+      const cols = await db.getAllAsync<{ name: string }>('PRAGMA table_info(products)');
+      if (!cols.some((c) => c.name === 'profile')) {
+        // eslint-disable-next-line no-console
+        console.log('[db] products.profile missing — adding column');
+        await db.execAsync(`ALTER TABLE products ADD COLUMN profile TEXT NOT NULL DEFAULT 'burger'`);
+      }
+      // Same self-heal for the category ordering column (v25).
+      if (!cols.some((c) => c.name === 'category_order')) {
+        // eslint-disable-next-line no-console
+        console.log('[db] products.category_order missing — adding column');
+        await db.execAsync(`ALTER TABLE products ADD COLUMN category_order INTEGER`);
+      }
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.log('[db] products.profile self-heal failed', e);
+    }
 
     // Self-heal: if for any reason modifiers have no section populated
     // (e.g. v20 was marked done but the reseed silently failed), force a reseed.
@@ -181,6 +210,8 @@ async function migrate_v1(db: SQLite.SQLiteDatabase): Promise<void> {
         name                  TEXT NOT NULL,
         base_price            REAL NOT NULL,
         category              TEXT NOT NULL,
+        category_order        INTEGER,
+        profile               TEXT NOT NULL DEFAULT 'burger',
         is_custom             INTEGER NOT NULL DEFAULT 0,
         is_active             INTEGER NOT NULL DEFAULT 1,
         always_show_modifiers INTEGER NOT NULL DEFAULT 0
@@ -492,6 +523,43 @@ async function migrate_v23(db: SQLite.SQLiteDatabase): Promise<void> {
   );
 }
 
+async function migrate_v24(db: SQLite.SQLiteDatabase): Promise<void> {
+  // Add profile column to products. The DEFAULT leaves every existing product
+  // in the 'burger' profile automatically. New 'cafe' products come from the
+  // backend catalog or insertProduct with an explicit profile.
+  try {
+    await db.execAsync(`ALTER TABLE products ADD COLUMN profile TEXT NOT NULL DEFAULT 'burger'`);
+  } catch { /* column already exists (created in migrate_v1 on fresh installs) */ }
+}
+
+async function migrate_v25(db: SQLite.SQLiteDatabase): Promise<void> {
+  // `category` pasa a ser texto libre y ES el encabezado de sección en la vista
+  // de venta. Se añade `category_order` para ordenar las categorías entre sí, y
+  // se renombran las claves internas burger a sus nombres visibles para que los
+  // encabezados no muestren 'burger'/'side'/… El catálogo del backend puede
+  // enviar cualquier category y su categoryOrder.
+  try {
+    await db.execAsync(`ALTER TABLE products ADD COLUMN category_order INTEGER`);
+  } catch { /* column already exists (created in migrate_v1 on fresh installs) */ }
+
+  // Renombrado + orden de las categorías burger (idempotente). El WHERE acepta
+  // tanto la clave interna vieja (BDs preexistentes) como el nombre visible
+  // (instalaciones nuevas ya sembradas con constants.ts), de modo que
+  // category_order queda fijado en ambos casos.
+  const RENAMES: Array<[from: string, to: string, order: number]> = [
+    ['burger', 'HAMBURGUESAS', 0],
+    ['side',   'ACOMPAÑANTES', 1],
+    ['drink',  'BEBIDAS',      2],
+    ['custom', 'OTROS',        3],
+  ];
+  for (const [from, to, order] of RENAMES) {
+    await db.runAsync(
+      'UPDATE products SET category = ?, category_order = ? WHERE category IN (?, ?)',
+      [to, order, from, to],
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Session helpers
 // ---------------------------------------------------------------------------
@@ -594,6 +662,8 @@ type ProductRow = {
   name: string;
   base_price: number;
   category: string;
+  category_order: number | null;
+  profile: string | null;
   is_custom: number;
   is_active: number;
   always_show_modifiers: number;
@@ -686,7 +756,9 @@ function mapProduct(row: ProductRow, modifiers: Modifier[]): Product {
     id: row.id,
     name: row.name,
     basePrice: row.base_price,
-    category: row.category as Product['category'],
+    category: row.category,
+    categoryOrder: row.category_order ?? undefined,
+    profile: (row.profile ?? 'burger') as Product['profile'],
     modifiers,
     isCustom: row.is_custom === 1,
     isActive: row.is_active === 1,
@@ -951,8 +1023,8 @@ export async function getProductById(id: string): Promise<Product | null> {
 export async function insertProduct(product: Omit<Product, 'modifiers'>): Promise<void> {
   const db = await getDb();
   await db.runAsync(
-    'INSERT INTO products (id, name, base_price, category, is_custom, is_active, always_show_modifiers) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    [product.id, product.name, product.basePrice, product.category, product.isCustom ? 1 : 0, product.isActive ? 1 : 0, product.alwaysShowModifiers ? 1 : 0],
+    'INSERT INTO products (id, name, base_price, category, category_order, profile, is_custom, is_active, always_show_modifiers) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [product.id, product.name, product.basePrice, product.category, product.categoryOrder ?? null, product.profile ?? 'burger', product.isCustom ? 1 : 0, product.isActive ? 1 : 0, product.alwaysShowModifiers ? 1 : 0],
   );
 }
 
@@ -964,6 +1036,71 @@ export async function updateProductActive(id: string, isActive: boolean): Promis
 export async function updateProductBasePrice(id: string, basePrice: number): Promise<void> {
   const db = await getDb();
   await db.runAsync('UPDATE products SET base_price = ? WHERE id = ?', [basePrice, id]);
+}
+
+/**
+ * Reemplaza TODO el catálogo local de products + modifiers con el recibido del
+ * backend, en una sola transacción. No toca tickets/orders/order_items.
+ *
+ * - Reemplazo total (no merge): más simple y robusto para un catálogo pequeño.
+ * - Los modifiers se insertan con id scopeado `${productId}-${modifier.id}`,
+ *   igual que el seed local (INITIAL_MODIFIERS) — así ESC/POS, etiquetas y
+ *   order_items.selected_modifiers siguen resolviéndose igual.
+ * - Se inserta respetando `sortOrder` (rowid creciente) para conservar el orden
+ *   del grid, ya que getProducts() ordena por rowid.
+ * - Si la transacción falla, SQLite hace rollback → el catálogo anterior queda
+ *   intacto. La función relanza el error para que el llamador muestre feedback.
+ */
+export async function replaceProductCatalog(products: ApiProduct[]): Promise<void> {
+  const db = await getDb();
+
+  // Ordenar por sortOrder para que el rowid de inserción marque el orden del grid.
+  const ordered = [...products].sort(
+    (a, b) => (a.sortOrder ?? 999) - (b.sortOrder ?? 999),
+  );
+
+  await db.execAsync('PRAGMA foreign_keys = OFF');
+  await db.runAsync('DELETE FROM modifiers');
+  await db.runAsync('DELETE FROM products');
+  await db.execAsync('PRAGMA foreign_keys = ON');
+
+  await db.withExclusiveTransactionAsync(async (txn) => {
+    for (const p of ordered) {
+      await txn.runAsync(
+        'INSERT INTO products (id, name, base_price, category, category_order, profile, is_custom, is_active, always_show_modifiers) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [
+          p.id,
+          p.name,
+          typeof p.basePrice === 'number' ? p.basePrice : parseFloat(String(p.basePrice)) || 0,
+          p.category,
+          p.categoryOrder ?? null,
+          p.profile ?? 'burger',
+          p.isCustom ? 1 : 0,
+          p.isActive ? 1 : 0,
+          p.alwaysShowModifiers ? 1 : 0,
+        ],
+      );
+      for (const m of p.modifiers ?? []) {
+        const priceAdd = typeof m.priceAdd === 'number'
+          ? m.priceAdd
+          : m.priceAdd != null ? parseFloat(String(m.priceAdd)) || 0 : 0;
+        await txn.runAsync(
+          'INSERT INTO modifiers (id, product_id, label, type, price_add, options, no_selection_label, section, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [
+            `${p.id}-${m.id}`,
+            p.id,
+            m.label,
+            m.type,
+            priceAdd,
+            JSON.stringify(m.options ?? []),
+            m.noSelectionLabel ?? null,
+            m.section ?? null,
+            m.sortOrder ?? 999,
+          ],
+        );
+      }
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------

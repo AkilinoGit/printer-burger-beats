@@ -1,12 +1,13 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
-import type { Location, Product, Session } from '../lib/types';
+import type { Location, Product, ProductProfile, Session } from '../lib/types';
 import { DEFAULT_FERIANTE_PRICES } from '../lib/constants';
 import { closeSession, getActiveSession, getNextTicketNumber, getProducts, initDb } from '../services/db';
 
 const FERIANTE_PRICES_KEY = 'tpv:feriantePrices';
 const FORCE_PRINT_TWICE_KEY = 'tpv:forcePrintTwice';
 const PRINT_MODE_KEY = 'tpv:printMode';
+const ACTIVE_PRODUCT_PROFILE_KEY = 'tpv:activeProductProfile';
 
 export type PrintCopies = 'x1' | 'x2';
 
@@ -25,6 +26,8 @@ interface SessionState {
   printCopies: PrintCopies;
   /** Last ticket number used in the active session. Incremented in-memory — no DB query needed. */
   lastTicketNumber: number;
+  /** Product profile shown in the sales grid. Persisted in AsyncStorage. */
+  activeProductProfile: ProductProfile;
 
   // --- setters ---
   setActiveLocation: (location: Location) => void;
@@ -76,6 +79,12 @@ interface SessionState {
   setForcePrintTwice: (value: boolean) => Promise<void>;
 
   // --- print mode (order summary toggles) ---
+  // --- active product profile (sales grid filter) ---
+  /** Load persisted active product profile from AsyncStorage. Call once on app start. */
+  loadActiveProductProfile: () => Promise<void>;
+  /** Update the active product profile and persist to AsyncStorage. */
+  setActiveProductProfile: (profile: ProductProfile) => Promise<void>;
+
   /** Load persisted print mode (red/blue toggles) from AsyncStorage. Call once on app start. */
   loadPrintMode: () => Promise<void>;
   /** Activate the red "no print" toggle (deactivates the blue copies toggle). */
@@ -97,6 +106,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   printNoPrint: false,
   printCopies: 'x1',
   lastTicketNumber: 0,
+  activeProductProfile: 'burger',
 
   setActiveLocation: (location) => set({ activeLocation: location }),
 
@@ -139,6 +149,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       void get().loadForcePrintTwice();
       // Restore persisted print mode (red/blue toggles) — fire-and-forget
       void get().loadPrintMode();
+      // Restore persisted active product profile — fire-and-forget, defaults to 'burger'
+      void get().loadActiveProductProfile();
       const [session, products] = await Promise.all([getActiveSession(), getProducts()]);
       if (session) {
         const lastNum = await getNextTicketNumber(session.id) - 1;
@@ -202,6 +214,26 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     set({ forcePrintTwice: value });
     try {
       await AsyncStorage.setItem(FORCE_PRINT_TWICE_KEY, value ? 'true' : 'false');
+    } catch {
+      // silently ignore
+    }
+  },
+
+  loadActiveProductProfile: async () => {
+    try {
+      const stored = await AsyncStorage.getItem(ACTIVE_PRODUCT_PROFILE_KEY);
+      if (stored === 'burger' || stored === 'cafe') {
+        set({ activeProductProfile: stored });
+      }
+    } catch {
+      // silently ignore — defaults to 'burger'
+    }
+  },
+
+  setActiveProductProfile: async (profile) => {
+    set({ activeProductProfile: profile });
+    try {
+      await AsyncStorage.setItem(ACTIVE_PRODUCT_PROFILE_KEY, profile);
     } catch {
       // silently ignore
     }

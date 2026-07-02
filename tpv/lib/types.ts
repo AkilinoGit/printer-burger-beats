@@ -2,6 +2,9 @@ export type SyncStatus = 'pending' | 'synced' | 'error' | 'pending_update';
 
 export type PriceProfile = 'normal' | 'feriante' | 'invitacion';
 
+/** Perfil de carta al que pertenece un producto. Filtra la vista de venta. */
+export type ProductProfile = 'burger' | 'cafe';
+
 export interface Location {
   id: string;
   name: string;
@@ -45,7 +48,9 @@ export interface Product {
   id: string;
   name: string;
   basePrice: number;
-  category: 'burger' | 'side' | 'drink' | 'custom';
+  category: string;            // sección/encabezado libre en la vista de venta (el valor ES el título)
+  categoryOrder?: number;      // orden de la category entre las demás (menor = antes)
+  profile: ProductProfile;     // carta a la que pertenece: 'burger' | 'cafe' (redundante con category, se mantiene)
   modifiers: Modifier[];
   isCustom: boolean;
   isActive: boolean;
@@ -97,4 +102,45 @@ export interface SyncQueueEntry {
   status: SyncStatus;
   attempts: number;
   created_at: string;
+}
+
+// ---------------------------------------------------------------------------
+// Backend catalog API (GET /api/v1/tpv/products)
+// Shape recibido del backend. DECIMAL puede llegar como number o string
+// (ver tpv-backend-integration-plan.md §3.2) — se normaliza a number al parsear.
+// ---------------------------------------------------------------------------
+
+export interface ApiModifierOption {
+  id: string;
+  label: string;
+}
+
+export interface ApiModifier {
+  id: string;
+  label: string;
+  type: 'remove' | 'add' | 'radio';
+  priceAdd?: number | string;
+  section?: string | null;
+  sortOrder?: number;
+  noSelectionLabel?: string | null;
+  options?: ApiModifierOption[];
+}
+
+export interface ApiProduct {
+  id: string;
+  name: string;
+  basePrice: number | string;
+  category: string;           // texto libre: es el encabezado de sección en la vista de venta
+  categoryOrder?: number;     // orden de la category; opcional (fallback: orden de aparición)
+  profile?: ProductProfile;   // opcional: si el backend no lo envía, la app asume 'burger'
+  isCustom: boolean;
+  isActive: boolean;
+  alwaysShowModifiers?: boolean;
+  sortOrder?: number;
+  modifiers: ApiModifier[];
+}
+
+export interface ProductCatalogResponse {
+  version: string | null;
+  products: ApiProduct[];
 }

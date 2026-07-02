@@ -13,21 +13,45 @@ interface Props {
   onLongPress: (product: Product) => void;
 }
 
-type Category = Product['category'];
+// Paleta de colores para las categorías, asignada por su orden de aparición.
+// Los 4 primeros coinciden con la paleta clásica burger (HAMBURGUESAS,
+// ACOMPAÑANTES, BEBIDAS, OTROS) para no cambiar el aspecto actual.
+const CATEGORY_PALETTE = [
+  '#E53935', '#FB8C00', '#1E88E5', '#43A047',
+  '#00897B', '#8E24AA', '#C2185B', '#5D4037', '#3949AB', '#F4511E',
+];
 
-const CATEGORY_ORDER: Category[] = ['burger', 'side', 'drink', 'custom'];
-const CATEGORY_LABEL: Record<Category, string> = {
-  burger: 'HAMBURGUESAS',
-  side:   'ACOMPAÑANTES',
-  drink:  'BEBIDAS',
-  custom: 'OTROS',
-};
-const CATEGORY_COLOR: Record<Category, string> = {
-  burger: '#E53935',
-  side:   '#FB8C00',
-  drink:  '#1E88E5',
-  custom: '#43A047',
-};
+interface CategoryGroup {
+  label: string;   // el propio valor de `category` — es el encabezado
+  order: number;   // categoryOrder (menor primero)
+  color: string;
+  products: Product[];
+}
+
+/**
+ * Agrupa los productos activos por `category` (texto libre). El valor de
+ * `category` ES el encabezado de la sección; se muestran tantas secciones como
+ * categorías distintas aparezcan. Se ordenan por `categoryOrder` (menor primero)
+ * y, a igualdad, por orden de aparición. El color se asigna por posición.
+ */
+function buildCategories(products: Product[]): CategoryGroup[] {
+  const map = new Map<string, CategoryGroup>();
+  let appearance = 0;
+  for (const p of products) {
+    if (!p.isActive) continue;
+    const label = p.category;
+    let group = map.get(label);
+    if (!group) {
+      group = { label, order: p.categoryOrder ?? appearance++, color: '', products: [] };
+      map.set(label, group);
+    }
+    group.products.push(p);
+  }
+  const groups = [...map.values()].sort((a, b) => a.order - b.order || a.label.localeCompare(b.label));
+  // El color se asigna tras ordenar, según la posición final de la categoría.
+  groups.forEach((g, i) => { g.color = CATEGORY_PALETTE[i % CATEGORY_PALETTE.length]; });
+  return groups;
+}
 
 export default React.memo(function ProductGrid({ products, onSelect, onLongPress }: Props): React.JSX.Element {
   const priceProfile    = useCartStore((s) => s.priceProfile);
@@ -35,13 +59,7 @@ export default React.memo(function ProductGrid({ products, onSelect, onLongPress
   const takeAway        = useCartStore((s) => s.takeAway);
   const toggleTakeAway  = useCartStore((s) => s.toggleTakeAway);
 
-  const byCategory = CATEGORY_ORDER.reduce<Record<Category, Product[]>>(
-    (acc, cat) => {
-      acc[cat] = products.filter((p) => p.category === cat && p.isActive);
-      return acc;
-    },
-    { burger: [], side: [], drink: [], custom: [] },
-  );
+  const categories = buildCategories(products);
 
   function handleOfertaPress(profile: PriceProfile): void {
     setPriceProfile(priceProfile === profile ? 'normal' : profile);
@@ -49,28 +67,24 @@ export default React.memo(function ProductGrid({ products, onSelect, onLongPress
 
   return (
     <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-      {CATEGORY_ORDER.map((cat) => {
-        const group = byCategory[cat];
-        if (group.length === 0) return null;
-        return (
-          <View key={cat} style={styles.section}>
-            <Text style={[styles.categoryLabel, { color: CATEGORY_COLOR[cat] }]}>
-              {CATEGORY_LABEL[cat]}
-            </Text>
-            <View style={styles.grid}>
-              {group.map((product) => (
-                <ProductTile
-                  key={product.id}
-                  product={product}
-                  accentColor={CATEGORY_COLOR[cat]}
-                  onPress={() => onSelect(product)}
-                  onLongPress={() => onLongPress(product)}
-                />
-              ))}
-            </View>
+      {categories.map((category) => (
+        <View key={category.label} style={styles.section}>
+          <Text style={[styles.categoryLabel, { color: category.color }]}>
+            {category.label}
+          </Text>
+          <View style={styles.grid}>
+            {category.products.map((product) => (
+              <ProductTile
+                key={product.id}
+                product={product}
+                accentColor={category.color}
+                onPress={() => onSelect(product)}
+                onLongPress={() => onLongPress(product)}
+              />
+            ))}
           </View>
-        );
-      })}
+        </View>
+      ))}
 
       {/* OFERTAS */}
       <View style={styles.section}>

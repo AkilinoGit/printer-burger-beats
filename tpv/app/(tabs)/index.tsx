@@ -36,6 +36,7 @@ export default function HomeScreen(): React.JSX.Element {
   const isLoadingProducts = useSessionStore((s) => s.isLoadingProducts);
   const loadProducts      = useSessionStore((s) => s.loadProducts);
   const activeSession       = useSessionStore((s) => s.activeSession);
+  const activeProductProfile = useSessionStore((s) => s.activeProductProfile);
   const nextTicketNumber    = useSessionStore((s) => s.nextTicketNumber);
   const forcePrintTwice     = useSessionStore((s) => s.forcePrintTwice);
   const printNoPrint        = useSessionStore((s) => s.printNoPrint);
@@ -63,8 +64,18 @@ export default function HomeScreen(): React.JSX.Element {
   const clearActiveTicket = useTicketStore((s) => s.clearActiveTicket);
 
   // ── modifier maps ─────────────────────────────────────────────────────────
+  // Built from ALL products (not the profile-filtered grid) so modifier labels
+  // always resolve, even for items whose product belongs to another profile.
   const { labels: MODIFIER_LABELS, radioNoSelection: RADIO_NO_SELECTION, radioOptionSets: RADIO_OPTION_SETS } =
     useMemo(() => buildMaps(products.flatMap((p) => p.modifiers)), [products]);
+
+  // ── profile-filtered grid ─────────────────────────────────────────────────
+  // Only products of the active profile are shown; the custom "OTROS" product
+  // is always visible so a free-price item can be added in any profile.
+  const visibleProducts = useMemo(
+    () => products.filter((p) => p.isCustom || p.profile === activeProductProfile),
+    [products, activeProductProfile],
+  );
 
   // ── stale session warning ─────────────────────────────────────────────────
   const [staleDialogVisible, setStaleDialogVisible] = useState(false);
@@ -283,7 +294,7 @@ export default function HomeScreen(): React.JSX.Element {
             </Button>
           </View>
         ) : (
-          <ProductGrid products={products} onSelect={handleProductPress} onLongPress={handleProductLongPress} />
+          <ProductGrid products={visibleProducts} onSelect={handleProductPress} onLongPress={handleProductLongPress} />
         )}
       </View>
 
@@ -395,7 +406,7 @@ export default function HomeScreen(): React.JSX.Element {
             printNoPrint={printNoPrint}
             printCopies={printCopies}
             modifierLabels={MODIFIER_LABELS}
-            products={products}
+            products={visibleProducts}
             onCobrar={handleCobrar}
             onPrint={() => void handlePrint()}
             onPressNoPrint={() => void setPrintNoPrint()}

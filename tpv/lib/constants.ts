@@ -124,19 +124,19 @@ const MOD_BURGER_NINO: Modifier[] = [
 ];
 
 export const INITIAL_PRODUCTS: Product[] = [
-  { id: 'fat-furious',     name: 'FAT & FURIOUS',   basePrice: 13.40, category: 'burger', modifiers: MOD_FAT_FURIOUS,   isCustom: false, isActive: true },
-  { id: 'ben-muerde',      name: 'BEN Y MUERDE',    basePrice: 12.00, category: 'burger', modifiers: MOD_BEN_MUERDE,      isCustom: false, isActive: true },
-  { id: 'doble-subwoofer', name: 'DOBLE SUBWOOFER', basePrice: 12.00, category: 'burger', modifiers: MOD_DOBLE_SUBWOOFER, isCustom: false, isActive: true },
-  { id: 'patatas',         name: 'PATATAS',          basePrice:  6.00, category: 'side',   modifiers: MOD_PATATAS, isCustom: false, isActive: true },
-  { id: 'alitas',          name: 'ALITAS',           basePrice:  8.00, category: 'side',   modifiers: [SALSA_RADIO_ALITAS],  isCustom: false, isActive: true },
-  { id: 'tekenos',         name: 'TEKEÑOS',          basePrice:  8.00, category: 'side',   modifiers: [SALSA_RADIO_TEKENOS], isCustom: false, isActive: true },
-  { id: 'gyozas-pollo',    name: 'GYOZAS POLLO',     basePrice:  8.00, category: 'side',   modifiers: [], isCustom: false, isActive: true },
-  { id: 'gyozas-verdura',  name: 'GYOZAS VERDURA',   basePrice:  8.00, category: 'side',   modifiers: [], isCustom: false, isActive: true },
-  { id: 'bebida',          name: 'BEBIDA',           basePrice:  2.00, category: 'drink',  modifiers: [], isCustom: false, isActive: true },
-  { id: 'agua',            name: 'AGUA',             basePrice:  1.00, category: 'drink',  modifiers: [], isCustom: false, isActive: true },
-  { id: 'burger-nino',     name: 'BURGER NIÑO',      basePrice:  8.00, category: 'custom', modifiers: MOD_BURGER_NINO,   isCustom: false, isActive: true },
-  { id: 'burger-veget',    name: 'BURGER VEGETARIANA', basePrice: 13.50, category: 'custom', modifiers: MOD_BURGER_VEGET, isCustom: false, isActive: true },
-  { id: 'otros',           name: 'OTROS',            basePrice:  0.00, category: 'custom', modifiers: [], isCustom: true,  isActive: true },
+  { id: 'fat-furious',     name: 'FAT & FURIOUS',   basePrice: 13.40, category: 'HAMBURGUESAS', categoryOrder: 0, profile: 'burger', modifiers: MOD_FAT_FURIOUS,   isCustom: false, isActive: true },
+  { id: 'ben-muerde',      name: 'BEN Y MUERDE',    basePrice: 12.00, category: 'HAMBURGUESAS', categoryOrder: 0, profile: 'burger', modifiers: MOD_BEN_MUERDE,      isCustom: false, isActive: true },
+  { id: 'doble-subwoofer', name: 'DOBLE SUBWOOFER', basePrice: 12.00, category: 'HAMBURGUESAS', categoryOrder: 0, profile: 'burger', modifiers: MOD_DOBLE_SUBWOOFER, isCustom: false, isActive: true },
+  { id: 'patatas',         name: 'PATATAS',          basePrice:  6.00, category: 'ACOMPAÑANTES', categoryOrder: 1, profile: 'burger', modifiers: MOD_PATATAS, isCustom: false, isActive: true },
+  { id: 'alitas',          name: 'ALITAS',           basePrice:  8.00, category: 'ACOMPAÑANTES', categoryOrder: 1, profile: 'burger', modifiers: [SALSA_RADIO_ALITAS],  isCustom: false, isActive: true },
+  { id: 'tekenos',         name: 'TEKEÑOS',          basePrice:  8.00, category: 'ACOMPAÑANTES', categoryOrder: 1, profile: 'burger', modifiers: [SALSA_RADIO_TEKENOS], isCustom: false, isActive: true },
+  { id: 'gyozas-pollo',    name: 'GYOZAS POLLO',     basePrice:  8.00, category: 'ACOMPAÑANTES', categoryOrder: 1, profile: 'burger', modifiers: [], isCustom: false, isActive: true },
+  { id: 'gyozas-verdura',  name: 'GYOZAS VERDURA',   basePrice:  8.00, category: 'ACOMPAÑANTES', categoryOrder: 1, profile: 'burger', modifiers: [], isCustom: false, isActive: true },
+  { id: 'bebida',          name: 'BEBIDA',           basePrice:  2.00, category: 'BEBIDAS',      categoryOrder: 2, profile: 'burger', modifiers: [], isCustom: false, isActive: true },
+  { id: 'agua',            name: 'AGUA',             basePrice:  1.00, category: 'BEBIDAS',      categoryOrder: 2, profile: 'burger', modifiers: [], isCustom: false, isActive: true },
+  { id: 'burger-nino',     name: 'BURGER NIÑO',      basePrice:  8.00, category: 'OTROS',        categoryOrder: 3, profile: 'burger', modifiers: MOD_BURGER_NINO,   isCustom: false, isActive: true },
+  { id: 'burger-veget',    name: 'BURGER VEGETARIANA', basePrice: 13.50, category: 'OTROS',      categoryOrder: 3, profile: 'burger', modifiers: MOD_BURGER_VEGET, isCustom: false, isActive: true },
+  { id: 'otros',           name: 'OTROS',            basePrice:  0.00, category: 'OTROS',        categoryOrder: 3, profile: 'burger', modifiers: [], isCustom: true,  isActive: true },
 ];
 
 export const DEFAULT_LOCATION_NAME = 'Local principal';
