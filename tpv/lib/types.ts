@@ -130,6 +130,7 @@ export interface ApiProduct {
   id: string;
   name: string;
   basePrice: number | string;
+  feriantePrice?: number | string | null; // precio oferta feriante; null = sin oferta (cae a basePrice)
   category: string;           // texto libre: es el encabezado de sección en la vista de venta
   categoryOrder?: number;     // orden de la category; opcional (fallback: orden de aparición)
   profile?: ProductProfile;   // opcional: si el backend no lo envía, la app asume 'burger'
@@ -143,4 +144,12 @@ export interface ApiProduct {
 export interface ProductCatalogResponse {
   version: string | null;
   products: ApiProduct[];
+}
+
+// Ubicaciones (locales) tal y como las devuelve/acepta el backend TPV.
+export interface ApiLocation {
+  id: string;
+  name: string;
+  isDefault: boolean;
+  createdAt: string;
 }

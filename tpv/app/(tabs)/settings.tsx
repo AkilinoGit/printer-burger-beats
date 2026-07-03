@@ -26,14 +26,11 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { useSessionStore } from '../../stores/useSessionStore';
 import {
-  getLocations,
   getPendingSyncEntries,
-  insertLocation,
-  replaceProductCatalog,
-  updateLocation,
   updateProductBasePrice,
 } from '../../services/db';
-import { fetchProductCatalog } from '../../services/catalogApi';
+import { runFullSync } from '../../services/syncAll';
+import { savePricesAndQueue, type PricePush } from '../../services/pricesApi';
 import { getApiBaseUrl, setApiBaseUrl, isApiBaseUrlFromEnv } from '../../services/apiConfig';
 import {
   clearPairedPrinter,
@@ -45,7 +42,6 @@ import {
   type PrinterDevice,
 } from '../../services/printer';
 import { DEFAULT_FERIANTE_PRICES } from '../../lib/constants';
-import type { Location } from '../../lib/types';
 import StableTextInput from '../../components/StableTextInput';
 
 /** Etiqueta a mostrar: alias del usuario si existe, si no el nombre Bluetooth. */
@@ -101,7 +97,6 @@ export default function SettingsScreen(): React.JSX.Element {
   useEffect(() => { void loadActiveProductProfile(); }, [loadActiveProductProfile]);
 
   // ── local state ───────────────────────────────────────────────────────────
-  const [locations, setLocations]           = useState<Location[]>([]);
   const [pendingCount, setPendingCount]     = useState(0);
   const [syncing, setSyncing]               = useState(false);
   const [loadingData, setLoadingData]       = useState(true);
@@ -109,16 +104,20 @@ export default function SettingsScreen(): React.JSX.Element {
   const [testingPrinter, setTestingPrinter] = useState(false);
   const [printerConnected, setPrinterConnected] = useState(false);
 
-  // Productos desde el backend
+  // Servidor / catálogo de productos
   const [apiBaseUrlInput, setApiBaseUrlInput]   = useState('');
-  const [updatingProducts, setUpdatingProducts] = useState(false);
   const [catalogUpdatedAt, setCatalogUpdatedAt] = useState<string | null>(null);
   const apiUrlLocked = isApiBaseUrlFromEnv(); // URL fijada por .env → solo lectura
+
+  // Sincronización unificada (productos + locales + futuras)
+  const [syncingAll, setSyncingAll]             = useState(false);
+  const [locationsSyncedAt, setLocationsSyncedAt] = useState<string | null>(null);
 
   useEffect(() => {
     void (async () => {
       setApiBaseUrlInput(await getApiBaseUrl());
       setCatalogUpdatedAt(await AsyncStorage.getItem('tpv:catalogUpdatedAt'));
+      setLocationsSyncedAt(await AsyncStorage.getItem('tpv:locationsSyncedAt'));
     })();
   }, []);
 
@@ -263,22 +262,11 @@ export default function SettingsScreen(): React.JSX.Element {
     setFerianteDraft((prev) => ({ ...prev, [id]: v }));
   }, []);
 
-  // Location management
-  const [locationDialogVisible, setLocationDialogVisible] = useState(false);
-  const [editingLocation, setEditingLocation] = useState<Location | null>(null);
-  const [locationName, setLocationName]       = useState('');
-  const [locationNameError, setLocationNameError] = useState('');
-  const [savingLocation, setSavingLocation]   = useState(false);
-
   // ── load ──────────────────────────────────────────────────────────────────
   const loadData = useCallback(async () => {
     setLoadingData(true);
     try {
-      const [locs, pending] = await Promise.all([
-        getLocations(),
-        getPendingSyncEntries(),
-      ]);
-      setLocations(locs);
+      const pending = await getPendingSyncEntries();
       setPendingCount(pending.length);
     } finally {
       setLoadingData(false);
@@ -305,45 +293,31 @@ export default function SettingsScreen(): React.JSX.Element {
     }
   }
 
-  // ── productos (backend) ─────────────────────────────────────────────────────
-  async function handleUpdateProducts(): Promise<void> {
-    // Persistir la URL introducida antes de descargar (salvo si la fija el .env).
+  // ── sincronización unificada (productos + locales + futuras) ────────────────
+  // Todas las sincronizaciones de datos se ejecutan desde aquí. La cola de
+  // tickets (handleSync) es la única excepción y conserva su botón propio.
+  async function handleSyncAll(): Promise<void> {
+    // Persistir la URL introducida antes de sincronizar (salvo si la fija el .env).
     if (!apiUrlLocked) {
       try { await setApiBaseUrl(apiBaseUrlInput); } catch { /* ignore */ }
     }
 
-    setUpdatingProducts(true);
+    setSyncingAll(true);
     try {
-      const res = await fetchProductCatalog();
-      if (!res.ok) {
-        Alert.alert(
-          'No se pudo actualizar',
-          `${res.error}\n\nSe mantienen los productos actuales.`,
-        );
-        return;
-      }
-      // Reemplazo total en SQLite (rollback seguro si falla).
-      await replaceProductCatalog(res.catalog.products);
-      const now = new Date().toISOString();
-      await AsyncStorage.multiSet([
-        ['tpv:catalogVersion', res.catalog.version ?? ''],
-        ['tpv:catalogUpdatedAt', now],
-      ]);
-      setCatalogUpdatedAt(now);
-      // Recargar el store desde SQLite (misma acción que el "reintentar").
-      await loadProducts();
+      const { results, allOk } = await runFullSync();
+      // Refrescar la UI desde las fuentes que las tasks acaban de actualizar.
+      setCatalogUpdatedAt(await AsyncStorage.getItem('tpv:catalogUpdatedAt'));
+      setLocationsSyncedAt(await AsyncStorage.getItem('tpv:locationsSyncedAt'));
+
+      const lines = results
+        .map((r) => `${r.ok ? '✓' : '✗'} ${r.label}: ${r.detail}`)
+        .join('\n');
       Alert.alert(
-        'Productos actualizados',
-        `${res.catalog.products.length} ${res.catalog.products.length === 1 ? 'producto cargado' : 'productos cargados'}.`,
-      );
-    } catch (e) {
-      const detail = e instanceof Error ? e.message : String(e);
-      Alert.alert(
-        'No se pudo actualizar',
-        `${detail}\n\nSe mantienen los productos actuales.`,
+        allOk ? 'Sincronización completada' : 'Sincronización con errores',
+        lines,
       );
     } finally {
-      setUpdatingProducts(false);
+      setSyncingAll(false);
     }
   }
 
@@ -379,14 +353,18 @@ export default function SettingsScreen(): React.JSX.Element {
     }
     setSavingBase(true);
     try {
+      const changed: PricePush[] = [];
       for (const p of editableProducts) {
         const val = parseFloat(baseDraft[p.id].replace(',', '.'));
         if (val !== p.basePrice) {
           await updateProductBasePrice(p.id, val);
+          changed.push({ id: p.id, basePrice: val });
         }
       }
       // Reload from SQLite so store reflects persisted prices
       await loadProducts();
+      // Subir al backend (best-effort; si falla queda en cola de reintento).
+      void savePricesAndQueue(changed);
       setBasePricesVisible(false);
     } finally {
       setSavingBase(false);
@@ -416,53 +394,13 @@ export default function SettingsScreen(): React.JSX.Element {
     setSavingFeriante(true);
     try {
       await setFeriantePrices(parsed);
+      // Subir al backend (best-effort; si falla queda en cola de reintento).
+      const changed: PricePush[] = ferianteProductIds.map((id) => ({ id, feriantePrice: parsed[id] }));
+      void savePricesAndQueue(changed);
       setFerianteVisible(false);
     } finally {
       setSavingFeriante(false);
     }
-  }
-
-  // ── location management ───────────────────────────────────────────────────
-  function openAddLocation(): void {
-    setEditingLocation(null);
-    setLocationName('');
-    setLocationNameError('');
-    setLocationDialogVisible(true);
-  }
-
-  function openEditLocation(loc: Location): void {
-    setEditingLocation(loc);
-    setLocationName(loc.name);
-    setLocationNameError('');
-    setLocationDialogVisible(true);
-  }
-
-  async function handleSaveLocation(): Promise<void> {
-    const name = locationName.trim();
-    if (!name) {
-      setLocationNameError('El nombre no puede estar vacío.');
-      return;
-    }
-    setSavingLocation(true);
-    try {
-      if (editingLocation) {
-        await updateLocation(editingLocation.id, name);
-      } else {
-        await insertLocation(name, locations.length === 0);
-      }
-      const updated = await getLocations();
-      setLocations(updated);
-      setLocationDialogVisible(false);
-    } finally {
-      setSavingLocation(false);
-    }
-  }
-
-  function handleSetDefault(_loc: Location): void {
-    Alert.alert(
-      'No disponible',
-      'El cambio de local por defecto se implementará junto con la API. Próximamente.',
-    );
   }
 
   // ── render ────────────────────────────────────────────────────────────────
@@ -623,14 +561,11 @@ export default function SettingsScreen(): React.JSX.Element {
         </TouchableRipple>
       </Surface>
 
-      {/* ── PERFIL DE PRODUCTOS ───────────────────────────────────────────── */}
-      <Text variant="labelLarge" style={styles.sectionLabel}>PERFIL DE PRODUCTOS</Text>
+      {/* ── PRODUCTOS ─────────────────────────────────────────────────────── */}
+      <Text variant="labelLarge" style={styles.sectionLabel}>PRODUCTOS</Text>
       <Surface style={styles.card} elevation={1}>
         <View style={styles.profileSection}>
           <Text style={styles.priceActionTitle}>Carta activa en venta</Text>
-          <Text style={styles.priceActionSubtitle}>
-            En la pantalla de venta solo se mostrarán los productos de este perfil.
-          </Text>
           <SegmentedButtons
             value={activeProductProfile}
             onValueChange={(v) => void setActiveProductProfile(v as 'burger' | 'cafe')}
@@ -643,17 +578,13 @@ export default function SettingsScreen(): React.JSX.Element {
         </View>
       </Surface>
 
-      {/* ── PRODUCTOS ─────────────────────────────────────────────────────── */}
-      <Text variant="labelLarge" style={styles.sectionLabel}>PRODUCTOS</Text>
+      {/* ── SYNC ──────────────────────────────────────────────────────────── */}
+      <Text variant="labelLarge" style={styles.sectionLabel}>SINCRONIZACIÓN</Text>
       <Surface style={styles.card} elevation={1}>
-        <Text style={styles.syncTitle}>Servidor</Text>
+        {/* Servidor: URL usada por todas las sincronizaciones */}
+        <Text style={[styles.syncTitle, styles.serverTitle]}>Servidor</Text>
         {apiUrlLocked ? (
-          <>
-            <Text style={styles.apiUrlValue}>{apiBaseUrlInput || '(sin configurar)'}</Text>
-            <Text style={styles.syncHint}>
-              Fijado en la app (variable de entorno). No editable aquí.
-            </Text>
-          </>
+          <Text style={styles.apiUrlValue}>{apiBaseUrlInput || '(sin configurar)'}</Text>
         ) : (
           <StableTextInput
             value={apiBaseUrlInput}
@@ -666,26 +597,28 @@ export default function SettingsScreen(): React.JSX.Element {
           />
         )}
         <Divider style={styles.cardDivider} />
+
+        {/* Botón unificado: productos + locales (+ futuras sincronizaciones) */}
         <Button
           mode="contained"
-          icon="download"
-          onPress={() => void handleUpdateProducts()}
-          loading={updatingProducts}
-          disabled={updatingProducts}
+          icon="cloud-sync"
+          onPress={() => void handleSyncAll()}
+          loading={syncingAll}
+          disabled={syncingAll}
           buttonColor="#43A047"
           style={styles.syncBtn}
         >
-          Actualizar productos
+          Sincronizar ahora
         </Button>
         <Text style={styles.syncHint}>
-          {formatUpdatedAt(catalogUpdatedAt)} Descarga la carta desde el servidor y
-          reemplaza la local. Sin conexión, se mantiene la actual.
+          Sincroniza productos y locales con el servidor.{'\n'}
+          Productos — {formatUpdatedAt(catalogUpdatedAt)}{'\n'}
+          Locales — {formatUpdatedAt(locationsSyncedAt)}
         </Text>
-      </Surface>
 
-      {/* ── SYNC ──────────────────────────────────────────────────────────── */}
-      <Text variant="labelLarge" style={styles.sectionLabel}>SINCRONIZACIÓN</Text>
-      <Surface style={styles.card} elevation={1}>
+        <Divider style={styles.cardDivider} />
+
+        {/* Cola de tickets: sincronización propia, independiente del botón unificado */}
         <View style={styles.syncRow}>
           <View>
             <Text style={styles.syncTitle}>Cola de sincronización</Text>
@@ -712,60 +645,11 @@ export default function SettingsScreen(): React.JSX.Element {
           buttonColor="#546E7A"
           style={styles.syncBtn}
         >
-          Sincronizar ahora
+          Sincronizar cola de tickets
         </Button>
         <Text style={styles.syncHint}>
           API no configurada. Los datos se sincronizarán automáticamente cuando esté disponible.
         </Text>
-      </Surface>
-
-      {/* ── LOCATIONS ─────────────────────────────────────────────────────── */}
-      <Text variant="labelLarge" style={styles.sectionLabel}>LOCALES</Text>
-      <Surface style={styles.card} elevation={1}>
-        {locations.map((loc, idx) => (
-          <React.Fragment key={loc.id}>
-            {idx > 0 && <Divider />}
-            <View style={styles.locationRow}>
-              <View style={styles.locationRowLeft}>
-                <Text style={styles.locationName}>{loc.name}</Text>
-                {loc.isDefault && (
-                  <Text style={styles.locationDefault}>Por defecto</Text>
-                )}
-              </View>
-              <View style={styles.locationRowActions}>
-                {!loc.isDefault && (
-                  <Button
-                    compact
-                    mode="text"
-                    onPress={() => void handleSetDefault(loc)}
-                    textColor="#777"
-                  >
-                    Predeterminar
-                  </Button>
-                )}
-                <Button
-                  compact
-                  mode="text"
-                  icon="pencil"
-                  onPress={() => openEditLocation(loc)}
-                  textColor="#1565C0"
-                >
-                  Editar
-                </Button>
-              </View>
-            </View>
-          </React.Fragment>
-        ))}
-        {locations.length > 0 && <Divider />}
-        <Button
-          mode="text"
-          icon="plus"
-          onPress={openAddLocation}
-          style={styles.addLocationBtn}
-          textColor="#43A047"
-        >
-          Añadir local
-        </Button>
       </Surface>
 
       {/* ── DIALOGS ───────────────────────────────────────────────────────── */}
@@ -783,7 +667,7 @@ export default function SettingsScreen(): React.JSX.Element {
               onChangeText={setPrinterAliasInput}
               placeholder={printerEditTarget?.name}
               autoFocus
-              style={styles.locationInput}
+              style={styles.printerAliasInput}
             />
             <Text style={styles.printerDialogHint}>
               Déjalo vacío para volver al nombre original del dispositivo.
@@ -947,45 +831,6 @@ export default function SettingsScreen(): React.JSX.Element {
           </Dialog.Actions>
         </Dialog>
 
-        {/* Add / edit location */}
-        <Dialog visible={locationDialogVisible} onDismiss={() => setLocationDialogVisible(false)}>
-          <Dialog.Title>
-            {editingLocation ? 'Editar local' : 'Nuevo local'}
-          </Dialog.Title>
-          <Dialog.Content>
-            <StableTextInput
-              label="Nombre del local"
-              value={locationName}
-              onChangeText={(v) => {
-                setLocationName(v);
-                setLocationNameError('');
-              }}
-              mode="outlined"
-              autoFocus
-              autoCapitalize="sentences"
-              returnKeyType="done"
-              onSubmitEditing={() => void handleSaveLocation()}
-              error={!!locationNameError}
-              style={styles.locationInput}
-            />
-            {!!locationNameError && (
-              <Text style={styles.locationInputError}>{locationNameError}</Text>
-            )}
-          </Dialog.Content>
-          <Dialog.Actions>
-            <Button onPress={() => setLocationDialogVisible(false)}>Cancelar</Button>
-            <Button
-              mode="contained"
-              onPress={() => void handleSaveLocation()}
-              loading={savingLocation}
-              disabled={savingLocation || !locationName.trim()}
-              buttonColor="#43A047"
-            >
-              Guardar
-            </Button>
-          </Dialog.Actions>
-        </Dialog>
-
       </Portal>
     </ScrollView>
   );
@@ -1087,6 +932,10 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#111',
   },
+  serverTitle: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+  },
   syncSubtitle: {
     fontSize: 13,
     color: '#666',
@@ -1132,34 +981,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 14,
     lineHeight: 17,
-  },
-
-  // ── locations ──
-  locationRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    gap: 8,
-  },
-  locationRowLeft: { flex: 1, gap: 2 },
-  locationName: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#111',
-  },
-  locationDefault: {
-    fontSize: 12,
-    color: '#43A047',
-    fontWeight: '600',
-  },
-  locationRowActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexShrink: 0,
-  },
-  addLocationBtn: {
-    margin: 4,
   },
 
   // ── printer current ──
@@ -1235,10 +1056,5 @@ const styles = StyleSheet.create({
   },
 
   // ── location dialog ──
-  locationInput: { backgroundColor: '#fff' },
-  locationInputError: {
-    color: '#E53935',
-    fontSize: 12,
-    marginTop: 4,
-  },
+  printerAliasInput: { backgroundColor: '#fff' },
 });

@@ -1,12 +1,14 @@
 import { create } from 'zustand';
 import { generateId } from '../lib/utils';
 import type { OrderItem, PriceProfile, Product } from '../lib/types';
-import { DEFAULT_FERIANTE_PRICES } from '../lib/constants';
 import { useSessionStore } from './useSessionStore';
 
 function resolveUnitPrice(productId: string, basePrice: number, profile: PriceProfile): number {
   if (profile === 'invitacion') return 0;
-  if (profile === 'feriante') return DEFAULT_FERIANTE_PRICES[productId] ?? basePrice;
+  // Precios feriante editados/sincronizados (store), no la constante inicial.
+  if (profile === 'feriante') {
+    return useSessionStore.getState().feriantePrices[productId] ?? basePrice;
+  }
   return basePrice;
 }
 

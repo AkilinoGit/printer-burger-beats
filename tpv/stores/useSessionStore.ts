@@ -147,6 +147,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       await initDb();
       // Restore persisted forcePrintTwice flag — fire-and-forget, defaults to false
       void get().loadForcePrintTwice();
+      // Restore persisted feriante prices — fire-and-forget, defaults to DEFAULT_FERIANTE_PRICES
+      void get().loadFeriantePrices();
       // Restore persisted print mode (red/blue toggles) — fire-and-forget
       void get().loadPrintMode();
       // Restore persisted active product profile — fire-and-forget, defaults to 'burger'

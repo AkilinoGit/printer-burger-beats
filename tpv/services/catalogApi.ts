@@ -30,6 +30,9 @@ function normalizeProduct(p: ApiProduct): ApiProduct {
   return {
     ...p,
     basePrice: toNumber(p.basePrice),
+    feriantePrice: p.feriantePrice !== undefined && p.feriantePrice !== null
+      ? toNumber(p.feriantePrice)
+      : null,
     modifiers: (p.modifiers ?? []).map((m) => ({
       ...m,
       priceAdd: m.priceAdd !== undefined && m.priceAdd !== null ? toNumber(m.priceAdd) : undefined,

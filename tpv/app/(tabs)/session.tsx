@@ -11,9 +11,9 @@ import {
   Button,
   Dialog,
   Divider,
+  IconButton,
   Menu,
   Portal,
-  SegmentedButtons,
   Surface,
   Text,
   TextInput,
@@ -28,8 +28,10 @@ import {
   getNextTicketNumber,
   getSessionSummary,
   getSessions,
+  insertLocation,
   insertSession,
 } from '../../services/db';
+import { syncLocations } from '../../services/locationsApi';
 import { formatPrice } from '../../lib/utils';
 import type { Location, Session } from '../../lib/types';
 import StableTextInput from '../../components/StableTextInput';
@@ -421,6 +423,13 @@ export default function SessionScreen(): React.JSX.Element {
 
   // New session selector
   const [selectedLocationId, setSelectedLocationId] = useState<string>('');
+  const [locationPickerExpanded, setLocationPickerExpanded] = useState(false);
+
+  // Create new location dialog (from the new-session picker)
+  const [newLocDialogVisible, setNewLocDialogVisible] = useState(false);
+  const [newLocName, setNewLocName] = useState('');
+  const [newLocError, setNewLocError] = useState('');
+  const [savingNewLoc, setSavingNewLoc] = useState(false);
 
   // History filter
   const [filterLocationId, setFilterLocationId] = useState<string>(ALL_LOCATIONS);
@@ -469,6 +478,44 @@ export default function SessionScreen(): React.JSX.Element {
     }
     setPriceDraft(draft);
     setPriceDialogVisible(true);
+  }
+
+  // ── location picker ─────────────────────────────────────────────────────────
+  function handleSelectLocation(id: string): void {
+    setSelectedLocationId(id);
+    const loc = locations.find((l) => l.id === id);
+    if (loc) setActiveLocation(loc);
+    setLocationPickerExpanded(false);
+  }
+
+  function openNewLocationDialog(): void {
+    setNewLocName('');
+    setNewLocError('');
+    setNewLocDialogVisible(true);
+  }
+
+  async function handleCreateLocation(): Promise<void> {
+    const name = newLocName.trim();
+    if (!name) {
+      setNewLocError('El nombre no puede estar vacío.');
+      return;
+    }
+    setSavingNewLoc(true);
+    try {
+      const created = await insertLocation(name, locations.length === 0);
+      const updated = await getLocations();
+      setLocations(updated);
+      setSelectedLocationId(created.id);
+      setActiveLocation(created);
+      setNewLocDialogVisible(false);
+      setLocationPickerExpanded(false);
+      // Empuje silencioso al backend (fire-and-forget).
+      void syncLocations().then((res) => {
+        if (res.ok) void getLocations().then(setLocations);
+      });
+    } finally {
+      setSavingNewLoc(false);
+    }
   }
 
   async function handleOpenSession(): Promise<void> {
@@ -572,20 +619,65 @@ export default function SessionScreen(): React.JSX.Element {
               <>
                 <Text style={styles.sectionLabel}>NUEVA SESIÓN</Text>
                 <Surface style={styles.openCard} elevation={1}>
-                  {locations.length > 1 ? (
-                    <>
-                      <Text style={styles.openCardHint}>Selecciona la ubicación</Text>
-                      <SegmentedButtons
-                        value={selectedLocationId}
-                        onValueChange={setSelectedLocationId}
-                        buttons={locations.map((l) => ({ value: l.id, label: l.name }))}
-                      />
-                    </>
-                  ) : (
-                    <Text style={styles.openCardLocation}>
-                      {locations[0]?.name ?? '—'}
-                    </Text>
-                  )}
+                  <Text style={styles.openCardHint}>Ubicación</Text>
+                  <View style={styles.locPicker}>
+                    <TouchableRipple
+                      onPress={() => setLocationPickerExpanded((v) => !v)}
+                      rippleColor="rgba(0,0,0,0.06)"
+                      style={styles.locSelected}
+                    >
+                      <View style={styles.locRow}>
+                        <Text style={styles.openCardLocation}>
+                          {locationName(selectedLocationId) || '—'}
+                        </Text>
+                        <IconButton
+                          icon={locationPickerExpanded ? 'chevron-up' : 'chevron-down'}
+                          size={24}
+                          onPress={() => setLocationPickerExpanded((v) => !v)}
+                          style={styles.locChevron}
+                        />
+                      </View>
+                    </TouchableRipple>
+
+                    {locationPickerExpanded && (
+                      <View style={styles.locList}>
+                        <Divider />
+                        <TouchableRipple
+                          onPress={openNewLocationDialog}
+                          rippleColor="rgba(67,160,71,0.12)"
+                          style={styles.locOption}
+                        >
+                          <View style={styles.locRow}>
+                            <Text style={styles.locNewText}>+ Crear nueva ubicación</Text>
+                          </View>
+                        </TouchableRipple>
+                        {locations.map((l) => (
+                          <React.Fragment key={l.id}>
+                            <Divider />
+                            <TouchableRipple
+                              onPress={() => handleSelectLocation(l.id)}
+                              rippleColor="rgba(0,0,0,0.06)"
+                              style={styles.locOption}
+                            >
+                              <View style={styles.locRow}>
+                                <Text
+                                  style={[
+                                    styles.locOptionText,
+                                    l.id === selectedLocationId && styles.locOptionTextActive,
+                                  ]}
+                                >
+                                  {l.name}
+                                </Text>
+                                {l.id === selectedLocationId && (
+                                  <IconButton icon="check" size={20} style={styles.locChevron} iconColor="#43A047" />
+                                )}
+                              </View>
+                            </TouchableRipple>
+                          </React.Fragment>
+                        ))}
+                      </View>
+                    )}
+                  </View>
                   <Button
                     mode="contained"
                     icon="play-circle"
@@ -722,6 +814,33 @@ export default function SessionScreen(): React.JSX.Element {
             </Button>
           </Dialog.Actions>
         </Dialog>
+
+        {/* Crear nueva ubicación (desde el selector de nueva sesión) */}
+        <Dialog visible={newLocDialogVisible} onDismiss={() => setNewLocDialogVisible(false)}>
+          <Dialog.Title>Nueva ubicación</Dialog.Title>
+          <Dialog.Content>
+            <StableTextInput
+              label="Nombre"
+              value={newLocName}
+              onChangeText={(t) => { setNewLocName(t); setNewLocError(''); }}
+              autoFocus
+              error={!!newLocError}
+            />
+            {!!newLocError && <Text style={styles.locErrorText}>{newLocError}</Text>}
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button onPress={() => setNewLocDialogVisible(false)}>Cancelar</Button>
+            <Button
+              mode="contained"
+              onPress={() => void handleCreateLocation()}
+              loading={savingNewLoc}
+              disabled={savingNewLoc}
+              buttonColor="#43A047"
+            >
+              Crear
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
       </Portal>
     </View>
   );
@@ -774,6 +893,50 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '700',
     color: '#111',
+  },
+  locPicker: {
+    borderWidth: 1,
+    borderColor: '#e2e2e2',
+    borderRadius: 10,
+    overflow: 'hidden',
+  },
+  locSelected: {
+    paddingLeft: 14,
+  },
+  locRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  locChevron: {
+    margin: 0,
+  },
+  locList: {
+    backgroundColor: '#fafafa',
+  },
+  locOption: {
+    paddingVertical: 12,
+    paddingLeft: 14,
+    paddingRight: 6,
+  },
+  locOptionText: {
+    fontSize: 16,
+    color: '#333',
+  },
+  locOptionTextActive: {
+    fontWeight: '700',
+    color: '#43A047',
+  },
+  locNewText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#43A047',
+    paddingVertical: 4,
+  },
+  locErrorText: {
+    color: '#E53935',
+    fontSize: 13,
+    marginTop: 6,
   },
   openBtn: {
     borderRadius: 10,

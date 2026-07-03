@@ -13,6 +13,7 @@ import type {
   SyncStatus,
   SyncQueueEntry,
   ApiProduct,
+  ApiLocation,
 } from '../lib/types';
 
 // ---------------------------------------------------------------------------
@@ -868,6 +869,34 @@ export async function insertLocation(name: string, isDefault: boolean): Promise<
 export async function updateLocation(id: string, name: string): Promise<void> {
   const db = await getDb();
   await db.runAsync('UPDATE locations SET name = ? WHERE id = ?', [name, id]);
+}
+
+/**
+ * Fusiona las ubicaciones recibidas del backend con las locales.
+ * Actualiza nombre e is_default de las existentes (por id) e inserta las nuevas.
+ * No borra ubicaciones locales que el backend desconozca (offline-first).
+ */
+export async function upsertLocationsFromBackend(locations: ApiLocation[]): Promise<void> {
+  const db = await getDb();
+  await db.withExclusiveTransactionAsync(async (txn) => {
+    for (const loc of locations) {
+      const existing = await txn.getFirstAsync<{ id: string }>(
+        'SELECT id FROM locations WHERE id = ?',
+        [loc.id],
+      );
+      if (existing) {
+        await txn.runAsync(
+          'UPDATE locations SET name = ?, is_default = ? WHERE id = ?',
+          [loc.name, loc.isDefault ? 1 : 0, loc.id],
+        );
+      } else {
+        await txn.runAsync(
+          'INSERT INTO locations (id, name, is_default, created_at) VALUES (?, ?, ?, ?)',
+          [loc.id, loc.name, loc.isDefault ? 1 : 0, loc.createdAt || new Date().toISOString()],
+        );
+      }
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------

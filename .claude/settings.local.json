@@ -122,7 +122,13 @@
       "PowerShell(git diff:*)",
       "PowerShell(Get-NetConnectionProfile)",
       "PowerShell(& \"c:\\dev\\TPV by AKI SOFTWARE\\scripts\\update-lan-ip.ps1\":*)",
-      "PowerShell(Get-NetFirewallRule -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match 'expo|8081|19000|19001|Node.js' } | Select-Object DisplayName, Enabled, Direction, Action, Profile | Format-Table -AutoSize)"
+      "PowerShell(Get-NetFirewallRule -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match 'expo|8081|19000|19001|Node.js' } | Select-Object DisplayName, Enabled, Direction, Action, Profile | Format-Table -AutoSize)",
+      "Bash(php -l src/Controllers/Api/Tpv/ProductController.php)",
+      "Bash(php -l src/Repositories/ProductRepository.php)",
+      "Bash(php -l src/Bootstrap/Routes.php)",
+      "Bash(grep -n 'function numeric\\\\|function min\\\\|function required\\\\|isset\\\\|array_key_exists\\\\|=== null\\\\|return $this')",
+      "Bash(php -l src/Controllers/Api/Admin/RecipeController.php)",
+      "Bash(php -l src/Repositories/ProductRecipeRepository.php)"
     ],
     "additionalDirectories": [
       "C:\\laragon\\www\\burger-beats-backend",

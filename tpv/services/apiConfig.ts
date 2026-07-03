@@ -77,27 +77,33 @@ function normalizeBaseUrl(url: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// GET con parseo del envoltorio { ok, data|error }
+// Petición con parseo del envoltorio { ok, data|error }
 // ---------------------------------------------------------------------------
 
 /**
- * GET a `{baseUrl}{path}` (path debe empezar por '/', p.ej. '/api/v1/tpv/products').
+ * Petición a `{baseUrl}{path}` (path debe empezar por '/', p.ej. '/api/v1/tpv/products').
  * Devuelve `data` ya desenvuelto. Lanza `ApiError` en cualquier fallo
  * (red, HTTP, envoltorio ok:false, 401 de api key con cuerpo no estándar).
+ * Si `body` está definido se envía como JSON (POST/PUT).
  */
-export async function apiGet<T>(path: string): Promise<T> {
+async function apiRequest<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
   const baseUrl = await getApiBaseUrl();
   if (!baseUrl) {
     throw new ApiError('NO_BASE_URL', 'No hay URL del servidor configurada.', 0);
   }
 
   const headers: Record<string, string> = { Accept: 'application/json' };
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
   const apiKey = await getApiKey();
   if (apiKey) headers['X-API-Key'] = apiKey;
 
   let res: Response;
   try {
-    res = await fetch(`${baseUrl}${path}`, { method: 'GET', headers });
+    res = await fetch(`${baseUrl}${path}`, {
+      method,
+      headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
   } catch (e) {
     throw new ApiError('NETWORK_ERROR', e instanceof Error ? e.message : 'Fallo de red', 0);
   }
@@ -107,14 +113,14 @@ export async function apiGet<T>(path: string): Promise<T> {
     throw new ApiError('invalid_api_key', 'Credencial de API inválida.', 401);
   }
 
-  let body: unknown;
+  let parsed: unknown;
   try {
-    body = await res.json();
+    parsed = await res.json();
   } catch {
     throw new ApiError('INVALID_JSON', `Respuesta no válida (HTTP ${res.status}).`, res.status);
   }
 
-  const env = body as {
+  const env = parsed as {
     ok?: boolean;
     data?: T;
     error?: { code?: string; message?: string; fields?: Record<string, string> };
@@ -131,4 +137,14 @@ export async function apiGet<T>(path: string): Promise<T> {
     res.status,
     err?.fields,
   );
+}
+
+/** GET desenvuelto. Ver `apiRequest`. */
+export function apiGet<T>(path: string): Promise<T> {
+  return apiRequest<T>('GET', path);
+}
+
+/** POST con cuerpo JSON, respuesta desenvuelta. Ver `apiRequest`. */
+export function apiPost<T>(path: string, body: unknown): Promise<T> {
+  return apiRequest<T>('POST', path, body);
 }
