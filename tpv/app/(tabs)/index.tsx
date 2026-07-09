@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, KeyboardAvoidingView, Modal, Platform, StyleSheet, View } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { ActivityIndicator, Banner, Button, Dialog, Portal, Text, TextInput } from 'react-native-paper';
@@ -13,6 +13,7 @@ import NewTicketScreen from '../ticket/NewTicketScreen';
 import type { Product } from '../../lib/types';
 import type { Order } from '../../lib/types';
 import { isSessionStale } from '../../lib/utils';
+import { buildProfileList } from '../../lib/profiles';
 import { useCartStore } from '../../stores/useCartStore';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useTicketStore } from '../../stores/useTicketStore';
@@ -37,6 +38,8 @@ export default function HomeScreen(): React.JSX.Element {
   const loadProducts      = useSessionStore((s) => s.loadProducts);
   const activeSession       = useSessionStore((s) => s.activeSession);
   const activeProductProfile = useSessionStore((s) => s.activeProductProfile);
+  const setActiveProductProfile = useSessionStore((s) => s.setActiveProductProfile);
+  const catalogProfiles = useSessionStore((s) => s.catalogProfiles);
   const nextTicketNumber    = useSessionStore((s) => s.nextTicketNumber);
   const forcePrintTwice     = useSessionStore((s) => s.forcePrintTwice);
   const printNoPrint        = useSessionStore((s) => s.printNoPrint);
@@ -76,6 +79,20 @@ export default function HomeScreen(): React.JSX.Element {
     () => products.filter((p) => p.isCustom || p.profile === activeProductProfile),
     [products, activeProductProfile],
   );
+
+  // Reconciliación: si el perfil activo persistido ya no existe en el catálogo
+  // (p.ej. se eliminó o se renombró desde el admin), cae al primer perfil
+  // disponible para que la carta no quede en blanco. Solo con productos cargados.
+  const profileList = useMemo(
+    () => buildProfileList(products, catalogProfiles),
+    [products, catalogProfiles],
+  );
+  useEffect(() => {
+    if (products.length === 0) return;
+    if (!profileList.some((p) => p.value === activeProductProfile)) {
+      void setActiveProductProfile(profileList[0].value);
+    }
+  }, [products.length, profileList, activeProductProfile, setActiveProductProfile]);
 
   // ── stale session warning ─────────────────────────────────────────────────
   const [staleDialogVisible, setStaleDialogVisible] = useState(false);

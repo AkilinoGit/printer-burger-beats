@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
-import type { Location, Product, ProductProfile, Session } from '../lib/types';
+import type { Location, Product, ProductProfile, Profile, Session } from '../lib/types';
 import { DEFAULT_FERIANTE_PRICES } from '../lib/constants';
 import { closeSession, getActiveSession, getNextTicketNumber, getProducts, initDb } from '../services/db';
 
@@ -8,6 +8,7 @@ const FERIANTE_PRICES_KEY = 'tpv:feriantePrices';
 const FORCE_PRINT_TWICE_KEY = 'tpv:forcePrintTwice';
 const PRINT_MODE_KEY = 'tpv:printMode';
 const ACTIVE_PRODUCT_PROFILE_KEY = 'tpv:activeProductProfile';
+const CATALOG_PROFILES_KEY = 'tpv:catalogProfiles';
 
 export type PrintCopies = 'x1' | 'x2';
 
@@ -28,6 +29,12 @@ interface SessionState {
   lastTicketNumber: number;
   /** Product profile shown in the sales grid. Persisted in AsyncStorage. */
   activeProductProfile: ProductProfile;
+  /**
+   * Perfiles de carta servidos por el backend (entidad). Fuente autoritativa
+   * del selector de "carta activa". Vacío ⇒ los perfiles se derivan de los
+   * productos. Persistido en AsyncStorage tras cada sync de catálogo.
+   */
+  catalogProfiles: Profile[];
 
   // --- setters ---
   setActiveLocation: (location: Location) => void;
@@ -84,6 +91,8 @@ interface SessionState {
   loadActiveProductProfile: () => Promise<void>;
   /** Update the active product profile and persist to AsyncStorage. */
   setActiveProductProfile: (profile: ProductProfile) => Promise<void>;
+  /** Load persisted backend profiles list from AsyncStorage. Call once on app start. */
+  loadCatalogProfiles: () => Promise<void>;
 
   /** Load persisted print mode (red/blue toggles) from AsyncStorage. Call once on app start. */
   loadPrintMode: () => Promise<void>;
@@ -107,6 +116,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   printCopies: 'x1',
   lastTicketNumber: 0,
   activeProductProfile: 'burger',
+  catalogProfiles: [],
 
   setActiveLocation: (location) => set({ activeLocation: location }),
 
@@ -153,6 +163,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       void get().loadPrintMode();
       // Restore persisted active product profile — fire-and-forget, defaults to 'burger'
       void get().loadActiveProductProfile();
+      // Restore persisted backend profiles list — fire-and-forget, defaults to []
+      void get().loadCatalogProfiles();
       const [session, products] = await Promise.all([getActiveSession(), getProducts()]);
       if (session) {
         const lastNum = await getNextTicketNumber(session.id) - 1;
@@ -224,7 +236,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   loadActiveProductProfile: async () => {
     try {
       const stored = await AsyncStorage.getItem(ACTIVE_PRODUCT_PROFILE_KEY);
-      if (stored === 'burger' || stored === 'cafe') {
+      // Acepta cualquier slug no vacío (el conjunto de perfiles es abierto).
+      // Si el perfil ya no existe en el catálogo, la pantalla de venta lo
+      // reconcilia al primer perfil disponible (ver reconciliación en index).
+      if (stored) {
         set({ activeProductProfile: stored });
       }
     } catch {
@@ -238,6 +253,18 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       await AsyncStorage.setItem(ACTIVE_PRODUCT_PROFILE_KEY, profile);
     } catch {
       // silently ignore
+    }
+  },
+
+  loadCatalogProfiles: async () => {
+    try {
+      const stored = await AsyncStorage.getItem(CATALOG_PROFILES_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored) as Profile[];
+        if (Array.isArray(parsed)) set({ catalogProfiles: parsed });
+      }
+    } catch {
+      // silently ignore — defaults to [] (perfiles derivados de productos)
     }
   },
 

@@ -2,8 +2,25 @@ export type SyncStatus = 'pending' | 'synced' | 'error' | 'pending_update';
 
 export type PriceProfile = 'normal' | 'feriante' | 'invitacion';
 
-/** Perfil de carta al que pertenece un producto. Filtra la vista de venta. */
-export type ProductProfile = 'burger' | 'cafe';
+/**
+ * Perfil de carta al que pertenece un producto. Filtra la vista de venta.
+ * Es un identificador libre (slug), NO un enum cerrado: se pueden dar de alta
+ * tantos perfiles como haga falta desde el backend/admin (entidad `Profile`).
+ * La app nunca enumera los valores válidos; los descubre de los datos.
+ */
+export type ProductProfile = string;
+
+/**
+ * Perfil de carta como ENTIDAD (servida por el backend en el catálogo).
+ * Fuente autoritativa de la lista de perfiles: nombre visible, icono y orden.
+ * `id` coincide carácter a carácter con `Product.profile`.
+ */
+export interface Profile {
+  id: string;           // slug estable — igual que Product.profile
+  name: string;         // nombre visible en el selector ("Cafetería")
+  icon?: string;        // nombre de icono MaterialCommunityIcons (opcional)
+  sortOrder?: number;   // orden en el selector (menor = antes)
+}
 
 export interface Location {
   id: string;
@@ -50,7 +67,7 @@ export interface Product {
   basePrice: number;
   category: string;            // sección/encabezado libre en la vista de venta (el valor ES el título)
   categoryOrder?: number;      // orden de la category entre las demás (menor = antes)
-  profile: ProductProfile;     // carta a la que pertenece: 'burger' | 'cafe' (redundante con category, se mantiene)
+  profile: ProductProfile;     // carta a la que pertenece (slug libre, p.ej. 'burger'); filtra la vista de venta
   modifiers: Modifier[];
   isCustom: boolean;
   isActive: boolean;
@@ -133,7 +150,7 @@ export interface ApiProduct {
   feriantePrice?: number | string | null; // precio oferta feriante; null = sin oferta (cae a basePrice)
   category: string;           // texto libre: es el encabezado de sección en la vista de venta
   categoryOrder?: number;     // orden de la category; opcional (fallback: orden de aparición)
-  profile?: ProductProfile;   // opcional: si el backend no lo envía, la app asume 'burger'
+  profile?: ProductProfile;   // slug libre; opcional: si el backend no lo envía, la app asume 'burger'
   isCustom: boolean;
   isActive: boolean;
   alwaysShowModifiers?: boolean;
@@ -144,6 +161,11 @@ export interface ApiProduct {
 export interface ProductCatalogResponse {
   version: string | null;
   products: ApiProduct[];
+  /**
+   * Lista de perfiles de carta (entidad). Opcional: si el backend no la envía
+   * (o es una respuesta antigua), la app deriva los perfiles de los productos.
+   */
+  profiles?: Profile[];
 }
 
 // Ubicaciones (locales) tal y como las devuelve/acepta el backend TPV.

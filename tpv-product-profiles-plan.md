@@ -246,3 +246,86 @@ sigue siendo un consumidor denormalizado (agrupa por el string `category`, orden
 2. Desplegar el código (categorías + JOINs, ya en repo).
 3. (Opcional) re-ejecutar `php scripts/seed_tpv_catalog.php` — idempotente; crea/actualiza
    categorías y reasigna `category_id`.
+
+---
+
+## 8. Perfil como ENTIDAD dinámica (perfiles ilimitados)
+
+Estado: **APP IMPLEMENTADA · BACKEND + ADMIN PENDIENTE.**
+
+Hasta aquí `profile` era un enum cerrado en código (`'burger' | 'cafe'`) aunque en BD
+fuese texto libre. Objetivo de esta fase: **eliminar toda enumeración hardcodeada** para
+poder dar de alta **tantos perfiles como haga falta** desde el admin, igual que se hizo
+con `Category` en §7. Es el mismo patrón: entidad propia + la app sigue siendo un
+consumidor denormalizado.
+
+### 8.1 APP (TPV) — **IMPLEMENTADO**
+
+Retrocompatible: si el backend no envía la entidad `profiles`, la app **deriva** los
+perfiles de los productos cargados, así que funciona hoy sin tocar el backend.
+
+- `lib/types.ts`: `ProductProfile` pasa de union a **`string`** (slug libre). Nueva entidad
+  **`Profile { id, name, icon?, sortOrder? }`**. `ProductCatalogResponse.profiles?: Profile[]`
+  (opcional). Comentarios de `Product.profile`/`ApiProduct.profile` actualizados.
+- **`lib/profiles.ts`** (nuevo): `buildProfileList(products, backendProfiles?)` → única
+  fuente de la lista del selector. Prioridad: entidad backend (incluye perfiles sin
+  productos, con nombre/icono/orden) → si no, deriva de los productos no-custom. Nunca
+  vacío. `KNOWN_PROFILE_META` conserva etiqueta/icono de burger/cafe; los perfiles nuevos
+  heredan una etiqueta legible (`prettify`) sin necesidad de código.
+- `stores/useSessionStore.ts`: `activeProductProfile: string`. Nuevo `catalogProfiles:
+  Profile[]` + `loadCatalogProfiles()` (persistido en AsyncStorage `tpv:catalogProfiles`,
+  cargado en `initSession`). `loadActiveProductProfile` **deja de validar** contra
+  `'burger'|'cafe'` (acepta cualquier slug).
+- `services/catalogApi.ts`: pasa `profiles` (opcional) del catálogo.
+- `services/syncAll.ts`: persiste `tpv:catalogProfiles` tras el sync y refresca el store.
+- `app/(tabs)/settings.tsx`: el selector "Carta activa en venta" se genera con
+  `buildProfileList` — `SegmentedButtons` si ≤3 perfiles, `Chip` en fila envolvente si >3.
+  Ya NO hay array de botones hardcodeado.
+- `app/(tabs)/index.tsx`: **reconciliación** — si el perfil activo persistido ya no existe
+  en el catálogo (borrado/renombrado en admin), cae al primer perfil disponible para que
+  la carta no quede en blanco.
+
+> ⚠️ Cambio de comportamiento: antes el selector mostraba Burger + Cafetería fijos aunque
+> no hubiera productos de café. Ahora un perfil solo aparece si tiene productos **o** si el
+> backend lo envía en `profiles`. Un perfil recién creado en el admin **sin productos** solo
+> se verá en el TPV cuando el backend sirva el array `profiles`.
+
+### 8.2 BACKEND (burger-beats-backend) — **PENDIENTE**
+
+Mismo molde que `categories` (§7). Sugerido:
+
+- Migración **`029_profiles_table.sql`**: crear `profiles { id VARCHAR PK, name UNIQUE,
+  icon VARCHAR NULL, sort_order INT }`; poblarla desde los `profile` distintos actuales
+  (mínimo `('burger','Burger','hamburger',0)`); `products.profile` (VARCHAR ya existente)
+  pasa a ser FK lógica a `profiles.id` (backfill garantizado por el DEFAULT `'burger'`).
+  Registrar `schema_migrations` v29.
+- **Eliminar/abrir `VALID_PROFILES`** en `RecipeController`: el perfil deja de validarse
+  contra una constante y pasa a validarse contra la tabla `profiles` (o queda libre). Este
+  es el punto que hoy impide crear productos con perfiles nuevos.
+- Endpoint `GET /api/v1/tpv/products`: añadir al JSON un array **top-level** `profiles:
+  [{ id, name, icon, sortOrder }]` (además del `profile` por producto, que se mantiene).
+  Formato exacto que ya consume la app.
+- `CategoryController` como referencia → nuevo `ProfileController` (Api/Admin) con CRUD en
+  `/api/v1/admin/profiles` (crear/renombrar/reordenar/cambiar icono/borrar; 409 si el
+  nombre duplica o el perfil está en uso por productos).
+- `scripts/seed_tpv_catalog.php`: upsert de `profiles` desde el catálogo.
+
+### 8.3 ADMIN (burger-beats-admin) — **PENDIENTE**
+
+Espejo de categorías (§7.3):
+- `types/api.ts`: entidad `Profile { id, name, icon?, sortOrder }`.
+- `lib/profilesApi.ts` + `hooks/useProfiles.ts` (CRUD + react-query).
+- Alta/edición de producto: el perfil pasa a **`Select` de perfiles** (entidad).
+- **`ManageProfilesDialog`** (desde `ProductsTab`): crear/renombrar/reordenar/icono/borrar.
+
+### 8.4 Restricción cross-repo
+
+`Profile.id` (slug) debe coincidir **carácter a carácter** con `Product.profile` en
+`tpv/lib/constants.ts` y en el seed backend. Al añadir un perfil, crear la fila en
+`profiles` y etiquetar sus productos con ese mismo id.
+
+### 8.5 Orden de despliegue
+1. Aplicar `029_profiles_table.sql`.
+2. Desplegar backend (endpoint con `profiles`, `ProfileController`, `VALID_PROFILES` abierto).
+3. Desplegar admin (CRUD de perfiles).
+4. En el TPV: "Actualizar productos" en Ajustes → los perfiles nuevos aparecen en el selector.

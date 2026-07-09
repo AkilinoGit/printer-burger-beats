@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useFocusEffect, useRouter } from 'expo-router';
 import {
   Alert,
@@ -9,6 +9,7 @@ import {
 import {
   ActivityIndicator,
   Button,
+  Chip,
   Dialog,
   Divider,
   Icon,
@@ -25,6 +26,7 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { useSessionStore } from '../../stores/useSessionStore';
+import { buildProfileList } from '../../lib/profiles';
 import {
   getPendingSyncEntries,
   updateProductBasePrice,
@@ -92,6 +94,13 @@ export default function SettingsScreen(): React.JSX.Element {
   const activeProductProfile    = useSessionStore((s) => s.activeProductProfile);
   const setActiveProductProfile = useSessionStore((s) => s.setActiveProductProfile);
   const loadActiveProductProfile = useSessionStore((s) => s.loadActiveProductProfile);
+  const catalogProfiles = useSessionStore((s) => s.catalogProfiles);
+
+  // Perfiles disponibles: entidad del backend si la hay, si no derivados de productos.
+  const profileList = useMemo(
+    () => buildProfileList(products, catalogProfiles),
+    [products, catalogProfiles],
+  );
 
   useEffect(() => { void loadForcePrintTwice(); }, [loadForcePrintTwice]);
   useEffect(() => { void loadActiveProductProfile(); }, [loadActiveProductProfile]);
@@ -566,15 +575,29 @@ export default function SettingsScreen(): React.JSX.Element {
       <Surface style={styles.card} elevation={1}>
         <View style={styles.profileSection}>
           <Text style={styles.priceActionTitle}>Carta activa en venta</Text>
-          <SegmentedButtons
-            value={activeProductProfile}
-            onValueChange={(v) => void setActiveProductProfile(v as 'burger' | 'cafe')}
-            style={styles.profileButtons}
-            buttons={[
-              { value: 'burger', label: 'Burger', icon: 'hamburger' },
-              { value: 'cafe',   label: 'Cafetería', icon: 'coffee' },
-            ]}
-          />
+          {profileList.length <= 3 ? (
+            <SegmentedButtons
+              value={activeProductProfile}
+              onValueChange={(v) => void setActiveProductProfile(v)}
+              style={styles.profileButtons}
+              buttons={profileList.map((p) => ({ value: p.value, label: p.label, icon: p.icon }))}
+            />
+          ) : (
+            <View style={styles.profileChips}>
+              {profileList.map((p) => (
+                <Chip
+                  key={p.value}
+                  icon={p.icon}
+                  selected={activeProductProfile === p.value}
+                  showSelectedCheck={false}
+                  onPress={() => void setActiveProductProfile(p.value)}
+                  style={styles.profileChip}
+                >
+                  {p.label}
+                </Chip>
+              ))}
+            </View>
+          )}
         </View>
       </Surface>
 
@@ -895,6 +918,15 @@ const styles = StyleSheet.create({
   },
   profileButtons: {
     marginTop: 10,
+  },
+  profileChips: {
+    marginTop: 10,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  profileChip: {
+    marginBottom: 0,
   },
 
   // ── price dialog rows ──

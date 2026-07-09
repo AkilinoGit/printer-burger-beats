@@ -19,7 +19,10 @@ export async function fetchProductCatalog(): Promise<FetchCatalogResult> {
   try {
     const data = await apiGet<ProductCatalogResponse>(CATALOG_PATH);
     const products = (data.products ?? []).map(normalizeProduct);
-    return { ok: true, catalog: { version: data.version ?? null, products } };
+    // `profiles` es opcional: respuestas antiguas no lo traen y la app deriva
+    // los perfiles de los productos. Se pasa tal cual (solo strings/números).
+    const profiles = Array.isArray(data.profiles) ? data.profiles : [];
+    return { ok: true, catalog: { version: data.version ?? null, products, profiles } };
   } catch (e) {
     const error = e instanceof ApiError ? e.message : e instanceof Error ? e.message : 'Error desconocido';
     return { ok: false, error };

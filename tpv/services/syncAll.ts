@@ -69,6 +69,9 @@ async function syncCatalogTask(): Promise<SyncTaskResult> {
   await AsyncStorage.multiSet([
     ['tpv:catalogVersion', res.catalog.version ?? ''],
     ['tpv:catalogUpdatedAt', now],
+    // Lista de perfiles de carta (entidad backend). Vacío ⇒ la app los deriva
+    // de los productos. Persistido para que el selector funcione offline.
+    ['tpv:catalogProfiles', JSON.stringify(res.catalog.profiles ?? [])],
   ]);
 
   // Dirección backend → TPV de los precios feriante: los productos que traen
@@ -82,8 +85,10 @@ async function syncCatalogTask(): Promise<SyncTaskResult> {
   }
   await store.setFeriantePrices(mergedFeriante);
 
-  // Recargar el store desde SQLite para reflejar los productos nuevos en la UI.
+  // Recargar el store desde SQLite para reflejar los productos nuevos en la UI,
+  // y refrescar la lista de perfiles (recién persistida) para el selector.
   await useSessionStore.getState().loadProducts();
+  await useSessionStore.getState().loadCatalogProfiles();
 
   const n = res.catalog.products.length;
   return { label, ok: true, detail: `${n} ${n === 1 ? 'producto' : 'productos'}` };
