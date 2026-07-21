@@ -251,7 +251,7 @@ sigue siendo un consumidor denormalizado (agrupa por el string `category`, orden
 
 ## 8. Perfil como ENTIDAD dinámica (perfiles ilimitados)
 
-Estado: **APP IMPLEMENTADA · BACKEND + ADMIN PENDIENTE.**
+Estado: **IMPLEMENTADO (app + backend + admin).**
 
 Hasta aquí `profile` era un enum cerrado en código (`'burger' | 'cafe'`) aunque en BD
 fuese texto libre. Objetivo de esta fase: **eliminar toda enumeración hardcodeada** para
@@ -290,33 +290,40 @@ perfiles de los productos cargados, así que funciona hoy sin tocar el backend.
 > backend lo envía en `profiles`. Un perfil recién creado en el admin **sin productos** solo
 > se verá en el TPV cuando el backend sirva el array `profiles`.
 
-### 8.2 BACKEND (burger-beats-backend) — **PENDIENTE**
+### 8.2 BACKEND (burger-beats-backend) — **IMPLEMENTADO**
 
-Mismo molde que `categories` (§7). Sugerido:
+Mismo molde que `categories` (§7), con una diferencia clave: **`profiles.id` es el slug**
+(no un UUID), coincide con `products.profile`, y **NO se añade FK dura** (para evitar
+riesgo de DDL/collation sobre una columna con DEFAULT compartida con los productos del
+admin). La integridad se garantiza en la capa de aplicación.
 
-- Migración **`029_profiles_table.sql`**: crear `profiles { id VARCHAR PK, name UNIQUE,
-  icon VARCHAR NULL, sort_order INT }`; poblarla desde los `profile` distintos actuales
-  (mínimo `('burger','Burger','hamburger',0)`); `products.profile` (VARCHAR ya existente)
-  pasa a ser FK lógica a `profiles.id` (backfill garantizado por el DEFAULT `'burger'`).
-  Registrar `schema_migrations` v29.
-- **Eliminar/abrir `VALID_PROFILES`** en `RecipeController`: el perfil deja de validarse
-  contra una constante y pasa a validarse contra la tabla `profiles` (o queda libre). Este
-  es el punto que hoy impide crear productos con perfiles nuevos.
-- Endpoint `GET /api/v1/tpv/products`: añadir al JSON un array **top-level** `profiles:
-  [{ id, name, icon, sortOrder }]` (además del `profile` por producto, que se mantiene).
-  Formato exacto que ya consume la app.
-- `CategoryController` como referencia → nuevo `ProfileController` (Api/Admin) con CRUD en
-  `/api/v1/admin/profiles` (crear/renombrar/reordenar/cambiar icono/borrar; 409 si el
-  nombre duplica o el perfil está en uso por productos).
-- `scripts/seed_tpv_catalog.php`: upsert de `profiles` desde el catálogo.
+- Migración **`030_profiles_table.sql`** (aplicada; `schema_migrations` v30): crea
+  `profiles { id VARCHAR(32) PK, name UNIQUE, icon VARCHAR NULL, sort_order INT }`,
+  normaliza `products.profile` vacío/NULL a `'burger'`, garantiza la fila `burger` y
+  puebla desde los `profile` distintos (CASE para nombre/icono de burger/cafe). Sin FK.
+- `RecipeController`: **eliminado `VALID_PROFILES`**; el `profile` se valida como string y
+  contra la tabla (`profileRepo->findById`) en alta y edición de producto. Inyecta
+  `ProfileRepository`.
+- `ProfileRepository` (CRUD; `id`=slug) + `ProfileController` (Api/Admin) con CRUD en
+  `/api/v1/admin/profiles`; 409 si el nombre duplica o el perfil está en uso. El slug se
+  deriva del nombre (`slugify`, sin acentos) al crear.
+- `Tpv/ProductController::index`: el JSON añade el array **top-level** `profiles:
+  [{ id, name, icon, sortOrder }]` (además del `profile` por producto). Inyecta
+  `ProfileRepository`.
+- `App.php` (DI) + `Routes.php`: registrados repo/controller y las 4 rutas admin.
+- `scripts/seed_tpv_catalog.php`: upsert de `profiles` (siembra `burger`).
 
-### 8.3 ADMIN (burger-beats-admin) — **PENDIENTE**
+### 8.3 ADMIN (burger-beats-admin) — **IMPLEMENTADO**
 
 Espejo de categorías (§7.3):
-- `types/api.ts`: entidad `Profile { id, name, icon?, sortOrder }`.
-- `lib/profilesApi.ts` + `hooks/useProfiles.ts` (CRUD + react-query).
-- Alta/edición de producto: el perfil pasa a **`Select` de perfiles** (entidad).
-- **`ManageProfilesDialog`** (desde `ProductsTab`): crear/renombrar/reordenar/icono/borrar.
+- `types/api.ts`: `ProductProfile = string`; entidad `Profile { id, name, icon, sortOrder }`
+  + `Create/UpdateProfileInput`.
+- `lib/profilesApi.ts` + `hooks/useProfiles.ts` (CRUD + react-query, invalida `['profiles']`
+  y `['recipes','products']`).
+- Alta (`CreateProductDialog`) y edición (`ProductRecipeSheet`): el perfil pasa de lista
+  hardcodeada a **`Select` de perfiles** (entidad), con enlace «Gestionar» en el alta.
+- **`ManageProfilesDialog`** (botón «Perfiles» en `ProductsTab`): crear/renombrar/reordenar/
+  icono/borrar. El id (slug) se muestra como solo lectura.
 
 ### 8.4 Restricción cross-repo
 

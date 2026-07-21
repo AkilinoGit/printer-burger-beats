@@ -10,22 +10,50 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const API_BASE_URL_KEY = 'tpv:apiBaseUrl';
+const API_BASE_URL_KEY = 'tpv:apiBaseUrl';   // URL del servidor LOCAL (editable)
+const SERVER_MODE_KEY = 'tpv:serverMode';    // 'production' | 'local'
 const API_KEY_KEY = 'tpv:apiKey';
 
-// Base URL por defecto. Vacío = sin configurar (el operario la fija en Ajustes).
+/** Servidor al que apunta la app. Se elige en Ajustes → Servidor. */
+export type ServerMode = 'production' | 'local';
+
+// URL de producción: fija, NO editable desde la app. Sobrescribible al compilar
+// con EXPO_PUBLIC_PROD_API_BASE_URL en tpv/.env.
+export const PRODUCTION_API_BASE_URL = normalizeBaseUrl(
+  process.env.EXPO_PUBLIC_PROD_API_BASE_URL || 'https://burguerbeats.com',
+);
+
+// Valor inicial del servidor local (primer arranque, antes de editarlo en Ajustes).
+// Definir en tpv/.env:  EXPO_PUBLIC_API_BASE_URL=http://192.168.1.50
 // En emulador Android, la localhost del PC es http://10.0.2.2.
-const DEFAULT_API_BASE_URL = '';
+const DEFAULT_LOCAL_API_BASE_URL = normalizeBaseUrl(process.env.EXPO_PUBLIC_API_BASE_URL ?? '');
 
-// URL fijada por variable de entorno (se incrusta en el bundle al compilar).
-// Si está definida y no vacía, MANDA sobre lo guardado en AsyncStorage: la app no
-// permite editarla en Ajustes (solo se muestra). Definir en tpv/.env:
-//   EXPO_PUBLIC_API_BASE_URL=http://192.168.1.50
-const ENV_API_BASE_URL = normalizeBaseUrl(process.env.EXPO_PUBLIC_API_BASE_URL ?? '');
+// Modo por defecto: si el .env trae una URL local, el build es de pruebas y
+// arranca en 'local'; si no, en 'production'.
+const DEFAULT_SERVER_MODE: ServerMode = DEFAULT_LOCAL_API_BASE_URL ? 'local' : 'production';
 
-/** true si la URL viene de la variable de entorno (no editable en Ajustes). */
-export function isApiBaseUrlFromEnv(): boolean {
-  return ENV_API_BASE_URL !== '';
+/** Modo activo (production/local). Nunca falla: ante error devuelve el defecto. */
+export async function getServerMode(): Promise<ServerMode> {
+  try {
+    const stored = await AsyncStorage.getItem(SERVER_MODE_KEY);
+    return stored === 'production' || stored === 'local' ? stored : DEFAULT_SERVER_MODE;
+  } catch {
+    return DEFAULT_SERVER_MODE;
+  }
+}
+
+export async function setServerMode(mode: ServerMode): Promise<void> {
+  await AsyncStorage.setItem(SERVER_MODE_KEY, mode);
+}
+
+/** URL del servidor local guardada (o la del .env si aún no se ha editado). */
+export async function getLocalApiBaseUrl(): Promise<string> {
+  try {
+    const stored = await AsyncStorage.getItem(API_BASE_URL_KEY);
+    return normalizeBaseUrl(stored ?? DEFAULT_LOCAL_API_BASE_URL);
+  } catch {
+    return DEFAULT_LOCAL_API_BASE_URL;
+  }
 }
 
 export class ApiError extends Error {
@@ -44,18 +72,17 @@ export class ApiError extends Error {
 // Config persistida
 // ---------------------------------------------------------------------------
 
-/** Devuelve la base URL configurada (sin barra final), o '' si no hay ninguna. */
+/**
+ * Base URL efectiva (sin barra final) según el modo activo, o '' si no hay ninguna.
+ * Es la que usan todas las peticiones — nadie más resuelve el modo.
+ */
 export async function getApiBaseUrl(): Promise<string> {
-  // La variable de entorno tiene prioridad absoluta sobre AsyncStorage.
-  if (ENV_API_BASE_URL) return ENV_API_BASE_URL;
-  try {
-    const stored = await AsyncStorage.getItem(API_BASE_URL_KEY);
-    return normalizeBaseUrl(stored ?? DEFAULT_API_BASE_URL);
-  } catch {
-    return DEFAULT_API_BASE_URL;
-  }
+  const mode = await getServerMode();
+  if (mode === 'production') return PRODUCTION_API_BASE_URL;
+  return getLocalApiBaseUrl();
 }
 
+/** Guarda la URL del servidor local (solo aplica en modo 'local'). */
 export async function setApiBaseUrl(url: string): Promise<void> {
   await AsyncStorage.setItem(API_BASE_URL_KEY, normalizeBaseUrl(url));
 }

@@ -9,11 +9,11 @@ import {
 import {
   ActivityIndicator,
   Button,
-  Chip,
   Dialog,
   Divider,
   Icon,
   IconButton,
+  Menu,
   Portal,
   SegmentedButtons,
   Surface,
@@ -33,7 +33,14 @@ import {
 } from '../../services/db';
 import { runFullSync } from '../../services/syncAll';
 import { savePricesAndQueue, type PricePush } from '../../services/pricesApi';
-import { getApiBaseUrl, setApiBaseUrl, isApiBaseUrlFromEnv } from '../../services/apiConfig';
+import {
+  getLocalApiBaseUrl,
+  setApiBaseUrl,
+  getServerMode,
+  setServerMode,
+  PRODUCTION_API_BASE_URL,
+  type ServerMode,
+} from '../../services/apiConfig';
 import {
   clearPairedPrinter,
   getPairedPrinter,
@@ -101,6 +108,7 @@ export default function SettingsScreen(): React.JSX.Element {
     () => buildProfileList(products, catalogProfiles),
     [products, catalogProfiles],
   );
+  const activeProfileMeta = profileList.find((p) => p.value === activeProductProfile);
 
   useEffect(() => { void loadForcePrintTwice(); }, [loadForcePrintTwice]);
   useEffect(() => { void loadActiveProductProfile(); }, [loadActiveProductProfile]);
@@ -112,11 +120,13 @@ export default function SettingsScreen(): React.JSX.Element {
   const [pairedPrinter, setPairedPrinter]   = useState<PrinterDevice | null>(null);
   const [testingPrinter, setTestingPrinter] = useState(false);
   const [printerConnected, setPrinterConnected] = useState(false);
+  const [profileMenuVisible, setProfileMenuVisible] = useState(false);
 
   // Servidor / catálogo de productos
+  // En modo 'production' la URL es fija; en 'local' se edita y se persiste.
+  const [serverMode, setServerModeState] = useState<ServerMode>('production');
   const [apiBaseUrlInput, setApiBaseUrlInput]   = useState('');
   const [catalogUpdatedAt, setCatalogUpdatedAt] = useState<string | null>(null);
-  const apiUrlLocked = isApiBaseUrlFromEnv(); // URL fijada por .env → solo lectura
 
   // Sincronización unificada (productos + locales + futuras)
   const [syncingAll, setSyncingAll]             = useState(false);
@@ -124,11 +134,21 @@ export default function SettingsScreen(): React.JSX.Element {
 
   useEffect(() => {
     void (async () => {
-      setApiBaseUrlInput(await getApiBaseUrl());
+      setServerModeState(await getServerMode());
+      setApiBaseUrlInput(await getLocalApiBaseUrl());
       setCatalogUpdatedAt(await AsyncStorage.getItem('tpv:catalogUpdatedAt'));
       setLocationsSyncedAt(await AsyncStorage.getItem('tpv:locationsSyncedAt'));
     })();
   }, []);
+
+  /** Cambia de servidor: persiste antes la URL local en edición para no perderla. */
+  const handleChangeServerMode = useCallback(async (mode: ServerMode) => {
+    setServerModeState(mode);
+    try {
+      await setApiBaseUrl(apiBaseUrlInput);
+      await setServerMode(mode);
+    } catch { /* ignore */ }
+  }, [apiBaseUrlInput]);
 
   // Edición de alias de la impresora
   const [printerEditTarget, setPrinterEditTarget] = useState<PrinterDevice | null>(null);
@@ -306,8 +326,8 @@ export default function SettingsScreen(): React.JSX.Element {
   // Todas las sincronizaciones de datos se ejecutan desde aquí. La cola de
   // tickets (handleSync) es la única excepción y conserva su botón propio.
   async function handleSyncAll(): Promise<void> {
-    // Persistir la URL introducida antes de sincronizar (salvo si la fija el .env).
-    if (!apiUrlLocked) {
+    // Persistir la URL local introducida antes de sincronizar (en producción es fija).
+    if (serverMode === 'local') {
       try { await setApiBaseUrl(apiBaseUrlInput); } catch { /* ignore */ }
     }
 
@@ -575,29 +595,40 @@ export default function SettingsScreen(): React.JSX.Element {
       <Surface style={styles.card} elevation={1}>
         <View style={styles.profileSection}>
           <Text style={styles.priceActionTitle}>Carta activa en venta</Text>
-          {profileList.length <= 3 ? (
-            <SegmentedButtons
-              value={activeProductProfile}
-              onValueChange={(v) => void setActiveProductProfile(v)}
-              style={styles.profileButtons}
-              buttons={profileList.map((p) => ({ value: p.value, label: p.label, icon: p.icon }))}
-            />
-          ) : (
-            <View style={styles.profileChips}>
-              {profileList.map((p) => (
-                <Chip
-                  key={p.value}
-                  icon={p.icon}
-                  selected={activeProductProfile === p.value}
-                  showSelectedCheck={false}
-                  onPress={() => void setActiveProductProfile(p.value)}
-                  style={styles.profileChip}
-                >
-                  {p.label}
-                </Chip>
-              ))}
-            </View>
-          )}
+          <Menu
+            visible={profileMenuVisible}
+            onDismiss={() => setProfileMenuVisible(false)}
+            anchor={
+              <TouchableRipple
+                onPress={() => setProfileMenuVisible(true)}
+                style={styles.profileAnchor}
+              >
+                <View style={styles.profileAnchorRow}>
+                  {activeProfileMeta?.icon ? (
+                    <Icon source={activeProfileMeta.icon} size={20} color="#111" />
+                  ) : null}
+                  <Text style={styles.profileAnchorLabel} numberOfLines={1}>
+                    {activeProfileMeta?.label ?? activeProductProfile}
+                  </Text>
+                  <Icon source="chevron-down" size={22} color="#888" />
+                </View>
+              </TouchableRipple>
+            }
+            anchorPosition="bottom"
+          >
+            {profileList.map((p) => (
+              <Menu.Item
+                key={p.value}
+                title={p.label}
+                leadingIcon={p.icon}
+                trailingIcon={activeProductProfile === p.value ? 'check' : undefined}
+                onPress={() => {
+                  setProfileMenuVisible(false);
+                  void setActiveProductProfile(p.value);
+                }}
+              />
+            ))}
+          </Menu>
         </View>
       </Surface>
 
@@ -606,12 +637,25 @@ export default function SettingsScreen(): React.JSX.Element {
       <Surface style={styles.card} elevation={1}>
         {/* Servidor: URL usada por todas las sincronizaciones */}
         <Text style={[styles.syncTitle, styles.serverTitle]}>Servidor</Text>
-        {apiUrlLocked ? (
-          <Text style={styles.apiUrlValue}>{apiBaseUrlInput || '(sin configurar)'}</Text>
+        <SegmentedButtons
+          value={serverMode}
+          onValueChange={(v) => void handleChangeServerMode(v as ServerMode)}
+          style={styles.serverModeButtons}
+          buttons={[
+            { value: 'production', label: 'Producción', icon: 'cloud-check' },
+            { value: 'local',      label: 'Local',      icon: 'lan-connect' },
+          ]}
+        />
+        {serverMode === 'production' ? (
+          <>
+            <Text style={styles.apiUrlValue}>{PRODUCTION_API_BASE_URL}</Text>
+            <Text style={styles.serverModeHint}>URL fija del servidor de producción.</Text>
+          </>
         ) : (
           <StableTextInput
             value={apiBaseUrlInput}
             onChangeText={setApiBaseUrlInput}
+            onBlur={() => void setApiBaseUrl(apiBaseUrlInput)}
             mode="outlined"
             placeholder="http://192.168.1.50 o http://10.0.2.2"
             autoCapitalize="none"
@@ -916,17 +960,25 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     gap: 6,
   },
-  profileButtons: {
+  profileAnchor: {
     marginTop: 10,
+    borderWidth: 1,
+    borderColor: '#ccc',
+    borderRadius: 8,
+    backgroundColor: '#fff',
   },
-  profileChips: {
-    marginTop: 10,
+  profileAnchorRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
   },
-  profileChip: {
-    marginBottom: 0,
+  profileAnchorLabel: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#111',
   },
 
   // ── price dialog rows ──
@@ -1006,6 +1058,17 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#222',
+  },
+  serverModeButtons: {
+    marginHorizontal: 16,
+    marginTop: 6,
+    marginBottom: 4,
+  },
+  serverModeHint: {
+    fontSize: 12,
+    color: '#999',
+    marginHorizontal: 16,
+    marginBottom: 8,
   },
   syncHint: {
     fontSize: 12,

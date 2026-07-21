@@ -128,7 +128,8 @@
       "Bash(php -l src/Bootstrap/Routes.php)",
       "Bash(grep -n 'function numeric\\\\|function min\\\\|function required\\\\|isset\\\\|array_key_exists\\\\|=== null\\\\|return $this')",
       "Bash(php -l src/Controllers/Api/Admin/RecipeController.php)",
-      "Bash(php -l src/Repositories/ProductRecipeRepository.php)"
+      "Bash(php -l src/Repositories/ProductRecipeRepository.php)",
+      "Read(//c/laragon/www/burger-beats-backend/src/Controllers/Api/Tpv/**)"
     ],
     "additionalDirectories": [
       "C:\\laragon\\www\\burger-beats-backend",
