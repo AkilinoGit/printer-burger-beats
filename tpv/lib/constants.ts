@@ -1,4 +1,4 @@
-import type { Modifier, Product } from './types';
+import type { Modifier, Product, TextPresetKind, TicketSlot } from './types';
 
 // --- VERDURA (verde) ---
 const SIN_CEBOLLA:      Modifier = { id: 'sin-cebolla',        label: 'Sin cebolla',        type: 'remove', section: 'verdura',     order: 1 };
@@ -151,6 +151,57 @@ export const DEFAULT_FERIANTE_PRICES: Record<string, number> = {
   'gyozas-verdura': 6,
   'patatas': 5,
 };
+
+// ---------------------------------------------------------------------------
+// Text presets — semilla inicial (migración v29)
+// ---------------------------------------------------------------------------
+
+/**
+ * Forma reducida de un preset para la semilla: la migración v29 rellena
+ * `enabled`/`createdAt`/`updatedAt`/`syncStatus`/`deletedAt`/`origin`.
+ */
+export interface SeedTextPreset {
+  id: string;
+  kind: TextPresetKind;
+  text: string;
+  slot: TicketSlot | null;
+  sortOrder: number;
+}
+
+/**
+ * Presets iniciales. Sustituyen a los textos que estaban hardcodeados en
+ * `escpos.ts` (mensaje de catering en la cabecera y despedida en el pie) y
+ * aportan una batería de nombres para pedidos sin nombre.
+ */
+export const INITIAL_TEXT_PRESETS: SeedTextPreset[] = [
+  {
+    id: 'msg-catering',
+    kind: 'ticket_message',
+    slot: 'header',
+    sortOrder: 1,
+    text:
+      'Escríbenos para reservar tu pedido o servicio de catering para eventos ' +
+      'privados o comidas populares (paellas, almuerzo segador, bocadillos, etc ...)',
+  },
+  {
+    id: 'msg-gracias',
+    kind: 'ticket_message',
+    slot: 'footer',
+    sortOrder: 1,
+    text: 'GRACIAS POR VENIR :)',
+  },
+  ...[
+    'ARYA', 'BRIENNE', 'CERSEI', 'DAENERYS', 'EDDARD', 'GENDRY', 'HODOR',
+    'JAIME', 'JON', 'MARGAERY', 'MISSANDEI', 'OBERYN', 'PODRICK', 'RENLY',
+    'SANSA', 'THEON', 'TORMUND', 'TYRION', 'VARYS', 'YARA',
+  ].map<SeedTextPreset>((name, i) => ({
+    id: `name-${String(i + 1).padStart(2, '0')}`,
+    kind: 'order_name',
+    slot: null,
+    sortOrder: i + 1,
+    text: name,
+  })),
+];
 
 /**
  * Returns a flat map of id → label covering:

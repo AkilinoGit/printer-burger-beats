@@ -29,6 +29,57 @@ export interface Location {
   createdAt: string;
 }
 
+// ---------------------------------------------------------------------------
+// Text presets — mensajes del ticket del cliente + batería de nombres
+// ---------------------------------------------------------------------------
+
+/**
+ * Tipo de preset de texto:
+ *  - 'ticket_message' → mensaje impreso en el ticket del cliente (header/footer).
+ *  - 'order_name'     → nombre de la batería usado cuando el pedido va sin nombre.
+ */
+export type TextPresetKind = 'ticket_message' | 'order_name';
+
+/** Posición del mensaje en el ticket. Solo aplica a `ticket_message`. */
+export type TicketSlot = 'header' | 'footer';
+
+/**
+ * Preset de texto — modelo LOCAL (SQLite + store).
+ *
+ * ⚠️ `enabled` es SOLO local (qué muestra ESTE dispositivo) y NUNCA se
+ * sincroniza: el modelo de red es `ApiTextPreset`, que lo omite. Ver
+ * tpv-text-presets-plan.md.
+ */
+export interface TextPreset {
+  id: string;
+  kind: TextPresetKind;
+  text: string;
+  slot: TicketSlot | null;      // header/footer para mensajes; null para nombres
+  enabled: boolean;             // SOLO local — no cruza la red
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;            // árbitro LWW frente al backend
+  syncStatus: SyncStatus;
+  deletedAt: string | null;     // soft delete: null = visible
+  origin: 'local' | 'remote';
+}
+
+/**
+ * Preset de texto tal y como viaja hacia/desde el backend
+ * (`/api/v1/tpv/text-presets`). Omite `enabled` a propósito (concepto de
+ * cliente). Fechas-hora ISO-8601 UTC.
+ */
+export interface ApiTextPreset {
+  id: string;
+  kind: TextPresetKind;
+  text: string;
+  slot: TicketSlot | null;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string | null;
+  deletedAt: string | null;
+}
+
 /**
  * Origen de una sesión en la BD local:
  *  - 'local'  → la abrió ESTE dispositivo.

@@ -510,6 +510,28 @@ export default function SettingsScreen(): React.JSX.Element {
         )}
       </Surface>
 
+      {/* ── MENSAJES Y NOMBRES ─────────────────────────────────────────────── */}
+      <Text variant="labelLarge" style={styles.sectionLabel}>MENSAJES Y NOMBRES</Text>
+      <Surface style={styles.card} elevation={1}>
+        <View style={styles.priceActionRow}>
+          <View style={styles.priceActionText}>
+            <Text style={styles.priceActionTitle}>Mensajes del ticket y batería de nombres</Text>
+            <Text style={styles.priceActionSubtitle}>
+              Edita los mensajes de cabecera/pie del ticket y los nombres para pedidos
+              sin nombre. Elige cuáles se muestran y el modo (fijo o aleatorio).
+            </Text>
+          </View>
+          <Button
+            mode="outlined"
+            icon="message-text-outline"
+            onPress={() => router.push('/settings/mensajes')}
+            style={styles.priceActionBtn}
+          >
+            Abrir
+          </Button>
+        </View>
+      </Surface>
+
       {/* ── SYNC ──────────────────────────────────────────────────────────── */}
       <Text variant="labelLarge" style={styles.sectionLabel}>SINCRONIZACIÓN</Text>
       <Surface style={styles.card} elevation={1}>

@@ -17,6 +17,7 @@ import { buildProfileList } from '../../lib/profiles';
 import { useCartStore } from '../../stores/useCartStore';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useTicketStore } from '../../stores/useTicketStore';
+import { useTextPresetsStore } from '../../stores/useTextPresetsStore';
 import { buildMaps } from '../ticket/NewTicketScreen';
 
 import {
@@ -155,8 +156,12 @@ export default function HomeScreen(): React.JSX.Element {
     overrideAmountPaid?: number,
     overrideChange?: number,
   ): Promise<Order> {
+    // Si no se escribió nombre, se resuelve uno de la batería (aleatorio/fijo).
+    // Si la batería está vacía o desactivada, cae al literal 'PEDIDO'.
+    const resolvedName =
+      clientName.trim() || useTextPresetsStore.getState().resolveOrderName() || 'PEDIDO';
     const order = addOrder({
-      clientName: clientName.trim() || 'PEDIDO',
+      clientName: resolvedName,
       items,
       total,
       priceProfile,

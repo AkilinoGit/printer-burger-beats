@@ -173,7 +173,7 @@ Activable desde Ajustes (toggle). Cuando está activo:
 
 ### Reglas de negocio importantes
 
-1. **Nombre del cliente obligatorio** en cada Order.
+1. **Nombre del cliente en cada Order**: si se deja vacío, se autorrellena con un nombre de la *batería de nombres* (entidad `TextPreset` kind `order_name`, modo aleatorio/fijo local). Ver *Text presets*.
 2. **Cobrar no imprime ni guarda** — es solo un cálculo de cambio.
 3. **Añadir otro e Imprimir siempre persisten** en SQLite.
 4. **Un Ticket puede tener N Orders** con nombres distintos (misma mesa).
@@ -235,7 +235,9 @@ La impresora se selecciona/empareja y se prueba desde Ajustes → Impresora (`pr
 
 ### SQLite (expo-sqlite)
 
-Tablas: `locations`, `sessions`, `products`, `modifiers`, `tickets`, `orders`, `order_items`
+Tablas: `locations`, `sessions`, `products`, `modifiers`, `tickets`, `orders`, `order_items`, `text_presets`
+
+> `text_presets` (mig. v29): mensajes del ticket del cliente (kind `ticket_message`, `slot` header/footer) y batería de nombres (kind `order_name`). **Solo el texto se sincroniza**; el `enabled` (cuáles mostrar) y el modo de impresión (fijo/aleatorio) son **locales** de cada dispositivo. Ver `tpv-text-presets-plan.md`.
 
 > Nota histórica: existió una tabla `sync_queue` (cola offline genérica de la Fase 1) que nunca llegó a consumirse. Fue **eliminada en la migración v28** al pasar a un sync por entidad. No la reintroduzcas: cada entidad gestiona su propia sincronización.
 
@@ -284,6 +286,7 @@ stores/
   useCartStore.ts      ← Zustand: carrito activo
   useSessionStore.ts   ← Zustand: sesión del día, precios feriante, testMode
   useTicketStore.ts    ← Zustand: ticket activo (múltiples orders)
+  useTextPresetsStore.ts ← Zustand: presets de texto (mensajes ticket + batería nombres) + modos locales
 services/
   db.ts               ← expo-sqlite: init, migrations, CRUD
   apiConfig.ts        ← cliente HTTP base (modo production/local, apiGet/apiPost, ApiError)
@@ -292,6 +295,7 @@ services/
   pricesApi.ts        ← push de precios + cola de reintento en AsyncStorage
   locationsApi.ts     ← sync de locales
   sessionsApi.ts      ← sync de sesiones (PUSH primario, LWW)
+  textPresetsApi.ts   ← sync de presets de texto (solo el texto; PUSH primario, LWW)
   ticketsApi.ts       ← sync de comandas (tickets→orders)
   printer.ts          ← impresión vía Bluetooth directo (react-native-bluetooth-classic) + diagnóstico
   escpos.ts           ← generación de bytes ESC/POS y string commands (legado)

@@ -182,6 +182,8 @@ export function buildTicketBuffer(
   modifierLabels: Record<string, string>,
   repeatContent: boolean = false,
   normalPrices: Record<string, number> = {},
+  headerMessage: string | null = null,
+  footerMessage: string | null = null,
 ): Uint8Array {
   const parts: (readonly number[] | Uint8Array)[] = [];
 
@@ -191,21 +193,18 @@ export function buildTicketBuffer(
   parts.push(CMD_INIT, CMD_CODEPAGE_CP858);
 
   // Promotional header at the very top, only when printing twice:
-  // logo + catering message + Instagram handle. The normal top margin is
-  // skipped here because the logo already provides visual breathing room.
+  // logo + header message (from the text-preset pool) + contact icons. The
+  // normal top margin is skipped here because the logo already provides visual
+  // breathing room. `headerMessage` is resolved by the caller (random/fixed);
+  // el logo y los iconos son identidad de marca y no salen del pool.
   if (repeatContent) {
     parts.push(CMD_ALIGN_CENTER);
     parts.push(LOGO_RASTER_BYTES);
-    rawLine('');
-    const promoLines = _wrapText(
-      sanitizeForPrinter(
-        'Escríbenos para reservar tu pedido o servicio de catering ' +
-        'para eventos privados o comidas populares (paellas, ' +
-        'almuerzo segador, bocadillos, etc ...)',
-      ),
-      CHARS_PER_LINE,
-    );
-    for (const line of promoLines) rawLine(line);
+    if (headerMessage) {
+      rawLine('');
+      const promoLines = _wrapText(sanitizeForPrinter(headerMessage), CHARS_PER_LINE);
+      for (const line of promoLines) rawLine(line);
+    }
     rawLine('');
     // Email icon + address, then Instagram icon + @handle (each composed in
     // logo-bytes.ts as a single raster row).
@@ -239,10 +238,12 @@ export function buildTicketBuffer(
     parts.push(CMD_BOLD_OFF);
   }
 
-  // Thank-you message at the bottom of each copy (only in double-print mode).
-  if (repeatContent) {
+  // Footer message at the bottom of each copy (only in double-print mode).
+  // Resuelto por el caller desde el pool de presets (slot 'footer').
+  if (repeatContent && footerMessage) {
     parts.push(CMD_ALIGN_CENTER, CMD_BOLD_ON);
-    rawLine('GRACIAS POR VENIR :)');
+    const footerLines = _wrapText(sanitizeForPrinter(footerMessage), CHARS_PER_LINE);
+    for (const line of footerLines) rawLine(line);
     parts.push(CMD_BOLD_OFF, CMD_ALIGN_LEFT);
   }
 

@@ -19,6 +19,7 @@ import type { Session, Ticket } from '../lib/types';
 import { buildTicketBuffer, buildSessionSummaryBuffer, buildPromoBuffer } from './escpos';
 import { log, perf } from './logger';
 import { usePrintJobStore } from '../stores/usePrintJobStore';
+import { useTextPresetsStore } from '../stores/useTextPresetsStore';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -426,15 +427,20 @@ export async function printTicket(
 
   try {
     const doneEscpos = perf.start('PRINT', 'buildTicketBuffer');
+    // Header/footer messages come from the text-preset pool, resolved here once
+    // (random/fixed per device config). Solo se imprimen en la copia completa
+    // (copia del cliente); si no hay candidatos activos, salen null y no imprimen.
+    const headerMessage = useTextPresetsStore.getState().resolveHeaderMessage();
+    const footerMessage = useTextPresetsStore.getState().resolveFooterMessage();
     // Double-print sends two DIFFERENT buffers as independent writes:
-    //  - Copy 1: full ticket (promo header + orders + "GRACIAS POR VENIR").
+    //  - Copy 1: full ticket (promo header + orders + footer message).
     //  - Copy 2: plain ticket only (name/order, number, items with price) —
     //    built with repeatContent=false so it has no promo header nor footer.
     // A 3.5s pause between writes lets the printer flush the first copy before
     // receiving the second.
     const buffers: Uint8Array[] = repeatContent
       ? [
-          buildTicketBuffer(ticket, isTest, modifierLabels, true, normalPrices),
+          buildTicketBuffer(ticket, isTest, modifierLabels, true, normalPrices, headerMessage, footerMessage),
           buildTicketBuffer(ticket, isTest, modifierLabels, false, normalPrices),
         ]
       : [buildTicketBuffer(ticket, isTest, modifierLabels, false, normalPrices)];

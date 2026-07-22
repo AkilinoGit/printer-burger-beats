@@ -16,6 +16,7 @@ import { fetchProductCatalog } from './catalogApi';
 import { syncLocations } from './locationsApi';
 import { clearPendingPush, pushPrices, takePendingPush, mergePendingPush } from './pricesApi';
 import { syncSessions } from './sessionsApi';
+import { syncTextPresets } from './textPresetsApi';
 import { syncTickets } from './ticketsApi';
 import { getAllLocalProducts, replaceProductCatalogKeeping } from './db';
 import { useSessionStore } from '../stores/useSessionStore';
@@ -155,6 +156,23 @@ async function syncLocationsTask(): Promise<SyncTaskResult> {
 }
 
 /**
+ * Sincroniza los presets de texto (mensajes de ticket + batería de nombres).
+ * Solo el texto viaja (el `enabled` y el modo son locales). Sin dependencias FK.
+ * Ver tpv-text-presets-plan.md.
+ */
+async function syncTextPresetsTask(): Promise<SyncTaskResult> {
+  const label = 'Mensajes';
+  const res = await syncTextPresets();
+  const detail = `${res.pushed} ${res.pushed === 1 ? 'enviado' : 'enviados'}, ${res.pulled} ${res.pulled === 1 ? 'recibido' : 'recibidos'}`;
+  if (!res.ok) {
+    return { label, ok: false, detail: `${detail} — ${res.error}` };
+  }
+
+  await AsyncStorage.setItem('tpv:textPresetsSyncedAt', new Date().toISOString());
+  return { label, ok: true, detail };
+}
+
+/**
  * Sincroniza las sesiones (jornadas) en ambas direcciones. Va DESPUÉS de Locales
  * (FK: una sesión referencia su ubicación) y de Productos (los priceOverrides
  * referencian productos). Ver tpv-sessions-sync-plan.md.
@@ -198,6 +216,8 @@ function buildTasks(opts: FullSyncOptions): SyncTask[] {
     { label: 'Precios', run: syncPricesTask },
     { label: 'Productos', run: () => syncCatalogTask(opts.confirmCatalogDeletions) },
     { label: 'Locales', run: syncLocationsTask },
+    // Mensajes/nombres: sin FK, se puede sincronizar junto a Locales.
+    { label: 'Mensajes', run: syncTextPresetsTask },
     // Sesiones al final: dependen de Locales (FK) y de Productos (priceOverrides).
     { label: 'Sesiones', run: syncSessionsTask },
     // Comandas después de Sesiones: cada comanda cuelga de su sesión (FK).

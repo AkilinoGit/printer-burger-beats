@@ -4,6 +4,7 @@ import { Stack } from 'expo-router';
 import { ActivityIndicator, MD3LightTheme, PaperProvider } from 'react-native-paper';
 import { initDb } from '../services/db';
 import { useSessionStore } from '../stores/useSessionStore';
+import { useTextPresetsStore } from '../stores/useTextPresetsStore';
 import { isSessionStale } from '../lib/utils';
 import PrintOverlay from '../components/PrintOverlay';
 
@@ -17,6 +18,11 @@ export default function RootLayout(): React.JSX.Element {
   useEffect(() => {
     initDb()
       .then(() => initSession())
+      .then(() => {
+        // Carga presets de texto (mensajes de ticket + batería de nombres) para
+        // que la impresión y el autorrelleno de nombre los tengan disponibles.
+        void useTextPresetsStore.getState().load();
+      })
       .then(async () => {
         // Option C: if the session loaded at startup is already stale (>20h),
         // close it before showing the app so the user starts fresh.
@@ -74,6 +80,7 @@ export default function RootLayout(): React.JSX.Element {
         <Stack.Screen name="session/summary/[id]" options={{ title: 'Resumen de sesión' }} />
         <Stack.Screen name="sessions-history" options={{ title: 'Historial de sesiones' }} />
         <Stack.Screen name="settings/printer" options={{ title: 'Ajustes de impresora' }} />
+        <Stack.Screen name="settings/mensajes" options={{ title: 'Mensajes y nombres' }} />
       </Stack>
       <PrintOverlay />
     </PaperProvider>

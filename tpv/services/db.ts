@@ -1,5 +1,5 @@
 import * as SQLite from 'expo-sqlite';
-import { INITIAL_PRODUCTS, DEFAULT_LOCATION_NAME } from '../lib/constants';
+import { INITIAL_PRODUCTS, DEFAULT_LOCATION_NAME, INITIAL_TEXT_PRESETS } from '../lib/constants';
 import { getDeviceId } from '../lib/device';
 import { generateId, todayISO } from '../lib/utils';
 import type {
@@ -17,6 +17,10 @@ import type {
   ApiLocation,
   ApiSession,
   ApiTicket,
+  TextPreset,
+  TextPresetKind,
+  TicketSlot,
+  ApiTextPreset,
 } from '../lib/types';
 
 // ---------------------------------------------------------------------------
@@ -24,7 +28,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 const DB_NAME = 'tpv_v12.db';
-const SCHEMA_VERSION = 28;
+const SCHEMA_VERSION = 29;
 
 let _db: SQLite.SQLiteDatabase | null = null;
 let _initPromise: Promise<void> | null = null;
@@ -150,6 +154,9 @@ export async function initDb(): Promise<void> {
     if (currentVersion < 28) {
       await migrate_v28(db); // drop legacy sync_queue table (cola offline nunca consumida)
     }
+    if (currentVersion < 29) {
+      await migrate_v29(db); // create text_presets table + seed (mensajes de ticket + batería de nombres)
+    }
     await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
 
     // Self-heal de las columnas de sync de sesiones: si el ALTER de v26 se tragó
@@ -219,6 +226,16 @@ export async function initDb(): Promise<void> {
     try {
       await db.runAsync("UPDATE products SET always_show_modifiers = 0 WHERE id = 'patatas'");
     } catch { /* column may not exist on very old schemas — safe to ignore */ }
+
+    // Self-heal: guarantee the text_presets table exists and has its seed even
+    // on devices whose user_version was already 29 while migrate_v29 was silently
+    // swallowed. Idempotent (CREATE IF NOT EXISTS + INSERT OR IGNORE seed).
+    try {
+      await ensureTextPresetsSeed(db);
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.log('[db] text_presets self-heal failed', e);
+    }
   })();
   return _initPromise;
 }
@@ -676,6 +693,63 @@ async function migrate_v28(db: SQLite.SQLiteDatabase): Promise<void> {
   // migraciones históricas v10/v16/v18 se conservan como registro (append-only).
   // IF EXISTS por defensa.
   await db.execAsync(`DROP TABLE IF EXISTS sync_queue`);
+}
+
+async function migrate_v29(db: SQLite.SQLiteDatabase): Promise<void> {
+  // Tabla de presets de texto: mensajes del ticket del cliente (header/footer,
+  // antes hardcodeados en escpos.ts) + batería de nombres. Solo el texto se
+  // sincroniza; `enabled` y el modo de impresión son locales (ver plan §2).
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS text_presets (
+      id           TEXT PRIMARY KEY,
+      kind         TEXT NOT NULL,
+      text         TEXT NOT NULL,
+      slot         TEXT,
+      enabled      INTEGER NOT NULL DEFAULT 1,
+      sort_order   INTEGER NOT NULL DEFAULT 999,
+      created_at   TEXT NOT NULL,
+      updated_at   TEXT NOT NULL,
+      sync_status  TEXT NOT NULL DEFAULT 'pending',
+      deleted_at   TEXT,
+      origin       TEXT NOT NULL DEFAULT 'local'
+    );
+    CREATE INDEX IF NOT EXISTS idx_text_presets_kind ON text_presets(kind);
+  `);
+  await ensureTextPresetsSeed(db);
+}
+
+/**
+ * Inserta la semilla de presets (INITIAL_TEXT_PRESETS) si aún no existen. Crea la
+ * tabla si falta (self-heal). Idempotente: INSERT OR IGNORE por id, así que no
+ * reintroduce presets que el usuario haya borrado (soft-delete conserva la fila).
+ */
+async function ensureTextPresetsSeed(db: SQLite.SQLiteDatabase): Promise<void> {
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS text_presets (
+      id           TEXT PRIMARY KEY,
+      kind         TEXT NOT NULL,
+      text         TEXT NOT NULL,
+      slot         TEXT,
+      enabled      INTEGER NOT NULL DEFAULT 1,
+      sort_order   INTEGER NOT NULL DEFAULT 999,
+      created_at   TEXT NOT NULL,
+      updated_at   TEXT NOT NULL,
+      sync_status  TEXT NOT NULL DEFAULT 'pending',
+      deleted_at   TEXT,
+      origin       TEXT NOT NULL DEFAULT 'local'
+    );
+  `);
+  const now = new Date().toISOString();
+  await db.withExclusiveTransactionAsync(async (txn) => {
+    for (const p of INITIAL_TEXT_PRESETS) {
+      await txn.runAsync(
+        `INSERT OR IGNORE INTO text_presets
+           (id, kind, text, slot, enabled, sort_order, created_at, updated_at, sync_status, deleted_at, origin)
+         VALUES (?, ?, ?, ?, 1, ?, ?, ?, 'pending', NULL, 'local')`,
+        [p.id, p.kind, p.text, p.slot, p.sortOrder, now, now],
+      );
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1434,6 +1508,189 @@ export async function markSessionsSyncError(
       );
     }
   });
+}
+
+// ---------------------------------------------------------------------------
+// TEXT PRESETS (mensajes de ticket + batería de nombres)
+// ---------------------------------------------------------------------------
+
+type TextPresetRow = {
+  id: string;
+  kind: string;
+  text: string;
+  slot: string | null;
+  enabled: number;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+  sync_status: string;
+  deleted_at: string | null;
+  origin: string;
+};
+
+function mapTextPreset(row: TextPresetRow): TextPreset {
+  return {
+    id: row.id,
+    kind: row.kind as TextPresetKind,
+    text: row.text,
+    slot: (row.slot ?? null) as TicketSlot | null,
+    enabled: row.enabled === 1,
+    sortOrder: row.sort_order,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    syncStatus: row.sync_status as SyncStatus,
+    deletedAt: row.deleted_at ?? null,
+    origin: (row.origin as TextPreset['origin']) ?? 'local',
+  };
+}
+
+/** Todos los presets NO borrados, ordenados por sortOrder dentro de su grupo. */
+export async function getTextPresets(): Promise<TextPreset[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<TextPresetRow>(
+    `SELECT * FROM text_presets WHERE deleted_at IS NULL
+     ORDER BY sort_order ASC, created_at ASC`,
+  );
+  return rows.map(mapTextPreset);
+}
+
+/** Alta de un preset. Queda 'pending' para el próximo push. */
+export async function insertTextPreset(params: {
+  kind: TextPresetKind;
+  text: string;
+  slot: TicketSlot | null;
+}): Promise<TextPreset> {
+  const db = await getDb();
+  const now = new Date().toISOString();
+  const id = generateId();
+  // sortOrder al final dentro de su kind/slot (slot IS ? cubre también NULL).
+  const maxRow = await db.getFirstAsync<{ m: number | null }>(
+    `SELECT MAX(sort_order) as m FROM text_presets WHERE kind = ? AND slot IS ?`,
+    [params.kind, params.slot],
+  );
+  const sortOrder = (maxRow?.m ?? 0) + 1;
+  await db.runAsync(
+    `INSERT INTO text_presets
+       (id, kind, text, slot, enabled, sort_order, created_at, updated_at, sync_status, deleted_at, origin)
+     VALUES (?, ?, ?, ?, 1, ?, ?, ?, 'pending', NULL, 'local')`,
+    [id, params.kind, params.text, params.slot, sortOrder, now, now],
+  );
+  return {
+    id, kind: params.kind, text: params.text, slot: params.slot,
+    enabled: true, sortOrder, createdAt: now, updatedAt: now,
+    syncStatus: 'pending', deletedAt: null, origin: 'local',
+  };
+}
+
+/** Edita el texto. Bump updated_at + 'pending' (necesita push). */
+export async function updateTextPresetText(id: string, text: string): Promise<void> {
+  const db = await getDb();
+  const now = new Date().toISOString();
+  await db.runAsync(
+    `UPDATE text_presets SET text = ?, updated_at = ?, sync_status = 'pending' WHERE id = ?`,
+    [text, now, id],
+  );
+}
+
+/**
+ * Activa/desactiva un preset. LOCAL: NO cambia updated_at ni sync_status (el
+ * `enabled` no viaja al backend). Ver plan §2.
+ */
+export async function setTextPresetEnabled(id: string, enabled: boolean): Promise<void> {
+  const db = await getDb();
+  await db.runAsync('UPDATE text_presets SET enabled = ? WHERE id = ?', [enabled ? 1 : 0, id]);
+}
+
+/** Soft delete. Bump updated_at + 'pending' para propagar el borrado. */
+export async function softDeleteTextPreset(id: string): Promise<void> {
+  const db = await getDb();
+  const now = new Date().toISOString();
+  await db.runAsync(
+    `UPDATE text_presets SET deleted_at = ?, updated_at = ?, sync_status = 'pending' WHERE id = ?`,
+    [now, now, id],
+  );
+}
+
+// ── sync support (services/textPresetsApi.ts) ───────────────────────────────
+
+/** Presets con cambios locales sin confirmar por el backend (incluye borrados). */
+export async function getUnsyncedTextPresets(): Promise<TextPreset[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<TextPresetRow>(
+    `SELECT * FROM text_presets WHERE sync_status != 'synced' ORDER BY created_at ASC`,
+  );
+  return rows.map(mapTextPreset);
+}
+
+export async function markTextPresetsSynced(
+  confirmed: Array<{ id: string; updatedAt: string }>,
+): Promise<void> {
+  if (confirmed.length === 0) return;
+  const db = await getDb();
+  await db.withExclusiveTransactionAsync(async (txn) => {
+    for (const { id, updatedAt } of confirmed) {
+      await txn.runAsync(
+        "UPDATE text_presets SET sync_status = 'synced' WHERE id = ? AND updated_at = ?",
+        [id, updatedAt],
+      );
+    }
+  });
+}
+
+export async function markTextPresetsSyncError(
+  failed: Array<{ id: string; updatedAt: string }>,
+): Promise<void> {
+  if (failed.length === 0) return;
+  const db = await getDb();
+  await db.withExclusiveTransactionAsync(async (txn) => {
+    for (const { id, updatedAt } of failed) {
+      await txn.runAsync(
+        "UPDATE text_presets SET sync_status = 'error' WHERE id = ? AND updated_at = ?",
+        [id, updatedAt],
+      );
+    }
+  });
+}
+
+/**
+ * Fusiona en SQLite los presets bajados del backend. **Nunca toca `enabled`**
+ * (es local) ni pisa filas con cambios locales pendientes. LWW por updatedAt
+ * (instante). Un preset nuevo entra enabled=1 (opt-out). Devuelve cuántas filas
+ * se insertaron o actualizaron.
+ */
+export async function upsertTextPresetsFromBackend(remotes: ApiTextPreset[]): Promise<number> {
+  if (remotes.length === 0) return 0;
+  const db = await getDb();
+  let applied = 0;
+  for (const r of remotes) {
+    const existing = await db.getFirstAsync<TextPresetRow>(
+      'SELECT * FROM text_presets WHERE id = ? LIMIT 1', [r.id],
+    );
+    if (!existing) {
+      await db.runAsync(
+        `INSERT INTO text_presets
+           (id, kind, text, slot, enabled, sort_order, created_at, updated_at, sync_status, deleted_at, origin)
+         VALUES (?, ?, ?, ?, 1, ?, ?, ?, 'synced', ?, 'remote')`,
+        [r.id, r.kind, r.text, r.slot, r.sortOrder, r.createdAt, r.updatedAt ?? r.createdAt, r.deletedAt],
+      );
+      applied++;
+      continue;
+    }
+    const local = mapTextPreset(existing);
+    if (local.syncStatus !== 'synced') continue; // cambios locales pendientes: manda el push
+    const remoteAt = Date.parse(r.updatedAt ?? r.createdAt);
+    const localAt = Date.parse(local.updatedAt);
+    if (!Number.isFinite(remoteAt) || remoteAt <= localAt) continue;
+    // Actualiza el contenido SIN tocar `enabled` (columna local).
+    await db.runAsync(
+      `UPDATE text_presets
+          SET kind = ?, text = ?, slot = ?, sort_order = ?, updated_at = ?, deleted_at = ?, sync_status = 'synced'
+        WHERE id = ?`,
+      [r.kind, r.text, r.slot, r.sortOrder, r.updatedAt ?? r.createdAt, r.deletedAt, r.id],
+    );
+    applied++;
+  }
+  return applied;
 }
 
 // ---------------------------------------------------------------------------
