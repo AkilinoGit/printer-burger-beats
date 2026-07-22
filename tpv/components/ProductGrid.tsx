@@ -4,6 +4,7 @@ import { Surface, Text, TouchableRipple } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { formatPrice } from '../lib/utils';
 import type { PriceProfile, Product } from '../lib/types';
+import { groupProductsByCategory } from '../lib/productOrder';
 import { useCartStore } from '../stores/useCartStore';
 
 
@@ -21,36 +22,24 @@ const CATEGORY_PALETTE = [
   '#00897B', '#8E24AA', '#C2185B', '#5D4037', '#3949AB', '#F4511E',
 ];
 
-interface CategoryGroup {
+interface ColoredCategoryGroup {
   label: string;   // el propio valor de `category` — es el encabezado
-  order: number;   // categoryOrder (menor primero)
   color: string;
   products: Product[];
 }
 
 /**
- * Agrupa los productos activos por `category` (texto libre). El valor de
- * `category` ES el encabezado de la sección; se muestran tantas secciones como
- * categorías distintas aparezcan. Se ordenan por `categoryOrder` (menor primero)
- * y, a igualdad, por orden de aparición. El color se asigna por posición.
+ * Toma el agrupado/ordenado compartido (ver `lib/productOrder`) y le asigna un
+ * color por la posición final de cada categoría. La ordenación en sí vive en el
+ * módulo compartido para que la pantalla de venta y el diálogo de precios de
+ * sesión muestren los productos en el mismo orden.
  */
-function buildCategories(products: Product[]): CategoryGroup[] {
-  const map = new Map<string, CategoryGroup>();
-  let appearance = 0;
-  for (const p of products) {
-    if (!p.isActive) continue;
-    const label = p.category;
-    let group = map.get(label);
-    if (!group) {
-      group = { label, order: p.categoryOrder ?? appearance++, color: '', products: [] };
-      map.set(label, group);
-    }
-    group.products.push(p);
-  }
-  const groups = [...map.values()].sort((a, b) => a.order - b.order || a.label.localeCompare(b.label));
-  // El color se asigna tras ordenar, según la posición final de la categoría.
-  groups.forEach((g, i) => { g.color = CATEGORY_PALETTE[i % CATEGORY_PALETTE.length]; });
-  return groups;
+function buildCategories(products: Product[]): ColoredCategoryGroup[] {
+  return groupProductsByCategory(products).map((g, i) => ({
+    label: g.label,
+    color: CATEGORY_PALETTE[i % CATEGORY_PALETTE.length],
+    products: g.products,
+  }));
 }
 
 export default React.memo(function ProductGrid({ products, onSelect, onLongPress }: Props): React.JSX.Element {

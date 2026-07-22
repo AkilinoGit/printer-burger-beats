@@ -36,6 +36,7 @@ import {
 import { syncLocations } from '../../services/locationsApi';
 import { fetchJoinableSessions, joinRemoteSession, syncSessions } from '../../services/sessionsApi';
 import { formatPrice } from '../../lib/utils';
+import { orderProductsForSale } from '../../lib/productOrder';
 import type { ApiSession, Location, Session } from '../../lib/types';
 import StableTextInput from '../../components/StableTextInput';
 import SessionSyncChip from '../../components/SessionSyncChip';
@@ -862,8 +863,7 @@ export default function SessionScreen(): React.JSX.Element {
           <Dialog.Title>Precios de la sesión</Dialog.Title>
           <Dialog.ScrollArea style={styles.priceDialogScroll}>
             <ScrollView>
-              {products
-                .filter((p) => p.isActive && !p.isCustom)
+              {orderProductsForSale(products.filter((p) => p.isActive && !p.isCustom))
                 .map((p, idx, arr) => (
                   <React.Fragment key={p.id}>
                     <PriceRow

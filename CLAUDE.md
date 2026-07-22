@@ -7,7 +7,7 @@ App móvil TPV (Terminal Punto de Venta) para una hamburguesería. Genera comand
 - **Plataforma**: Android (development build propio — no Expo Go)
 - **Stack**: React Native + Expo SDK 52, TypeScript estricto
 - **BD local**: expo-sqlite (offline-first)
-- **Backend**: por definir — la app funciona sin él. El sync queda en cola local hasta que exista API.
+- **Backend**: REST propio (Burger Beats). Producción fija en `https://burguerbeats.com`; servidor local editable en Ajustes para pruebas LAN. La app es offline-first: funciona sin red y sincroniza por entidad cuando hay conexión (ver *Arquitectura offline-first*).
 - **Impresión**: conexión Bluetooth directa (Bluetooth Classic/SPP) con `react-native-bluetooth-classic` — la app envía los bytes ESC/POS directamente a la impresora, ver sección impresión
 - **Gestión de estado**: Zustand
 - **Navegación**: Expo Router (file-based)
@@ -139,7 +139,7 @@ Activable desde Ajustes (toggle). Cuando está activo:
 - Banner permanente: **"MODO PRUEBA ACTIVO — nada se guardará"**
 - Flujo de venta igual, impresión ESC/POS igual
 - El ticket impreso incluye: `*** PRUEBA - NO VALIDO ***`
-- **Nada se persiste en SQLite** — ni tickets, ni orders, ni sync_queue
+- **Nada se persiste en SQLite** — ni tickets ni orders
 - Se recuerda entre sesiones (AsyncStorage, no SQLite)
 - `ticketNumber` no se incrementa
 
@@ -235,29 +235,29 @@ La impresora se selecciona/empareja y se prueba desde Ajustes → Impresora (`pr
 
 ### SQLite (expo-sqlite)
 
-Tablas: `locations`, `sessions`, `products`, `modifiers`, `tickets`, `orders`, `order_items`, `sync_queue`
+Tablas: `locations`, `sessions`, `products`, `modifiers`, `tickets`, `orders`, `order_items`
 
-La tabla `sync_queue` almacena entidades pendientes:
-```sql
-CREATE TABLE sync_queue (
-  id TEXT PRIMARY KEY,
-  entity_type TEXT,   -- 'order' | 'ticket'
-  entity_id TEXT,
-  action TEXT,        -- 'create' | 'update'
-  status TEXT,        -- 'pending' | 'synced' | 'error'
-  attempts INTEGER DEFAULT 0,
-  created_at TEXT
-);
-```
+> Nota histórica: existió una tabla `sync_queue` (cola offline genérica de la Fase 1) que nunca llegó a consumirse. Fue **eliminada en la migración v28** al pasar a un sync por entidad. No la reintroduzcas: cada entidad gestiona su propia sincronización.
 
 ### Estrategia de sincronización
 
-1. Siempre escribir en SQLite primero.
-2. Tras escribir, intentar sync inmediato si hay red y API configurada.
-3. Sin API o si falla → queda en `sync_queue` con `pending`.
-4. Background sync cada 2 minutos.
-5. Sync manual desde Ajustes.
-6. Sin API configurada: todo permanece en `pending`, sin errores para el usuario.
+El sync ya **no** usa una cola genérica. Cada entidad tiene su módulo API en `services/` y todos se orquestan desde `services/syncAll.ts` (`runFullSync`), disparado por un **único botón** en Ajustes → Sincronización.
+
+Principios:
+
+1. **Escribir primero en local** (SQLite, o AsyncStorage para config/precios pendientes). La UI nunca bloquea esperando red.
+2. **Un solo orquestador** (`runFullSync`) ejecuta las tasks **en orden por dependencias (FK)**: precios → productos (catálogo) → locales → sesiones → comandas. Un fallo en una no aborta las demás.
+3. **Módulos por entidad**:
+   - `pricesApi.ts` — sube ediciones de precio; los cambios offline quedan en una **cola de reintento propia en AsyncStorage** (no en SQLite).
+   - `catalogApi.ts` — descarga el catálogo y **reemplaza** la tabla local (con red de seguridad contra borrados: revisión de candidatos, ver plan de productos).
+   - `locationsApi.ts` — locales, bidireccional.
+   - `sessionsApi.ts` — jornadas; **PUSH primario + Last-Write-Wins**, campo `origin` local/remote.
+   - `ticketsApi.ts` — comandas (tickets→orders); numeración por (sesión, dispositivo).
+4. **Disparadores**: sync completo manual desde Ajustes; además, las **sesiones** se sincronizan *fire-and-forget* tras sus eventos (abrir/editar/fusionar/cerrar). No hay background sync periódico (el único `setInterval` global es el auto-cierre de sesiones, cada 5 min).
+5. **Config de servidor** en `apiConfig.ts`: modo `production` (fijo, `burguerbeats.com`) o `local` (editable en Ajustes). Envoltorio de respuesta `{ ok, data | error }`, `ApiError` tipado, timeout de 6 s.
+6. **Sin red o error**: no se muestran errores intrusivos al usuario; se reintenta en la próxima sincronización (fire-and-forget silencioso). Las funciones de `services/` nunca lanzan — devuelven `{ ok, error? }`.
+
+Detalles por entidad en `tpv-products-sync-plan.md`, `tpv-sessions-sync-plan.md` y `tpv-orders-sync-plan.md`.
 
 ---
 
@@ -286,7 +286,13 @@ stores/
   useTicketStore.ts    ← Zustand: ticket activo (múltiples orders)
 services/
   db.ts               ← expo-sqlite: init, migrations, CRUD
-  sync.ts             ← lógica de sync (preparada para API futura)
+  apiConfig.ts        ← cliente HTTP base (modo production/local, apiGet/apiPost, ApiError)
+  syncAll.ts          ← orquestador del sync unificado (runFullSync)
+  catalogApi.ts       ← descarga/reemplazo del catálogo de productos
+  pricesApi.ts        ← push de precios + cola de reintento en AsyncStorage
+  locationsApi.ts     ← sync de locales
+  sessionsApi.ts      ← sync de sesiones (PUSH primario, LWW)
+  ticketsApi.ts       ← sync de comandas (tickets→orders)
   printer.ts          ← impresión vía Bluetooth directo (react-native-bluetooth-classic) + diagnóstico
   escpos.ts           ← generación de bytes ESC/POS y string commands (legado)
 lib/
@@ -328,8 +334,7 @@ lib/
 
 ## Lo que NO está implementado aún (Fase 2)
 
-- API REST propia (backend por decidir: PHP/Slim, Node, etc.)
 - App web de inventario y gráficas
-- Autenticación de usuarios
+- Autenticación de usuarios (hoy solo `X-API-Key`, con el middleware del grupo `/tpv/*` desactivado)
 - Múltiples impresoras o puntos de venta
 - Histórico de ventas en la app móvil (solo en web)

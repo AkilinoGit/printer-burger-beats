@@ -1,9 +1,7 @@
 // Orquestador de sincronización unificada.
 //
 // Agrupa TODAS las sincronizaciones de datos en una sola operación disparada
-// desde un único botón en Ajustes → Sincronización. La ÚNICA excepción es la
-// cola de tickets/pedidos (sync_queue), que tiene su propio botón porque su
-// naturaleza (reintento de cola local) es distinta.
+// desde un único botón en Ajustes → Sincronización.
 //
 // Para añadir una nueva sincronización basta con registrar una SyncTask en el
 // array TASKS: quedará disponible automáticamente desde el botón unificado, sin

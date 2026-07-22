@@ -6,11 +6,9 @@ import { closeSession, getActiveSession, getNextTicketNumber, getProducts, initD
 import { syncSessions } from '../services/sessionsApi';
 
 const FERIANTE_PRICES_KEY = 'tpv:feriantePrices';
-const FORCE_PRINT_TWICE_KEY = 'tpv:forcePrintTwice';
 const PRINT_MODE_KEY = 'tpv:printMode';
 const ACTIVE_PRODUCT_PROFILE_KEY = 'tpv:activeProductProfile';
 const CATALOG_PROFILES_KEY = 'tpv:catalogProfiles';
-const DEVICE_LETTER_KEY = 'tpv:deviceLetter';
 
 export type PrintCopies = 'x1' | 'x2';
 
@@ -21,20 +19,12 @@ interface SessionState {
   products: Product[];
   isLoadingProducts: boolean;
   feriantePrices: Record<string, number>;
-  /** When true, every print is forced to emit two copies (as if "Imprimir 2x" were always on). */
-  forcePrintTwice: boolean;
   /** Red toggle in the order summary: when true the "Imprimir" action saves the order but does NOT print. */
   printNoPrint: boolean;
   /** Blue toggle in the order summary: how many copies to print when printNoPrint is false. */
   printCopies: PrintCopies;
   /** Last ticket number used in the active session. Incremented in-memory — no DB query needed. */
   lastTicketNumber: number;
-  /**
-   * Letra de este dispositivo para las comandas de sesiones compartidas
-   * (p. ej. 'A' → "COMANDA A3"). Vacío = numeración plana "COMANDA #3".
-   * Se configura a mano en Ajustes. Persistida en AsyncStorage.
-   */
-  deviceLetter: string;
   /** Product profile shown in the sales grid. Persisted in AsyncStorage. */
   activeProductProfile: ProductProfile;
   /**
@@ -87,13 +77,6 @@ interface SessionState {
   /** Update feriante prices and persist to AsyncStorage. */
   setFeriantePrices: (prices: Record<string, number>) => Promise<void>;
 
-  // --- force print twice ---
-  /** Load persisted forcePrintTwice flag from AsyncStorage. Call once on app start. */
-  loadForcePrintTwice: () => Promise<void>;
-  /** Update forcePrintTwice flag and persist to AsyncStorage. */
-  setForcePrintTwice: (value: boolean) => Promise<void>;
-
-  // --- print mode (order summary toggles) ---
   // --- active product profile (sales grid filter) ---
   /** Load persisted active product profile from AsyncStorage. Call once on app start. */
   loadActiveProductProfile: () => Promise<void>;
@@ -101,12 +84,6 @@ interface SessionState {
   setActiveProductProfile: (profile: ProductProfile) => Promise<void>;
   /** Load persisted backend profiles list from AsyncStorage. Call once on app start. */
   loadCatalogProfiles: () => Promise<void>;
-
-  // --- device letter (comanda prefix for shared sessions) ---
-  /** Load persisted device letter from AsyncStorage. Call once on app start. */
-  loadDeviceLetter: () => Promise<void>;
-  /** Update the device letter (normalized to ≤2 uppercase chars) and persist. */
-  setDeviceLetter: (letter: string) => Promise<void>;
 
   /** Load persisted print mode (red/blue toggles) from AsyncStorage. Call once on app start. */
   loadPrintMode: () => Promise<void>;
@@ -117,6 +94,12 @@ interface SessionState {
    * otherwise it alternates between x1 and x2. Always deactivates the red toggle.
    */
   togglePrintCopies: () => Promise<void>;
+  /**
+   * Reset the print toggles to the default after saving an order: deactivate the red
+   * "no print" toggle and go back to "print twice" (x2). Called once a ticket is saved
+   * so "no print" never carries over to the next order.
+   */
+  resetPrintMode: () => Promise<void>;
 }
 
 export const useSessionStore = create<SessionState>((set, get) => ({
@@ -125,11 +108,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   products: [],
   isLoadingProducts: true,
   feriantePrices: DEFAULT_FERIANTE_PRICES,
-  forcePrintTwice: false,
   printNoPrint: false,
   printCopies: 'x1',
   lastTicketNumber: 0,
-  deviceLetter: '',
   activeProductProfile: 'burger',
   catalogProfiles: [],
 
@@ -170,16 +151,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     set({ isLoadingProducts: true });
     try {
       await initDb();
-      // Restore persisted forcePrintTwice flag — fire-and-forget, defaults to false
-      void get().loadForcePrintTwice();
       // Restore persisted feriante prices — fire-and-forget, defaults to DEFAULT_FERIANTE_PRICES
       void get().loadFeriantePrices();
       // Restore persisted print mode (red/blue toggles) — fire-and-forget
       void get().loadPrintMode();
       // Restore persisted active product profile — fire-and-forget, defaults to 'burger'
       void get().loadActiveProductProfile();
-      // Restore persisted device letter — fire-and-forget, defaults to ''
-      void get().loadDeviceLetter();
       // Restore persisted backend profiles list — fire-and-forget, defaults to []
       void get().loadCatalogProfiles();
       const [session, products] = await Promise.all([getActiveSession(), getProducts()]);
@@ -235,26 +212,6 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
   },
 
-  loadForcePrintTwice: async () => {
-    try {
-      const stored = await AsyncStorage.getItem(FORCE_PRINT_TWICE_KEY);
-      if (stored !== null) {
-        set({ forcePrintTwice: stored === 'true' });
-      }
-    } catch {
-      // silently ignore — defaults to false
-    }
-  },
-
-  setForcePrintTwice: async (value) => {
-    set({ forcePrintTwice: value });
-    try {
-      await AsyncStorage.setItem(FORCE_PRINT_TWICE_KEY, value ? 'true' : 'false');
-    } catch {
-      // silently ignore
-    }
-  },
-
   loadActiveProductProfile: async () => {
     try {
       const stored = await AsyncStorage.getItem(ACTIVE_PRODUCT_PROFILE_KEY);
@@ -273,26 +230,6 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     set({ activeProductProfile: profile });
     try {
       await AsyncStorage.setItem(ACTIVE_PRODUCT_PROFILE_KEY, profile);
-    } catch {
-      // silently ignore
-    }
-  },
-
-  loadDeviceLetter: async () => {
-    try {
-      const stored = await AsyncStorage.getItem(DEVICE_LETTER_KEY);
-      if (stored !== null) set({ deviceLetter: stored });
-    } catch {
-      // silently ignore — defaults to ''
-    }
-  },
-
-  setDeviceLetter: async (letter) => {
-    // Normaliza: hasta 2 caracteres, mayúsculas, sin espacios ni '#'.
-    const normalized = letter.replace(/[\s#]/g, '').toUpperCase().slice(0, 2);
-    set({ deviceLetter: normalized });
-    try {
-      await AsyncStorage.setItem(DEVICE_LETTER_KEY, normalized);
     } catch {
       // silently ignore
     }
@@ -335,6 +272,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     // Resume previous copies value when coming back from "no print"; otherwise flip x1<->x2.
     const nextCopies: PrintCopies = printNoPrint ? printCopies : (printCopies === 'x1' ? 'x2' : 'x1');
     set({ printNoPrint: false, printCopies: nextCopies });
+    await persistPrintMode(get);
+  },
+
+  resetPrintMode: async () => {
+    set({ printNoPrint: false, printCopies: 'x2' });
     await persistPrintMode(get);
   },
 }));

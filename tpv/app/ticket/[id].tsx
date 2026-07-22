@@ -145,7 +145,6 @@ export default function TicketScreen(): React.JSX.Element {
   // ── stores ────────────────────────────────────────────────────────────────
   const products      = useSessionStore((s) => s.products);
   const activeSession = useSessionStore((s) => s.activeSession);
-  const forcePrintTwice = useSessionStore((s) => s.forcePrintTwice);
 
   const { labels: MODIFIER_LABELS, radioNoSelection: RADIO_NO_SELECTION, radioOptionSets: RADIO_OPTION_SETS } =
     useMemo(() => buildMaps(products.flatMap((p) => p.modifiers)), [products]);
@@ -332,7 +331,7 @@ export default function TicketScreen(): React.JSX.Element {
         for (const p of products) {
           normalPrices[p.id] = activeSession?.priceOverrides[p.id] ?? p.basePrice;
         }
-        const result = await printTicket(refreshed, false, MODIFIER_LABELS, RADIO_NO_SELECTION, RADIO_OPTION_SETS, forcePrintTwice, normalPrices);
+        const result = await printTicket(refreshed, false, MODIFIER_LABELS, RADIO_NO_SELECTION, RADIO_OPTION_SETS, false, normalPrices);
         if (result.ok) {
           await markTicketPrinted(refreshed.id);
         } else if (!result.cancelled) {

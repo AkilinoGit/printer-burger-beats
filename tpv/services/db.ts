@@ -13,7 +13,6 @@ import type {
   OrderItem,
   PriceProfile,
   SyncStatus,
-  SyncQueueEntry,
   ApiProduct,
   ApiLocation,
   ApiSession,
@@ -25,7 +24,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 const DB_NAME = 'tpv_v12.db';
-const SCHEMA_VERSION = 27;
+const SCHEMA_VERSION = 28;
 
 let _db: SQLite.SQLiteDatabase | null = null;
 let _initPromise: Promise<void> | null = null;
@@ -147,6 +146,9 @@ export async function initDb(): Promise<void> {
     }
     if (currentVersion < 27) {
       await migrate_v27(db); // tickets: device_id (numeración + prefijo por dispositivo) + backfill
+    }
+    if (currentVersion < 28) {
+      await migrate_v28(db); // drop legacy sync_queue table (cola offline nunca consumida)
     }
     await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
 
@@ -666,6 +668,16 @@ async function migrate_v27(db: SQLite.SQLiteDatabase): Promise<void> {
   }
 }
 
+async function migrate_v28(db: SQLite.SQLiteDatabase): Promise<void> {
+  // Elimina la tabla sync_queue: era la cola offline de la Fase 1 (reintento local
+  // de tickets/orders), superada por el sync por entidad (ticketsApi/sessionsApi…
+  // orquestado en syncAll.ts). Nunca llegó a consumirse (nadie encolaba). En BDs
+  // nuevas la crea migrate_v1 y esta migración la retira acto seguido; las
+  // migraciones históricas v10/v16/v18 se conservan como registro (append-only).
+  // IF EXISTS por defensa.
+  await db.execAsync(`DROP TABLE IF EXISTS sync_queue`);
+}
+
 // ---------------------------------------------------------------------------
 // Session helpers
 // ---------------------------------------------------------------------------
@@ -830,16 +842,6 @@ type OrderItemRow = {
   custom_label: string | null;
 };
 
-type SyncQueueRow = {
-  id: string;
-  entity_type: string;
-  entity_id: string;
-  action: string;
-  status: string;
-  attempts: number;
-  created_at: string;
-};
-
 function mapLocation(row: LocationRow): Location {
   return {
     id: row.id,
@@ -939,18 +941,6 @@ function mapOrderItem(row: OrderItemRow): OrderItem {
     modifierPriceAdd: row.modifier_price_add ?? 0,
     selectedModifiers: JSON.parse(row.selected_modifiers) as string[],
     customLabel: row.custom_label,
-  };
-}
-
-function mapSyncQueueEntry(row: SyncQueueRow): SyncQueueEntry {
-  return {
-    id: row.id,
-    entity_type: row.entity_type as SyncQueueEntry['entity_type'],
-    entity_id: row.entity_id,
-    action: (row.action ?? 'create') as SyncQueueEntry['action'],
-    status: row.status as SyncStatus,
-    attempts: row.attempts,
-    created_at: row.created_at,
   };
 }
 
@@ -1960,11 +1950,6 @@ export async function saveOrderWithItems(order: Order): Promise<void> {
         [item.id, item.orderId, item.productId, item.productName, item.qty, item.unitPrice, item.modifierPriceAdd, JSON.stringify(item.selectedModifiers), item.customLabel],
       );
     }
-    // TODO(API): re-enable when backend exists
-    // await db.runAsync(
-    //   'INSERT INTO sync_queue (id, entity_type, entity_id, action, status, attempts, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    //   [generateId(), 'order', order.id, 'create', 'pending', 0, new Date().toISOString()],
-    // );
   });
 }
 
@@ -2016,45 +2001,7 @@ export async function updateTicketWithOrders(ticket: Ticket): Promise<void> {
       'UPDATE tickets SET edited_at = ?, edit_count = edit_count + 1, sync_status = ? WHERE id = ?',
       [now, newSyncStatus, ticket.id],
     );
-
-    // TODO(API): re-enable when backend exists
-    // if (wasAlreadySynced) {
-    //   await db.runAsync(
-    //     'INSERT INTO sync_queue (id, entity_type, entity_id, action, status, attempts, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    //     [generateId(), 'ticket', ticket.id, 'update', 'pending', 0, now],
-    //   );
-    // }
   });
-}
-
-// ---------------------------------------------------------------------------
-// SYNC QUEUE
-// ---------------------------------------------------------------------------
-
-export async function getPendingSyncEntries(): Promise<SyncQueueEntry[]> {
-  const db = await getDb();
-  const rows = await db.getAllAsync<SyncQueueRow>(
-    "SELECT * FROM sync_queue WHERE status IN ('pending', 'error') ORDER BY created_at ASC",
-  );
-  return rows.map(mapSyncQueueEntry);
-}
-
-// TODO(API): re-enable when backend exists
-export async function enqueueSyncEntry(_entityType: 'order' | 'ticket', _entityId: string, _action: 'create' | 'update' = 'create'): Promise<void> {
-  // no-op until API is available
-}
-
-export async function updateSyncEntryStatus(id: string, status: SyncStatus): Promise<void> {
-  const db = await getDb();
-  await db.runAsync(
-    'UPDATE sync_queue SET status = ?, attempts = attempts + 1 WHERE id = ?',
-    [status, id],
-  );
-}
-
-export async function clearSyncedEntries(): Promise<void> {
-  const db = await getDb();
-  await db.runAsync("DELETE FROM sync_queue WHERE status = 'synced'");
 }
 
 // ---------------------------------------------------------------------------
@@ -2121,7 +2068,6 @@ export async function deleteTicket(id: string): Promise<void> {
       await db.runAsync('DELETE FROM order_items WHERE order_id = ?', [orderId]);
     }
     await db.runAsync('DELETE FROM orders WHERE ticket_id = ?', [id]);
-    await db.runAsync('DELETE FROM sync_queue WHERE entity_type = ? AND entity_id = ?', ['ticket', id]);
     await db.runAsync('DELETE FROM tickets WHERE id = ?', [id]);
   });
 }

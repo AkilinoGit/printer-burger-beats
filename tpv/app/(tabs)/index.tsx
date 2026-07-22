@@ -41,11 +41,11 @@ export default function HomeScreen(): React.JSX.Element {
   const setActiveProductProfile = useSessionStore((s) => s.setActiveProductProfile);
   const catalogProfiles = useSessionStore((s) => s.catalogProfiles);
   const nextTicketNumber    = useSessionStore((s) => s.nextTicketNumber);
-  const forcePrintTwice     = useSessionStore((s) => s.forcePrintTwice);
   const printNoPrint        = useSessionStore((s) => s.printNoPrint);
   const printCopies         = useSessionStore((s) => s.printCopies);
   const setPrintNoPrint     = useSessionStore((s) => s.setPrintNoPrint);
   const togglePrintCopies   = useSessionStore((s) => s.togglePrintCopies);
+  const resetPrintMode      = useSessionStore((s) => s.resetPrintMode);
   const closeCurrentSession = useSessionStore((s) => s.closeCurrentSession);
 
   const clientName    = useCartStore((s) => s.clientName);
@@ -189,8 +189,8 @@ export default function HomeScreen(): React.JSX.Element {
       const currentTicket = useTicketStore.getState().activeTicket;
       if (!currentTicket) throw new Error('Ticket no encontrado en store');
 
-      const effectiveTwice = printCopies === 'x2' || forcePrintTwice;
-      log.info('TICKET', 'printing', { noPrint: printNoPrint, twice: effectiveTwice, forced: forcePrintTwice });
+      const effectiveTwice = printCopies === 'x2';
+      log.info('TICKET', 'printing', { noPrint: printNoPrint, twice: effectiveTwice });
 
       // Red "no print" toggle: save and finalize the order but skip the physical print.
       if (!printNoPrint) {
@@ -216,6 +216,9 @@ export default function HomeScreen(): React.JSX.Element {
       setPaidAmount(null);
       setPaidChange(null);
       setTicketVisible(false);
+      // Reset the print toggles so "no imprimir" never carries over to the next
+      // order — go back to the default (imprimir dos veces / x2).
+      void resetPrintMode();
     } catch (e) {
       log.error('TICKET', 'handlePrint failed', e instanceof Error ? e.message : String(e));
       Alert.alert('Error', e instanceof Error ? e.message : 'No se pudo imprimir');

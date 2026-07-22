@@ -18,7 +18,6 @@ import {
   Portal,
   SegmentedButtons,
   Surface,
-  Switch,
   Text,
   TextInput,
   TouchableRipple,
@@ -29,7 +28,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { buildProfileList } from '../../lib/profiles';
 import {
-  getPendingSyncEntries,
   updateProductBasePrice,
 } from '../../services/db';
 import { runFullSync, type ConfirmCatalogDeletions } from '../../services/syncAll';
@@ -97,16 +95,10 @@ export default function SettingsScreen(): React.JSX.Element {
   const loadProducts      = useSessionStore((s) => s.loadProducts);
   const feriantePrices    = useSessionStore((s) => s.feriantePrices);
   const setFeriantePrices = useSessionStore((s) => s.setFeriantePrices);
-  const forcePrintTwice    = useSessionStore((s) => s.forcePrintTwice);
-  const setForcePrintTwice = useSessionStore((s) => s.setForcePrintTwice);
-  const loadForcePrintTwice = useSessionStore((s) => s.loadForcePrintTwice);
   const activeProductProfile    = useSessionStore((s) => s.activeProductProfile);
   const setActiveProductProfile = useSessionStore((s) => s.setActiveProductProfile);
   const loadActiveProductProfile = useSessionStore((s) => s.loadActiveProductProfile);
   const catalogProfiles = useSessionStore((s) => s.catalogProfiles);
-  const deviceLetter    = useSessionStore((s) => s.deviceLetter);
-  const setDeviceLetter = useSessionStore((s) => s.setDeviceLetter);
-  const loadDeviceLetter = useSessionStore((s) => s.loadDeviceLetter);
 
   // Perfiles disponibles: entidad del backend si la hay, si no derivados de productos.
   const profileList = useMemo(
@@ -115,14 +107,9 @@ export default function SettingsScreen(): React.JSX.Element {
   );
   const activeProfileMeta = profileList.find((p) => p.value === activeProductProfile);
 
-  useEffect(() => { void loadForcePrintTwice(); }, [loadForcePrintTwice]);
   useEffect(() => { void loadActiveProductProfile(); }, [loadActiveProductProfile]);
-  useEffect(() => { void loadDeviceLetter(); }, [loadDeviceLetter]);
 
   // ── local state ───────────────────────────────────────────────────────────
-  const [pendingCount, setPendingCount]     = useState(0);
-  const [syncing, setSyncing]               = useState(false);
-  const [loadingData, setLoadingData]       = useState(true);
   const [pairedPrinter, setPairedPrinter]   = useState<PrinterDevice | null>(null);
   const [testingPrinter, setTestingPrinter] = useState(false);
   const [printerConnected, setPrinterConnected] = useState(false);
@@ -327,40 +314,8 @@ export default function SettingsScreen(): React.JSX.Element {
     setFerianteDraft((prev) => ({ ...prev, [id]: v }));
   }, []);
 
-  // ── load ──────────────────────────────────────────────────────────────────
-  const loadData = useCallback(async () => {
-    setLoadingData(true);
-    try {
-      const pending = await getPendingSyncEntries();
-      setPendingCount(pending.length);
-    } finally {
-      setLoadingData(false);
-    }
-  }, []);
-
-  useEffect(() => { void loadData(); }, [loadData]);
-
-  // ── sync ──────────────────────────────────────────────────────────────────
-  async function handleSync(): Promise<void> {
-    setSyncing(true);
-    try {
-      const pending = await getPendingSyncEntries();
-      setPendingCount(pending.length);
-      Alert.alert(
-        'Sin API configurada',
-        pending.length === 0
-          ? 'No hay pedidos pendientes de sincronizar.'
-          : `${pending.length} ${pending.length === 1 ? 'pedido pendiente' : 'pedidos pendientes'} en cola. Se sincronizarán cuando la API esté disponible.`,
-        [{ text: 'OK' }],
-      );
-    } finally {
-      setSyncing(false);
-    }
-  }
-
-  // ── sincronización unificada (productos + locales + futuras) ────────────────
-  // Todas las sincronizaciones de datos se ejecutan desde aquí. La cola de
-  // tickets (handleSync) es la única excepción y conserva su botón propio.
+  // ── sincronización unificada (productos + locales + sesiones + comandas) ────
+  // Todas las sincronizaciones de datos se ejecutan desde aquí.
   async function handleSyncAll(): Promise<void> {
     // Persistir la URL local introducida antes de sincronizar (en producción es fija).
     if (serverMode === 'local') {
@@ -386,10 +341,14 @@ export default function SettingsScreen(): React.JSX.Element {
     }
   }
 
-  function formatUpdatedAt(iso: string | null): string {
-    if (!iso) return 'Nunca actualizado desde el servidor.';
-    const d = new Date(iso);
-    if (isNaN(d.getTime())) return 'Nunca actualizado desde el servidor.';
+  // Fecha/hora de la última sincronización: la más reciente de productos y locales.
+  function lastSyncLabel(a: string | null, b: string | null): string {
+    const times = [a, b]
+      .map((iso) => (iso ? new Date(iso) : null))
+      .filter((d): d is Date => d !== null && !isNaN(d.getTime()))
+      .map((d) => d.getTime());
+    if (times.length === 0) return 'Nunca sincronizado.';
+    const d = new Date(Math.max(...times));
     const dd = String(d.getDate()).padStart(2, '0');
     const mm = String(d.getMonth() + 1).padStart(2, '0');
     const hh = String(d.getHours()).padStart(2, '0');
@@ -469,14 +428,6 @@ export default function SettingsScreen(): React.JSX.Element {
   }
 
   // ── render ────────────────────────────────────────────────────────────────
-  if (loadingData) {
-    return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" />
-      </View>
-    );
-  }
-
   const editableProducts = products.filter((p) => p.isActive && !p.isCustom);
 
   return (
@@ -559,6 +510,55 @@ export default function SettingsScreen(): React.JSX.Element {
         )}
       </Surface>
 
+      {/* ── SYNC ──────────────────────────────────────────────────────────── */}
+      <Text variant="labelLarge" style={styles.sectionLabel}>SINCRONIZACIÓN</Text>
+      <Surface style={styles.card} elevation={1}>
+        {/* Botón al principio del chip: visible sin hacer scroll */}
+        <Button
+          mode="contained"
+          icon="cloud-sync"
+          onPress={() => void handleSyncAll()}
+          loading={syncingAll}
+          disabled={syncingAll}
+          buttonColor="#43A047"
+          style={styles.syncBtnTop}
+        >
+          Sincronizar ahora
+        </Button>
+        <Text style={styles.syncLastAt}>{lastSyncLabel(catalogUpdatedAt, locationsSyncedAt)}</Text>
+
+        <Divider style={styles.cardDivider} />
+
+        {/* Servidor: URL usada por todas las sincronizaciones */}
+        <Text style={[styles.syncTitle, styles.serverTitle]}>Servidor</Text>
+        <SegmentedButtons
+          value={serverMode}
+          onValueChange={(v) => void handleChangeServerMode(v as ServerMode)}
+          style={styles.serverModeButtons}
+          buttons={[
+            { value: 'production', label: 'Producción', icon: 'cloud-check' },
+            { value: 'local',      label: 'Local',      icon: 'lan-connect' },
+          ]}
+        />
+        {serverMode === 'production' ? (
+          <>
+            <Text style={styles.apiUrlValue}>{PRODUCTION_API_BASE_URL}</Text>
+            <Text style={styles.serverModeHint}>URL fija del servidor de producción.</Text>
+          </>
+        ) : (
+          <StableTextInput
+            value={apiBaseUrlInput}
+            onChangeText={setApiBaseUrlInput}
+            onBlur={() => void setApiBaseUrl(apiBaseUrlInput)}
+            mode="outlined"
+            placeholder="http://192.168.1.50 o http://10.0.2.2"
+            autoCapitalize="none"
+            keyboardType="url"
+            style={styles.apiUrlInput}
+          />
+        )}
+      </Surface>
+
       {/* ── PRECIOS ───────────────────────────────────────────────────────── */}
       <Text variant="labelLarge" style={styles.sectionLabel}>PRECIOS</Text>
       <Surface style={styles.card} elevation={1}>
@@ -590,45 +590,6 @@ export default function SettingsScreen(): React.JSX.Element {
           >
             Editar
           </Button>
-        </View>
-      </Surface>
-
-      {/* ── PRINTING ──────────────────────────────────────────────────────── */}
-      <Text variant="labelLarge" style={styles.sectionLabel}>IMPRESIÓN</Text>
-      <Surface style={styles.card} elevation={1}>
-        <View style={styles.priceActionRow}>
-          <View style={styles.priceActionText}>
-            <Text style={styles.priceActionTitle}>Imprimir siempre 2 copias</Text>
-            <Text style={styles.priceActionSubtitle}>
-              Cada ticket se imprime por duplicado, como si "Imprimir 2x" estuviera siempre activo.
-            </Text>
-          </View>
-          <Switch
-            value={forcePrintTwice}
-            onValueChange={(v) => void setForcePrintTwice(v)}
-          />
-        </View>
-
-        <Divider />
-
-        <View style={styles.priceActionRow}>
-          <View style={styles.priceActionText}>
-            <Text style={styles.priceActionTitle}>Letra del dispositivo</Text>
-            <Text style={styles.priceActionSubtitle}>
-              Identificador interno para distinguir este TPV en sesiones compartidas.
-              Se muestra en la app (ej. "{deviceLetter || 'A'}3"); NO se imprime en la comanda.
-            </Text>
-          </View>
-          <TextInput
-            mode="outlined"
-            dense
-            autoCapitalize="characters"
-            maxLength={2}
-            value={deviceLetter}
-            onChangeText={(v) => void setDeviceLetter(v)}
-            placeholder="—"
-            style={styles.deviceLetterInput}
-          />
         </View>
       </Surface>
 
@@ -688,93 +649,6 @@ export default function SettingsScreen(): React.JSX.Element {
             ))}
           </Menu>
         </View>
-      </Surface>
-
-      {/* ── SYNC ──────────────────────────────────────────────────────────── */}
-      <Text variant="labelLarge" style={styles.sectionLabel}>SINCRONIZACIÓN</Text>
-      <Surface style={styles.card} elevation={1}>
-        {/* Servidor: URL usada por todas las sincronizaciones */}
-        <Text style={[styles.syncTitle, styles.serverTitle]}>Servidor</Text>
-        <SegmentedButtons
-          value={serverMode}
-          onValueChange={(v) => void handleChangeServerMode(v as ServerMode)}
-          style={styles.serverModeButtons}
-          buttons={[
-            { value: 'production', label: 'Producción', icon: 'cloud-check' },
-            { value: 'local',      label: 'Local',      icon: 'lan-connect' },
-          ]}
-        />
-        {serverMode === 'production' ? (
-          <>
-            <Text style={styles.apiUrlValue}>{PRODUCTION_API_BASE_URL}</Text>
-            <Text style={styles.serverModeHint}>URL fija del servidor de producción.</Text>
-          </>
-        ) : (
-          <StableTextInput
-            value={apiBaseUrlInput}
-            onChangeText={setApiBaseUrlInput}
-            onBlur={() => void setApiBaseUrl(apiBaseUrlInput)}
-            mode="outlined"
-            placeholder="http://192.168.1.50 o http://10.0.2.2"
-            autoCapitalize="none"
-            keyboardType="url"
-            style={styles.apiUrlInput}
-          />
-        )}
-        <Divider style={styles.cardDivider} />
-
-        {/* Botón unificado: productos + locales (+ futuras sincronizaciones) */}
-        <Button
-          mode="contained"
-          icon="cloud-sync"
-          onPress={() => void handleSyncAll()}
-          loading={syncingAll}
-          disabled={syncingAll}
-          buttonColor="#43A047"
-          style={styles.syncBtn}
-        >
-          Sincronizar ahora
-        </Button>
-        <Text style={styles.syncHint}>
-          Sincroniza productos y locales con el servidor.{'\n'}
-          Productos — {formatUpdatedAt(catalogUpdatedAt)}{'\n'}
-          Locales — {formatUpdatedAt(locationsSyncedAt)}
-        </Text>
-
-        <Divider style={styles.cardDivider} />
-
-        {/* Cola de tickets: sincronización propia, independiente del botón unificado */}
-        <View style={styles.syncRow}>
-          <View>
-            <Text style={styles.syncTitle}>Cola de sincronización</Text>
-            <Text style={styles.syncSubtitle}>
-              {pendingCount === 0
-                ? 'No hay pedidos pendientes.'
-                : `${pendingCount} ${pendingCount === 1 ? 'pedido pendiente' : 'pedidos pendientes'} en cola`}
-            </Text>
-          </View>
-          <View style={[
-            styles.syncBadge,
-            pendingCount > 0 ? styles.syncBadgePending : styles.syncBadgeOk,
-          ]}>
-            <Text style={styles.syncBadgeText}>{pendingCount}</Text>
-          </View>
-        </View>
-        <Divider style={styles.cardDivider} />
-        <Button
-          mode="contained"
-          icon="cloud-sync"
-          onPress={() => void handleSync()}
-          loading={syncing}
-          disabled={syncing}
-          buttonColor="#546E7A"
-          style={styles.syncBtn}
-        >
-          Sincronizar cola de tickets
-        </Button>
-        <Text style={styles.syncHint}>
-          API no configurada. Los datos se sincronizarán automáticamente cuando esté disponible.
-        </Text>
       </Surface>
 
       {/* ── DIALOGS ───────────────────────────────────────────────────────── */}
@@ -1017,7 +891,6 @@ export default function SettingsScreen(): React.JSX.Element {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#f5f5f5' },
   scrollContent: { padding: 16, paddingBottom: 48, gap: 8 },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 
   sectionLabel: {
     fontSize: 11,
@@ -1047,11 +920,6 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   priceActionText: { flex: 1, gap: 3 },
-  deviceLetterInput: {
-    width: 72,
-    backgroundColor: '#fff',
-    textAlign: 'center',
-  },
   priceActionTitle: {
     fontSize: 15,
     fontWeight: '600',
@@ -1139,12 +1007,6 @@ const styles = StyleSheet.create({
   },
 
   // ── sync ──
-  syncRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 16,
-    gap: 12,
-  },
   syncTitle: {
     fontSize: 15,
     fontWeight: '600',
@@ -1154,29 +1016,21 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 12,
   },
-  syncSubtitle: {
-    fontSize: 13,
-    color: '#666',
-    marginTop: 2,
-  },
-  syncBadge: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-  syncBadgeOk: { backgroundColor: '#E8F5E9' },
-  syncBadgePending: { backgroundColor: '#FFF3E0' },
-  syncBadgeText: {
-    fontWeight: '800',
-    fontSize: 15,
-    color: '#555',
-  },
   syncBtn: {
     borderRadius: 8,
     marginHorizontal: 16,
+    marginBottom: 8,
+  },
+  syncBtnTop: {
+    borderRadius: 8,
+    marginHorizontal: 16,
+    marginTop: 14,
+    marginBottom: 8,
+  },
+  syncLastAt: {
+    fontSize: 12,
+    color: '#999',
+    paddingHorizontal: 16,
     marginBottom: 8,
   },
   apiUrlInput: {
@@ -1203,13 +1057,6 @@ const styles = StyleSheet.create({
     color: '#999',
     marginHorizontal: 16,
     marginBottom: 8,
-  },
-  syncHint: {
-    fontSize: 12,
-    color: '#999',
-    paddingHorizontal: 16,
-    paddingBottom: 14,
-    lineHeight: 17,
   },
 
   // ── printer current ──

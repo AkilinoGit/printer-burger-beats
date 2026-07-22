@@ -127,16 +127,6 @@ export interface Ticket {
   editCount: number;             // veces que se ha editado
 }
 
-export interface SyncQueueEntry {
-  id: string;
-  entity_type: 'order' | 'ticket';
-  entity_id: string;
-  action: 'create' | 'update';
-  status: SyncStatus;
-  attempts: number;
-  created_at: string;
-}
-
 // ---------------------------------------------------------------------------
 // Backend catalog API (GET /api/v1/tpv/products)
 // Shape recibido del backend. DECIMAL puede llegar como number o string

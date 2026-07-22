@@ -15,21 +15,9 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 
 import { getLocations, getSessions, getTicketsBySession, markTicketPrinted } from '../../services/db';
 import { printTicket } from '../../services/printer';
-import { getCachedDeviceId } from '../../lib/device';
 import { formatPrice } from '../../lib/utils';
 import { useSessionStore } from '../../stores/useSessionStore';
 import type { Location, Modifier, Session, SyncStatus, Ticket } from '../../lib/types';
-
-/**
- * Etiqueta del nº de comanda: la letra de ESTE dispositivo si la comanda es
- * suya y hay letra configurada (ej. "A3"); si no, "#3". Las comandas de otros
- * dispositivos se muestran con "#" porque su letra es config local ajena.
- */
-function ticketNumberLabel(ticket: Ticket, myDeviceId: string | null, myLetter: string): string {
-  const isMine = ticket.deviceId != null && ticket.deviceId === myDeviceId;
-  const prefix = isMine && myLetter ? myLetter : '#';
-  return `${prefix}${ticket.ticketNumber}`;
-}
 
 // ---------------------------------------------------------------------------
 // Modifier label map (same logic as ticket/[id].tsx)
@@ -128,8 +116,6 @@ function TicketRow({ ticket, onPress, onReprint, reprinting }: TicketRowProps): 
   const orderNames = ticket.orders.map((o) => o.clientName).filter(Boolean).join(', ');
   const wasEdited  = ticket.editedAt !== null;
   const items      = ticket.orders.flatMap((o) => o.items);
-  const deviceLetter = useSessionStore((s) => s.deviceLetter);
-  const numberLabel  = ticketNumberLabel(ticket, getCachedDeviceId(), deviceLetter);
 
   return (
     <TouchableRipple onPress={onPress} rippleColor="rgba(0,0,0,0.06)">
@@ -138,7 +124,7 @@ function TicketRow({ ticket, onPress, onReprint, reprinting }: TicketRowProps): 
         {/* Header line: number + client name + total + reprint */}
         <View style={rowStyles.headerLine}>
           <View style={rowStyles.headerLeft}>
-            <Text style={rowStyles.number}>{numberLabel}</Text>
+            <Text style={rowStyles.number}>{`#${ticket.ticketNumber}`}</Text>
             {orderNames.length > 0 && (
               <Text style={rowStyles.names} numberOfLines={1}>{orderNames}</Text>
             )}
