@@ -129,23 +129,21 @@
       "Bash(grep -n 'function numeric\\\\|function min\\\\|function required\\\\|isset\\\\|array_key_exists\\\\|=== null\\\\|return $this')",
       "Bash(php -l src/Controllers/Api/Admin/RecipeController.php)",
       "Bash(php -l src/Repositories/ProductRecipeRepository.php)",
-      "Read(//c/laragon/www/burger-beats-backend/src/Controllers/Api/Tpv/**)"
+      "Read(//c/laragon/www/burger-beats-backend/src/Controllers/Api/Tpv/**)",
+      "Bash(cd \"C:/laragon/www/burger-beats-backend\" && sed -n '60,140p' src/Support/Db.php && echo \"=== ORDER REPO create/update ===\" && sed -n '1,60p' src/Repositories/OrderRepository.php)",
+      "Read",
+      "Glob",
+      "Grep",
+      "Edit",
+      "Write",
+      "NotebookEdit",
+      "Bash",
+      "PowerShell"
     ],
     "additionalDirectories": [
+      "C:\\dev\\TPV by AKI SOFTWARE",
       "C:\\laragon\\www\\burger-beats-backend",
-      "C:\\dev\\burger-beats-admin",
-      "C:\\laragon\\www\\burger-beats-backend\\migrations",
-      "C:\\laragon\\www\\burger-beats-backend\\src\\Repositories",
-      "C:\\laragon\\www\\burger-beats-backend\\src\\Controllers\\Api\\Admin",
-      "C:\\laragon\\www\\burger-beats-backend\\src\\Bootstrap",
-      "C:\\laragon\\www\\burger-beats-backend\\scripts",
-      "C:\\dev\\burger-beats-admin\\src\\types",
-      "C:\\dev\\burger-beats-admin\\src\\lib",
-      "C:\\dev\\burger-beats-admin\\src\\pages\\recipes\\hooks",
-      "C:\\dev\\burger-beats-admin\\src\\pages\\recipes\\components",
-      "C:\\dev\\burger-beats-admin\\src\\pages\\recipes\\tabs",
-      "C:\\laragon\\www\\burger-beats-backend\\docs",
-      "C:\\dev\\burger-beats-admin\\docs"
+      "C:\\dev\\burger-beats-admin"
     ]
   }
 }

@@ -13,6 +13,7 @@ import { useRouter } from 'expo-router';
 
 import { getLocations, getSessionSummary, getSessions } from '../services/db';
 import { formatPrice } from '../lib/utils';
+import SessionSyncChip from '../components/SessionSyncChip';
 import type { Location, Session } from '../lib/types';
 
 const ALL_LOCATIONS = '__all__';
@@ -49,6 +50,7 @@ function SessionCard({ session, locationName, onPress, onViewSummary }: SessionC
             {session.sessionCode && (
               <Text style={cardStyles.code}>{session.sessionCode}</Text>
             )}
+            <SessionSyncChip session={session} />
           </View>
           <View style={cardStyles.right}>
             <Text style={cardStyles.total}>{formatPrice(summary.total)}</Text>

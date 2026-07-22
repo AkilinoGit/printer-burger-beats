@@ -9,6 +9,7 @@ import {
 import {
   ActivityIndicator,
   Button,
+  Checkbox,
   Dialog,
   Divider,
   Icon,
@@ -31,7 +32,8 @@ import {
   getPendingSyncEntries,
   updateProductBasePrice,
 } from '../../services/db';
-import { runFullSync } from '../../services/syncAll';
+import { runFullSync, type ConfirmCatalogDeletions } from '../../services/syncAll';
+import type { Product } from '../../lib/types';
 import { savePricesAndQueue, type PricePush } from '../../services/pricesApi';
 import {
   getLocalApiBaseUrl,
@@ -102,6 +104,9 @@ export default function SettingsScreen(): React.JSX.Element {
   const setActiveProductProfile = useSessionStore((s) => s.setActiveProductProfile);
   const loadActiveProductProfile = useSessionStore((s) => s.loadActiveProductProfile);
   const catalogProfiles = useSessionStore((s) => s.catalogProfiles);
+  const deviceLetter    = useSessionStore((s) => s.deviceLetter);
+  const setDeviceLetter = useSessionStore((s) => s.setDeviceLetter);
+  const loadDeviceLetter = useSessionStore((s) => s.loadDeviceLetter);
 
   // Perfiles disponibles: entidad del backend si la hay, si no derivados de productos.
   const profileList = useMemo(
@@ -112,6 +117,7 @@ export default function SettingsScreen(): React.JSX.Element {
 
   useEffect(() => { void loadForcePrintTwice(); }, [loadForcePrintTwice]);
   useEffect(() => { void loadActiveProductProfile(); }, [loadActiveProductProfile]);
+  useEffect(() => { void loadDeviceLetter(); }, [loadDeviceLetter]);
 
   // ── local state ───────────────────────────────────────────────────────────
   const [pendingCount, setPendingCount]     = useState(0);
@@ -131,6 +137,36 @@ export default function SettingsScreen(): React.JSX.Element {
   // Sincronización unificada (productos + locales + futuras)
   const [syncingAll, setSyncingAll]             = useState(false);
   const [locationsSyncedAt, setLocationsSyncedAt] = useState<string | null>(null);
+
+  // Revisión de borrados de catálogo: productos locales que el backend ya no trae.
+  // El modal deja marcar cuáles eliminar; los no marcados se conservan. La promesa
+  // del callback se resuelve al pulsar un botón del modal (resolver guardado en ref).
+  const [reviewCandidates, setReviewCandidates] = useState<Product[] | null>(null);
+  const [reviewSelected, setReviewSelected]     = useState<Set<string>>(new Set());
+  const reviewResolverRef = useRef<((ids: Set<string>) => void) | null>(null);
+
+  const confirmCatalogDeletions = useCallback<ConfirmCatalogDeletions>((candidates) => {
+    return new Promise<Set<string>>((resolve) => {
+      reviewResolverRef.current = resolve;
+      setReviewSelected(new Set());     // por defecto nada marcado ⇒ conservar todo
+      setReviewCandidates(candidates);  // abre el modal
+    });
+  }, []);
+
+  // Resuelve la promesa del callback y cierra el modal. `ids` = productos a ELIMINAR.
+  const resolveReview = useCallback((ids: Set<string>) => {
+    reviewResolverRef.current?.(ids);
+    reviewResolverRef.current = null;
+    setReviewCandidates(null);
+  }, []);
+
+  const toggleReview = useCallback((id: string) => {
+    setReviewSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     void (async () => {
@@ -333,7 +369,7 @@ export default function SettingsScreen(): React.JSX.Element {
 
     setSyncingAll(true);
     try {
-      const { results, allOk } = await runFullSync();
+      const { results, allOk } = await runFullSync({ confirmCatalogDeletions });
       // Refrescar la UI desde las fuentes que las tasks acaban de actualizar.
       setCatalogUpdatedAt(await AsyncStorage.getItem('tpv:catalogUpdatedAt'));
       setLocationsSyncedAt(await AsyncStorage.getItem('tpv:locationsSyncedAt'));
@@ -570,6 +606,28 @@ export default function SettingsScreen(): React.JSX.Element {
           <Switch
             value={forcePrintTwice}
             onValueChange={(v) => void setForcePrintTwice(v)}
+          />
+        </View>
+
+        <Divider />
+
+        <View style={styles.priceActionRow}>
+          <View style={styles.priceActionText}>
+            <Text style={styles.priceActionTitle}>Letra del dispositivo</Text>
+            <Text style={styles.priceActionSubtitle}>
+              Identificador interno para distinguir este TPV en sesiones compartidas.
+              Se muestra en la app (ej. "{deviceLetter || 'A'}3"); NO se imprime en la comanda.
+            </Text>
+          </View>
+          <TextInput
+            mode="outlined"
+            dense
+            autoCapitalize="characters"
+            maxLength={2}
+            value={deviceLetter}
+            onChangeText={(v) => void setDeviceLetter(v)}
+            placeholder="—"
+            style={styles.deviceLetterInput}
           />
         </View>
       </Surface>
@@ -898,6 +956,55 @@ export default function SettingsScreen(): React.JSX.Element {
           </Dialog.Actions>
         </Dialog>
 
+        {/* Revisión de borrados de catálogo (red de seguridad) */}
+        <Dialog
+          visible={reviewCandidates !== null}
+          onDismiss={() => resolveReview(new Set())}
+        >
+          <Dialog.Title>Productos a eliminar</Dialog.Title>
+          <Dialog.Content>
+            <Text style={styles.reviewIntro}>
+              Estos productos están en este dispositivo pero el servidor ya no los
+              incluye. Marca los que quieras eliminar; los que dejes sin marcar se
+              conservarán.
+            </Text>
+          </Dialog.Content>
+          <Dialog.ScrollArea style={styles.dialogScroll}>
+            <ScrollView>
+              {(reviewCandidates ?? []).map((p, idx) => {
+                const checked = reviewSelected.has(p.id);
+                return (
+                  <React.Fragment key={p.id}>
+                    {idx > 0 && <Divider />}
+                    <TouchableRipple onPress={() => toggleReview(p.id)}>
+                      <View style={styles.reviewRow}>
+                        <Checkbox status={checked ? 'checked' : 'unchecked'} />
+                        <View style={styles.reviewRowText}>
+                          <Text style={styles.reviewName}>{p.name}</Text>
+                          <Text style={styles.reviewMeta}>
+                            {p.category}{p.isActive ? '' : ' · inactivo'}
+                          </Text>
+                        </View>
+                      </View>
+                    </TouchableRipple>
+                  </React.Fragment>
+                );
+              })}
+            </ScrollView>
+          </Dialog.ScrollArea>
+          <Dialog.Actions>
+            <Button onPress={() => resolveReview(new Set())}>Conservar todos</Button>
+            <Button
+              mode="contained"
+              buttonColor="#E53935"
+              disabled={reviewSelected.size === 0}
+              onPress={() => resolveReview(reviewSelected)}
+            >
+              Eliminar ({reviewSelected.size})
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
+
       </Portal>
     </ScrollView>
   );
@@ -940,6 +1047,11 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   priceActionText: { flex: 1, gap: 3 },
+  deviceLetterInput: {
+    width: 72,
+    backgroundColor: '#fff',
+    textAlign: 'center',
+  },
   priceActionTitle: {
     fontSize: 15,
     fontWeight: '600',
@@ -985,6 +1097,28 @@ const styles = StyleSheet.create({
   dialogScroll: {
     maxHeight: 400,
     paddingHorizontal: 0,
+  },
+  reviewIntro: {
+    fontSize: 14,
+    lineHeight: 20,
+    opacity: 0.8,
+  },
+  reviewRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    gap: 8,
+  },
+  reviewRowText: {
+    flex: 1,
+  },
+  reviewName: {
+    fontSize: 16,
+  },
+  reviewMeta: {
+    fontSize: 12,
+    opacity: 0.6,
   },
   priceRow: {
     flexDirection: 'row',

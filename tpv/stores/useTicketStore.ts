@@ -49,6 +49,9 @@ export const useTicketStore = create<TicketState>((set, get) => ({
       id: id ?? generateId(),
       sessionId,
       ticketNumber,
+      // El ticket real y su device_id los fija insertTicket() en la BD; el store
+      // solo mantiene el borrador en memoria durante la venta.
+      deviceId: null,
       orders: [],
       printedAt: null,
       syncStatus: 'pending',

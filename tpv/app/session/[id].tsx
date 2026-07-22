@@ -15,9 +15,21 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 
 import { getLocations, getSessions, getTicketsBySession, markTicketPrinted } from '../../services/db';
 import { printTicket } from '../../services/printer';
+import { getCachedDeviceId } from '../../lib/device';
 import { formatPrice } from '../../lib/utils';
 import { useSessionStore } from '../../stores/useSessionStore';
 import type { Location, Modifier, Session, SyncStatus, Ticket } from '../../lib/types';
+
+/**
+ * Etiqueta del nº de comanda: la letra de ESTE dispositivo si la comanda es
+ * suya y hay letra configurada (ej. "A3"); si no, "#3". Las comandas de otros
+ * dispositivos se muestran con "#" porque su letra es config local ajena.
+ */
+function ticketNumberLabel(ticket: Ticket, myDeviceId: string | null, myLetter: string): string {
+  const isMine = ticket.deviceId != null && ticket.deviceId === myDeviceId;
+  const prefix = isMine && myLetter ? myLetter : '#';
+  return `${prefix}${ticket.ticketNumber}`;
+}
 
 // ---------------------------------------------------------------------------
 // Modifier label map (same logic as ticket/[id].tsx)
@@ -116,6 +128,8 @@ function TicketRow({ ticket, onPress, onReprint, reprinting }: TicketRowProps): 
   const orderNames = ticket.orders.map((o) => o.clientName).filter(Boolean).join(', ');
   const wasEdited  = ticket.editedAt !== null;
   const items      = ticket.orders.flatMap((o) => o.items);
+  const deviceLetter = useSessionStore((s) => s.deviceLetter);
+  const numberLabel  = ticketNumberLabel(ticket, getCachedDeviceId(), deviceLetter);
 
   return (
     <TouchableRipple onPress={onPress} rippleColor="rgba(0,0,0,0.06)">
@@ -124,7 +138,7 @@ function TicketRow({ ticket, onPress, onReprint, reprinting }: TicketRowProps): 
         {/* Header line: number + client name + total + reprint */}
         <View style={rowStyles.headerLine}>
           <View style={rowStyles.headerLeft}>
-            <Text style={rowStyles.number}>#{ticket.ticketNumber}</Text>
+            <Text style={rowStyles.number}>{numberLabel}</Text>
             {orderNames.length > 0 && (
               <Text style={rowStyles.names} numberOfLines={1}>{orderNames}</Text>
             )}
@@ -428,6 +442,13 @@ export function SessionDetailView({ sessionId }: SessionDetailProps): React.JSX.
                 </View>
               )}
 
+              {/* Comentario de la jornada, si lo hay */}
+              {session.notes != null && session.notes.trim() !== '' && (
+                <View style={styles.notesBox}>
+                  <Text style={styles.notesText}>{session.notes}</Text>
+                </View>
+              )}
+
               {/* Auto-close / closed notice */}
               {isOpen ? (
                 <Text style={styles.autoCloseNote}>
@@ -449,6 +470,30 @@ export function SessionDetailView({ sessionId }: SessionDetailProps): React.JSX.
               >
                 Ver resumen
               </Button>
+
+              {/* Editar sesión — notas, ubicación, precios y borrado */}
+              <Button
+                mode="outlined"
+                icon="pencil"
+                onPress={() => router.push(`/session/edit/${session.id}`)}
+                style={styles.summaryBtn}
+                contentStyle={styles.closeBtnContent}
+              >
+                Editar sesión
+              </Button>
+
+              {/* Fusionar con otra sesión — solo entre jornadas ya cerradas */}
+              {!isOpen && (
+                <Button
+                  mode="outlined"
+                  icon="call-merge"
+                  onPress={() => router.push(`/session/merge/${session.id}`)}
+                  style={styles.summaryBtn}
+                  contentStyle={styles.closeBtnContent}
+                >
+                  Fusionar con otra sesión
+                </Button>
+              )}
 
               {/* Close button (only when active) */}
               {isOpen && (
@@ -624,6 +669,19 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#888',
     fontStyle: 'italic',
+  },
+
+  // notas de la jornada
+  notesBox: {
+    backgroundColor: '#FFF8E1',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  notesText: {
+    fontSize: 14,
+    color: '#5D4A00',
+    lineHeight: 20,
   },
 
   // close button

@@ -3,12 +3,14 @@ import { create } from 'zustand';
 import type { Location, Product, ProductProfile, Profile, Session } from '../lib/types';
 import { DEFAULT_FERIANTE_PRICES } from '../lib/constants';
 import { closeSession, getActiveSession, getNextTicketNumber, getProducts, initDb } from '../services/db';
+import { syncSessions } from '../services/sessionsApi';
 
 const FERIANTE_PRICES_KEY = 'tpv:feriantePrices';
 const FORCE_PRINT_TWICE_KEY = 'tpv:forcePrintTwice';
 const PRINT_MODE_KEY = 'tpv:printMode';
 const ACTIVE_PRODUCT_PROFILE_KEY = 'tpv:activeProductProfile';
 const CATALOG_PROFILES_KEY = 'tpv:catalogProfiles';
+const DEVICE_LETTER_KEY = 'tpv:deviceLetter';
 
 export type PrintCopies = 'x1' | 'x2';
 
@@ -27,6 +29,12 @@ interface SessionState {
   printCopies: PrintCopies;
   /** Last ticket number used in the active session. Incremented in-memory — no DB query needed. */
   lastTicketNumber: number;
+  /**
+   * Letra de este dispositivo para las comandas de sesiones compartidas
+   * (p. ej. 'A' → "COMANDA A3"). Vacío = numeración plana "COMANDA #3".
+   * Se configura a mano en Ajustes. Persistida en AsyncStorage.
+   */
+  deviceLetter: string;
   /** Product profile shown in the sales grid. Persisted in AsyncStorage. */
   activeProductProfile: ProductProfile;
   /**
@@ -94,6 +102,12 @@ interface SessionState {
   /** Load persisted backend profiles list from AsyncStorage. Call once on app start. */
   loadCatalogProfiles: () => Promise<void>;
 
+  // --- device letter (comanda prefix for shared sessions) ---
+  /** Load persisted device letter from AsyncStorage. Call once on app start. */
+  loadDeviceLetter: () => Promise<void>;
+  /** Update the device letter (normalized to ≤2 uppercase chars) and persist. */
+  setDeviceLetter: (letter: string) => Promise<void>;
+
   /** Load persisted print mode (red/blue toggles) from AsyncStorage. Call once on app start. */
   loadPrintMode: () => Promise<void>;
   /** Activate the red "no print" toggle (deactivates the blue copies toggle). */
@@ -115,6 +129,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   printNoPrint: false,
   printCopies: 'x1',
   lastTicketNumber: 0,
+  deviceLetter: '',
   activeProductProfile: 'burger',
   catalogProfiles: [],
 
@@ -163,6 +178,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       void get().loadPrintMode();
       // Restore persisted active product profile — fire-and-forget, defaults to 'burger'
       void get().loadActiveProductProfile();
+      // Restore persisted device letter — fire-and-forget, defaults to ''
+      void get().loadDeviceLetter();
       // Restore persisted backend profiles list — fire-and-forget, defaults to []
       void get().loadCatalogProfiles();
       const [session, products] = await Promise.all([getActiveSession(), getProducts()]);
@@ -185,6 +202,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     // and disk diverge and the session appears "open" again on next launch.
     await closeSession(session.id);
     set({ activeSession: null, lastTicketNumber: 0 });
+    // Empuje silencioso al backend: el cierre es un cambio de estado que otros
+    // dispositivos deben ver (deja de ofrecerse para "unirse" y entra en el
+    // historial). Cubre el cierre manual y los auto-cierres de _layout.tsx.
+    // Fire-and-forget: nunca bloquea ni revierte el cierre local.
+    void syncSessions().catch(() => {});
   },
 
   nextTicketNumber: () => {
@@ -251,6 +273,26 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     set({ activeProductProfile: profile });
     try {
       await AsyncStorage.setItem(ACTIVE_PRODUCT_PROFILE_KEY, profile);
+    } catch {
+      // silently ignore
+    }
+  },
+
+  loadDeviceLetter: async () => {
+    try {
+      const stored = await AsyncStorage.getItem(DEVICE_LETTER_KEY);
+      if (stored !== null) set({ deviceLetter: stored });
+    } catch {
+      // silently ignore — defaults to ''
+    }
+  },
+
+  setDeviceLetter: async (letter) => {
+    // Normaliza: hasta 2 caracteres, mayúsculas, sin espacios ni '#'.
+    const normalized = letter.replace(/[\s#]/g, '').toUpperCase().slice(0, 2);
+    set({ deviceLetter: normalized });
+    try {
+      await AsyncStorage.setItem(DEVICE_LETTER_KEY, normalized);
     } catch {
       // silently ignore
     }

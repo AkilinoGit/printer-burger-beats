@@ -1,9 +1,11 @@
 import * as SQLite from 'expo-sqlite';
 import { INITIAL_PRODUCTS, DEFAULT_LOCATION_NAME } from '../lib/constants';
+import { getDeviceId } from '../lib/device';
 import { generateId, todayISO } from '../lib/utils';
 import type {
   Location,
   Session,
+  SessionOrigin,
   Product,
   Modifier,
   Ticket,
@@ -14,6 +16,8 @@ import type {
   SyncQueueEntry,
   ApiProduct,
   ApiLocation,
+  ApiSession,
+  ApiTicket,
 } from '../lib/types';
 
 // ---------------------------------------------------------------------------
@@ -21,7 +25,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 const DB_NAME = 'tpv_v12.db';
-const SCHEMA_VERSION = 25;
+const SCHEMA_VERSION = 27;
 
 let _db: SQLite.SQLiteDatabase | null = null;
 let _initPromise: Promise<void> | null = null;
@@ -138,7 +142,37 @@ export async function initDb(): Promise<void> {
     if (currentVersion < 25) {
       await migrate_v25(db); // category becomes free text: add category_order + rename burger keys to display names
     }
+    if (currentVersion < 26) {
+      await migrate_v26(db); // sessions: notes/updated_at/sync_status/deleted_at/origin + backfill device_id
+    }
+    if (currentVersion < 27) {
+      await migrate_v27(db); // tickets: device_id (numeración + prefijo por dispositivo) + backfill
+    }
     await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+
+    // Self-heal de las columnas de sync de sesiones: si el ALTER de v26 se tragó
+    // silenciosamente en algún dispositivo (mismo fallo que products.profile en
+    // v24), el push de sesiones fallaría al leer columnas inexistentes.
+    try {
+      await ensureSessionSyncColumns(db);
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.log('[db] sessions sync columns self-heal failed', e);
+    }
+
+    // Self-heal de tickets.device_id (v27): si el ALTER falló en silencio, el push
+    // de comandas fallaría al leerla. Idempotente.
+    try {
+      const cols = await db.getAllAsync<{ name: string }>('PRAGMA table_info(tickets)');
+      if (!cols.some((c) => c.name === 'device_id')) {
+        await db.execAsync(`ALTER TABLE tickets ADD COLUMN device_id TEXT`);
+        const deviceId = await getDeviceId();
+        await db.runAsync('UPDATE tickets SET device_id = ? WHERE device_id IS NULL', [deviceId]);
+      }
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.log('[db] tickets.device_id self-heal failed', e);
+    }
 
     // Self-heal: guarantee products.profile exists even on devices whose
     // user_version was already bumped to 24 while migrate_v24's ALTER was
@@ -561,6 +595,77 @@ async function migrate_v25(db: SQLite.SQLiteDatabase): Promise<void> {
   }
 }
 
+/**
+ * Añade (si faltan) las columnas que el sync de sesiones necesita. Idempotente:
+ * se usa tanto desde migrate_v26 como desde el self-heal de initDb.
+ */
+async function ensureSessionSyncColumns(db: SQLite.SQLiteDatabase): Promise<void> {
+  const cols = await db.getAllAsync<{ name: string }>('PRAGMA table_info(sessions)');
+  const has = (name: string): boolean => cols.some((c) => c.name === name);
+
+  if (!has('notes')) {
+    await db.execAsync(`ALTER TABLE sessions ADD COLUMN notes TEXT`);
+  }
+  if (!has('updated_at')) {
+    await db.execAsync(`ALTER TABLE sessions ADD COLUMN updated_at TEXT`);
+    // Las sesiones preexistentes nunca se han editado: su última escritura real
+    // es el cierre, o la creación si siguen abiertas.
+    await db.execAsync(
+      `UPDATE sessions SET updated_at = COALESCE(closed_at, created_at) WHERE updated_at IS NULL`,
+    );
+  }
+  if (!has('sync_status')) {
+    // 'pending' a propósito: en el primer sync se suben TODAS las sesiones que
+    // ya existían en el dispositivo (backfill del histórico).
+    await db.execAsync(
+      `ALTER TABLE sessions ADD COLUMN sync_status TEXT NOT NULL DEFAULT 'pending'`,
+    );
+  }
+  if (!has('deleted_at')) {
+    await db.execAsync(`ALTER TABLE sessions ADD COLUMN deleted_at TEXT`);
+  }
+  if (!has('origin')) {
+    await db.execAsync(`ALTER TABLE sessions ADD COLUMN origin TEXT NOT NULL DEFAULT 'local'`);
+  }
+}
+
+async function migrate_v26(db: SQLite.SQLiteDatabase): Promise<void> {
+  // Prepara `sessions` para el sync con el backend (ver tpv-sessions-sync-plan.md).
+  // No borra ni modifica ningún dato existente más allá de rellenar los campos
+  // nuevos: el histórico de sesiones del dispositivo queda intacto.
+  await ensureSessionSyncColumns(db);
+
+  // device_id llevaba existiendo desde v9 pero nadie lo rellenaba (insertSession
+  // aceptaba el parámetro y ningún llamador lo pasaba). Todas las sesiones que ya
+  // están en esta BD las abrió, por definición, ESTE dispositivo.
+  try {
+    const deviceId = await getDeviceId();
+    await db.runAsync('UPDATE sessions SET device_id = ? WHERE device_id IS NULL', [deviceId]);
+  } catch (e) {
+    // Sin device_id el sync sigue funcionando; solo se pierde la atribución.
+    // eslint-disable-next-line no-console
+    console.log('[db] migrate_v26: no se pudo rellenar device_id', e);
+  }
+}
+
+async function migrate_v27(db: SQLite.SQLiteDatabase): Promise<void> {
+  // tickets.device_id: qué dispositivo creó la comanda. Necesario para que el nº
+  // correlativo sea por (sesión, dispositivo) — así dos móviles que comparten una
+  // sesión no generan la misma "COMANDA #3" — y para el prefijo de impresión.
+  try {
+    await db.execAsync(`ALTER TABLE tickets ADD COLUMN device_id TEXT`);
+  } catch { /* ya existe */ }
+
+  // Las comandas que ya están en esta BD las creó, por definición, este dispositivo.
+  try {
+    const deviceId = await getDeviceId();
+    await db.runAsync('UPDATE tickets SET device_id = ? WHERE device_id IS NULL', [deviceId]);
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.log('[db] migrate_v27: no se pudo rellenar device_id de tickets', e);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Session helpers
 // ---------------------------------------------------------------------------
@@ -656,6 +761,13 @@ type SessionRow = {
   auto_close_at: string | null;
   closed_at: string | null;
   device_id: string | null;
+  // Columnas de sync (v26). Nullable en el tipo porque una BD a medio migrar
+  // puede devolverlas vacías; mapSession aplica los valores por defecto.
+  notes: string | null;
+  updated_at: string | null;
+  sync_status: string | null;
+  deleted_at: string | null;
+  origin: string | null;
 };
 
 type ProductRow = {
@@ -686,6 +798,7 @@ type TicketRow = {
   id: string;
   session_id: string;
   ticket_number: number;
+  device_id: string | null;
   printed_at: string | null;
   sync_status: string;
   created_at: string;
@@ -749,6 +862,11 @@ function mapSession(row: SessionRow): Session {
     autoCloseAt: row.auto_close_at ?? null,
     closedAt: row.closed_at ?? null,
     deviceId: row.device_id ?? null,
+    notes: row.notes ?? null,
+    updatedAt: row.updated_at ?? row.created_at,
+    syncStatus: (row.sync_status as SyncStatus | null) ?? 'pending',
+    deletedAt: row.deleted_at ?? null,
+    origin: row.origin === 'remote' ? 'remote' : 'local',
   };
 }
 
@@ -785,6 +903,7 @@ function mapTicket(row: TicketRow, orders: Order[]): Ticket {
     id: row.id,
     sessionId: row.session_id,
     ticketNumber: row.ticket_number,
+    deviceId: row.device_id ?? null,
     orders,
     printedAt: row.printed_at,
     syncStatus: row.sync_status as SyncStatus,
@@ -903,10 +1022,21 @@ export async function upsertLocationsFromBackend(locations: ApiLocation[]): Prom
 // SESSIONS
 // ---------------------------------------------------------------------------
 
+// Toda escritura local sobre una sesión deja rastro para el sync: nuevo
+// `updated_at` (árbitro del last-write-wins) y `sync_status='pending'`.
+const TOUCH_SYNC = `updated_at = ?, sync_status = 'pending'`;
+
+/**
+ * Filtro SQL de "sesiones de este dispositivo". `device_id IS NULL` cuenta como
+ * propia: solo puede serlo una fila anterior a v26 cuyo backfill no llegó a
+ * ejecutarse (una sesión remota SIEMPRE trae device_id y origin='remote').
+ */
+const OWN_SESSION_SQL = `origin = 'local' AND (device_id IS NULL OR device_id = ?)`;
+
 export async function getSessionByDate(locationId: string, date: string): Promise<Session | null> {
   const db = await getDb();
   const row = await db.getFirstAsync<SessionRow>(
-    'SELECT * FROM sessions WHERE location_id = ? AND date = ? LIMIT 1',
+    'SELECT * FROM sessions WHERE location_id = ? AND date = ? AND deleted_at IS NULL LIMIT 1',
     [locationId, date],
   );
   return row ? mapSession(row) : null;
@@ -915,7 +1045,9 @@ export async function getSessionByDate(locationId: string, date: string): Promis
 export async function getOpenSession(locationId: string): Promise<Session | null> {
   const db = await getDb();
   const row = await db.getFirstAsync<SessionRow>(
-    "SELECT * FROM sessions WHERE location_id = ? AND status = 'open' ORDER BY created_at DESC LIMIT 1",
+    `SELECT * FROM sessions
+      WHERE location_id = ? AND status = 'open' AND deleted_at IS NULL
+      ORDER BY created_at DESC LIMIT 1`,
     [locationId],
   );
   return row ? mapSession(row) : null;
@@ -942,18 +1074,26 @@ export async function insertSession(locationId: string, priceOverrides: Record<s
     openedAt: now.toISOString(),
     autoCloseAt: calculateAutoCloseAt(now),
     closedAt: null,
-    deviceId: deviceId ?? null,
+    // Sin deviceId explícito, el de este dispositivo: es quien la está abriendo.
+    deviceId: deviceId ?? await getDeviceId(),
+    notes: null,
+    updatedAt: now.toISOString(),
+    syncStatus: 'pending',
+    deletedAt: null,
+    origin: 'local',
   };
   await db.runAsync(
     `INSERT INTO sessions
        (id, location_id, date, status, price_overrides, created_at,
-        session_code, opened_at, auto_close_at, closed_at, device_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        session_code, opened_at, auto_close_at, closed_at, device_id,
+        notes, updated_at, sync_status, deleted_at, origin)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       session.id, session.locationId, session.date, session.status,
       JSON.stringify(session.priceOverrides), session.createdAt,
       session.sessionCode, session.openedAt, session.autoCloseAt,
       session.closedAt, session.deviceId,
+      session.notes, session.updatedAt, session.syncStatus, session.deletedAt, session.origin,
     ],
   );
   return session;
@@ -961,31 +1101,57 @@ export async function insertSession(locationId: string, priceOverrides: Record<s
 
 export async function closeSession(id: string): Promise<void> {
   const db = await getDb();
+  const now = new Date().toISOString();
   await db.runAsync(
-    "UPDATE sessions SET status = 'closed', closed_at = ? WHERE id = ?",
-    [new Date().toISOString(), id],
+    `UPDATE sessions SET status = 'closed', closed_at = ?, ${TOUCH_SYNC} WHERE id = ?`,
+    [now, now, id],
   );
 }
 
 /**
  * Returns the current active session if it's still within its valid window.
- * If a session is open but auto_close_at has passed, closes it and returns null.
+ *
+ * Solo puede ser activa una sesión ABIERTA POR ESTE DISPOSITIVO: las sesiones
+ * que llegan del backend (origin='remote') se ven y se editan, pero nunca se
+ * adoptan como sesión de venta — si no, este TPV numeraría tickets dentro de la
+ * jornada de otro móvil.
+ *
+ * Las sesiones propias ya expiradas se cierran TODAS de una pasada (no solo la
+ * más reciente): de lo contrario una antigua quedaría 'open' para siempre,
+ * invisible en el historial y bloqueando su sync como jornada sin cerrar.
  */
 export async function getActiveSession(): Promise<Session | null> {
   const db = await getDb();
   const now = new Date().toISOString();
+  const deviceId = await getDeviceId();
+
+  // Cierre masivo de las propias expiradas. Si falla, seguimos: la consulta de
+  // abajo aún puede devolver una sesión válida y se reintenta en la próxima llamada.
+  try {
+    await db.runAsync(
+      `UPDATE sessions
+          SET status = 'closed', closed_at = COALESCE(auto_close_at, ?), ${TOUCH_SYNC}
+        WHERE status = 'open' AND deleted_at IS NULL
+          AND auto_close_at IS NOT NULL AND auto_close_at <= ?
+          AND ${OWN_SESSION_SQL}`,
+      [now, now, now, deviceId],
+    );
+  } catch {
+    // ignorado a propósito — ver comentario
+  }
 
   const row = await db.getFirstAsync<SessionRow>(
-    "SELECT * FROM sessions WHERE status = 'open' ORDER BY opened_at DESC LIMIT 1",
+    `SELECT * FROM sessions
+      WHERE status = 'open' AND deleted_at IS NULL AND ${OWN_SESSION_SQL}
+      ORDER BY opened_at DESC LIMIT 1`,
+    [deviceId],
   );
   if (!row) return null;
 
   const session = mapSession(row);
 
+  // Red de seguridad por si el UPDATE masivo no llegó a aplicarse.
   if (session.autoCloseAt && session.autoCloseAt <= now) {
-    // Session has expired — try to close it. If the write fails, leave the
-    // session open in memory rather than silently losing it; the next call
-    // will retry and the UI will still see the session as closeable.
     try {
       await closeSession(session.id);
     } catch {
@@ -997,31 +1163,287 @@ export async function getActiveSession(): Promise<Session | null> {
   return session;
 }
 
+/** Sesiones visibles (no borradas), propias y de otros dispositivos. */
 export async function getSessions(locationId?: string): Promise<Session[]> {
   const db = await getDb();
   const rows = locationId
     ? await db.getAllAsync<SessionRow>(
-        'SELECT * FROM sessions WHERE location_id = ? ORDER BY opened_at DESC',
+        `SELECT * FROM sessions WHERE location_id = ? AND deleted_at IS NULL
+         ORDER BY COALESCE(opened_at, created_at) DESC`,
         [locationId],
       )
     : await db.getAllAsync<SessionRow>(
-        'SELECT * FROM sessions ORDER BY opened_at DESC',
+        `SELECT * FROM sessions WHERE deleted_at IS NULL
+         ORDER BY COALESCE(opened_at, created_at) DESC`,
       );
   return rows.map(mapSession);
 }
 
+export async function getSessionById(id: string): Promise<Session | null> {
+  const db = await getDb();
+  const row = await db.getFirstAsync<SessionRow>('SELECT * FROM sessions WHERE id = ? LIMIT 1', [id]);
+  return row ? mapSession(row) : null;
+}
+
 export async function updateSessionPriceOverrides(id: string, overrides: Record<string, number>): Promise<void> {
   const db = await getDb();
-  await db.runAsync('UPDATE sessions SET price_overrides = ? WHERE id = ?', [JSON.stringify(overrides), id]);
+  await db.runAsync(
+    `UPDATE sessions SET price_overrides = ?, ${TOUCH_SYNC} WHERE id = ?`,
+    [JSON.stringify(overrides), new Date().toISOString(), id],
+  );
+}
+
+/** Comentario libre de la jornada. `null` borra la nota. */
+export async function updateSessionNotes(id: string, notes: string | null): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    `UPDATE sessions SET notes = ?, ${TOUCH_SYNC} WHERE id = ?`,
+    [notes, new Date().toISOString(), id],
+  );
+}
+
+export async function updateSessionLocation(id: string, locationId: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    `UPDATE sessions SET location_id = ?, ${TOUCH_SYNC} WHERE id = ?`,
+    [locationId, new Date().toISOString(), id],
+  );
+}
+
+/**
+ * Soft delete: la fila y sus tickets permanecen en la BD, solo dejan de listarse.
+ * Queda `pending` para propagar el borrado al backend en el próximo sync.
+ */
+export async function softDeleteSession(id: string): Promise<void> {
+  const db = await getDb();
+  const now = new Date().toISOString();
+  await db.runAsync(
+    `UPDATE sessions SET deleted_at = ?, ${TOUCH_SYNC} WHERE id = ?`,
+    [now, now, id],
+  );
+}
+
+/**
+ * Adopta una sesión (típicamente remota, de otro dispositivo) como sesión activa
+ * de ESTE dispositivo: marca `origin='local'` para que `getActiveSession` la
+ * recupere. No cambia `device_id` (quién la abrió) ni la sube: solo cambia a
+ * quién pertenece la jornada activa en este TPV. Usado al "unirse" a una sesión
+ * abierta en otro dispositivo (Fase 5). Idempotente.
+ */
+export async function adoptSessionAsLocal(sessionId: string): Promise<void> {
+  const db = await getDb();
+  // No marcamos pending: adoptar no cambia el dato de la sesión, solo su origin
+  // local. El backend no necesita enterarse de que este dispositivo la trabaja.
+  await db.runAsync(
+    "UPDATE sessions SET origin = 'local', deleted_at = NULL WHERE id = ?",
+    [sessionId],
+  );
+}
+
+/** Concatena la nota de la sesión absorbida bajo la de destino. `null` si ambas vacías. */
+function mergeNotes(target: string | null, source: string | null): string | null {
+  const a = (target ?? '').trim();
+  const b = (source ?? '').trim();
+  if (a === '' && b === '') return null;
+  if (b === '') return a;
+  if (a === '') return b;
+  return `${a}\n${b}`;
+}
+
+/**
+ * Fusiona `sourceId` dentro de `targetId`: la sesión de destino sobrevive y
+ * absorbe todos los tickets de la origen; la origen queda borrada (soft delete).
+ *
+ * - Los tickets de la origen se reasignan a la de destino y se **renumeran**
+ *   correlativamente a partir del último nº de la destino (no hay índice único,
+ *   pero así los nº quedan limpios y sin colisiones). Sus orders / order_items
+ *   cuelgan del ticket, así que se mueven con él sin tocar nada más.
+ * - Las notas se concatenan; los precios de sesión de la destino se conservan
+ *   (son jornadas cerradas: ya no generan ventas nuevas).
+ * - Ambas sesiones y los tickets movidos quedan `pending` para propagarse en el
+ *   próximo sync. Todo va en una única transacción: o se fusiona entero o nada.
+ *
+ * El llamador debe garantizar que ambas están cerradas y no borradas
+ * (la UI solo ofrece sesiones cerradas). Lanza si se pasa el mismo id dos veces.
+ */
+export async function mergeSessions(targetId: string, sourceId: string): Promise<void> {
+  if (targetId === sourceId) throw new Error('No se puede fusionar una sesión consigo misma');
+  const db = await getDb();
+  const now = new Date().toISOString();
+
+  await db.withExclusiveTransactionAsync(async (txn) => {
+    const maxRow = await txn.getFirstAsync<{ max_num: number | null }>(
+      'SELECT MAX(ticket_number) AS max_num FROM tickets WHERE session_id = ?',
+      [targetId],
+    );
+    let next = (maxRow?.max_num ?? 0) + 1;
+
+    const srcTickets = await txn.getAllAsync<{ id: string }>(
+      'SELECT id FROM tickets WHERE session_id = ? ORDER BY ticket_number ASC',
+      [sourceId],
+    );
+    for (const t of srcTickets) {
+      // IMPORTANTE: subir edit_count. El sync de comandas es idempotente por
+      // edit_count; sin incrementarlo, el backend vería 'duplicate' y la
+      // reasignación de session_id NO se propagaría (ver ticketsApi / SyncService).
+      await txn.runAsync(
+        "UPDATE tickets SET session_id = ?, ticket_number = ?, edited_at = ?, edit_count = edit_count + 1, sync_status = 'pending' WHERE id = ?",
+        [targetId, next, now, t.id],
+      );
+      next += 1;
+    }
+
+    const notesRow = await txn.getAllAsync<{ id: string; notes: string | null }>(
+      'SELECT id, notes FROM sessions WHERE id IN (?, ?)',
+      [targetId, sourceId],
+    );
+    const targetNotes = notesRow.find((r) => r.id === targetId)?.notes ?? null;
+    const sourceNotes = notesRow.find((r) => r.id === sourceId)?.notes ?? null;
+
+    await txn.runAsync(
+      `UPDATE sessions SET notes = ?, ${TOUCH_SYNC} WHERE id = ?`,
+      [mergeNotes(targetNotes, sourceNotes), now, targetId],
+    );
+    await txn.runAsync(
+      `UPDATE sessions SET deleted_at = ?, ${TOUCH_SYNC} WHERE id = ?`,
+      [now, now, sourceId],
+    );
+  });
 }
 
 export async function getSessionByCode(code: string): Promise<Session | null> {
   const db = await getDb();
   const row = await db.getFirstAsync<SessionRow>(
-    'SELECT * FROM sessions WHERE session_code = ? LIMIT 1',
+    'SELECT * FROM sessions WHERE session_code = ? AND deleted_at IS NULL LIMIT 1',
     [code],
   );
   return row ? mapSession(row) : null;
+}
+
+// ── soporte para el sync de sesiones (ver services/sessionsApi.ts) ──────────
+
+/** Sesiones con cambios locales sin confirmar por el backend (incluye borradas). */
+export async function getUnsyncedSessions(): Promise<Session[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<SessionRow>(
+    `SELECT * FROM sessions WHERE sync_status != 'synced'
+     ORDER BY COALESCE(opened_at, created_at) ASC`,
+  );
+  return rows.map(mapSession);
+}
+
+/**
+ * Marca como sincronizadas las sesiones confirmadas por el backend, PERO solo si
+ * no han vuelto a cambiar entre medias: si `updated_at` ya no es el que se
+ * envió, la fila sigue `pending` y se reintenta en la próxima pasada.
+ */
+export async function markSessionsSynced(
+  confirmed: Array<{ id: string; updatedAt: string }>,
+): Promise<void> {
+  if (confirmed.length === 0) return;
+  const db = await getDb();
+  await db.withExclusiveTransactionAsync(async (txn) => {
+    for (const { id, updatedAt } of confirmed) {
+      await txn.runAsync(
+        "UPDATE sessions SET sync_status = 'synced' WHERE id = ? AND updated_at = ?",
+        [id, updatedAt],
+      );
+    }
+  });
+}
+
+/**
+ * Fusiona en SQLite las sesiones bajadas del backend. **Nunca borra filas ni
+ * pisa cambios locales sin sincronizar**:
+ *
+ *  - Sesión desconocida  → INSERT. `origin` es 'local' solo si la abrió este
+ *    mismo dispositivo (caso reinstalación: se recupera su propia jornada).
+ *  - Sesión con cambios locales pendientes (`sync_status != 'synced'`) → se
+ *    ignora lo remoto; el push de esta misma pasada ya la ha subido.
+ *  - Resto → gana la escritura más reciente comparando `updatedAt` como
+ *    instante (no como texto: local trae milisegundos y el backend no).
+ *
+ * Devuelve cuántas filas se insertaron o actualizaron realmente.
+ */
+export async function upsertSessionsFromBackend(remotes: ApiSession[]): Promise<number> {
+  if (remotes.length === 0) return 0;
+  const db = await getDb();
+  const deviceId = await getDeviceId();
+  let applied = 0;
+
+  for (const r of remotes) {
+    const existing = await db.getFirstAsync<SessionRow>(
+      'SELECT * FROM sessions WHERE id = ? LIMIT 1',
+      [r.id],
+    );
+    const overrides = JSON.stringify(r.priceOverrides ?? {});
+
+    if (!existing) {
+      // locationId nulo: el backend crea sesiones mínimas durante el sync de
+      // pedidos. Sin ubicación no se puede listar bien, así que se descarta.
+      if (!r.locationId) continue;
+      await db.runAsync(
+        `INSERT INTO sessions
+           (id, location_id, date, status, price_overrides, created_at,
+            session_code, opened_at, auto_close_at, closed_at, device_id,
+            notes, updated_at, sync_status, deleted_at, origin)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced', ?, ?)`,
+        [
+          r.id, r.locationId, r.date, r.status, overrides, r.createdAt,
+          r.sessionCode, r.openedAt, r.autoCloseAt, r.closedAt, r.deviceId,
+          r.notes, r.updatedAt ?? r.createdAt, r.deletedAt,
+          r.deviceId && r.deviceId === deviceId ? 'local' : 'remote',
+        ],
+      );
+      applied++;
+      continue;
+    }
+
+    const local = mapSession(existing);
+    if (local.syncStatus !== 'synced') continue;
+
+    const remoteAt = Date.parse(r.updatedAt ?? r.createdAt);
+    const localAt = Date.parse(local.updatedAt);
+    if (!Number.isFinite(remoteAt) || remoteAt <= localAt) continue;
+
+    await db.runAsync(
+      `UPDATE sessions
+          SET location_id = COALESCE(?, location_id),
+              date = ?, status = ?, price_overrides = ?,
+              session_code = ?, opened_at = ?, auto_close_at = ?, closed_at = ?,
+              device_id = COALESCE(?, device_id),
+              notes = ?, updated_at = ?, deleted_at = ?, sync_status = 'synced'
+        WHERE id = ?`,
+      [
+        r.locationId, r.date, r.status, overrides,
+        r.sessionCode, r.openedAt, r.autoCloseAt, r.closedAt,
+        r.deviceId, r.notes, r.updatedAt ?? r.createdAt, r.deletedAt, r.id,
+      ],
+    );
+    applied++;
+  }
+
+  return applied;
+}
+
+/**
+ * Marca las sesiones que el backend rechazó. Siguen entrando en
+ * `getUnsyncedSessions` (se reintentan); el estado 'error' es solo para que la
+ * UI pueda señalarlas. Misma guarda de `updated_at` que `markSessionsSynced`.
+ */
+export async function markSessionsSyncError(
+  failed: Array<{ id: string; updatedAt: string }>,
+): Promise<void> {
+  if (failed.length === 0) return;
+  const db = await getDb();
+  await db.withExclusiveTransactionAsync(async (txn) => {
+    for (const { id, updatedAt } of failed) {
+      await txn.runAsync(
+        "UPDATE sessions SET sync_status = 'error' WHERE id = ? AND updated_at = ?",
+        [id, updatedAt],
+      );
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1031,6 +1453,25 @@ export async function getSessionByCode(code: string): Promise<Session | null> {
 export async function getProducts(): Promise<Product[]> {
   const db = await getDb();
   const productRows = await db.getAllAsync<ProductRow>('SELECT * FROM products WHERE is_active = 1 ORDER BY rowid ASC');
+  const modifierRows = await db.getAllAsync<ModifierRow>('SELECT * FROM modifiers');
+
+  return productRows.map((p) => {
+    const mods = modifierRows
+      .filter((m) => m.product_id === p.id)
+      .map(mapModifier);
+    return mapProduct(p, mods);
+  });
+}
+
+/**
+ * Como getProducts() pero SIN el filtro is_active: devuelve TODOS los productos
+ * locales (activos e inactivos). Se usa para calcular qué productos desaparecen
+ * en una sincronización de catálogo (el reemplazo borra activos e inactivos por
+ * igual), y para reinsertar los "supervivientes" que el usuario decida conservar.
+ */
+export async function getAllLocalProducts(): Promise<Product[]> {
+  const db = await getDb();
+  const productRows = await db.getAllAsync<ProductRow>('SELECT * FROM products ORDER BY rowid ASC');
   const modifierRows = await db.getAllAsync<ModifierRow>('SELECT * FROM modifiers');
 
   return productRows.map((p) => {
@@ -1081,6 +1522,27 @@ export async function updateProductBasePrice(id: string, basePrice: number): Pro
  *   intacto. La función relanza el error para que el llamador muestre feedback.
  */
 export async function replaceProductCatalog(products: ApiProduct[]): Promise<void> {
+  return replaceProductCatalogKeeping(products, []);
+}
+
+/**
+ * Igual que replaceProductCatalog pero, además del catálogo del backend, vuelve a
+ * insertar los productos locales `survivors` que el usuario decidió conservar
+ * aunque el backend ya no los traiga (red de seguridad contra borrados por
+ * sincronización — ver syncCatalogTask).
+ *
+ * Los supervivientes se insertan DESPUÉS de los del backend (rowid mayor → quedan
+ * al final del grid). Es un caso raro (solo productos que el backend eliminó pero
+ * el usuario quiere mantener), así que ese orden secundario es aceptable.
+ *
+ * CLAVE: los modifiers de un `survivor` ya llevan su id de BD scopeado
+ * (`${productId}-${modifierId}`, tal y como los devuelve getAllLocalProducts) —
+ * se reinsertan TAL CUAL, sin volver a prefijar, a diferencia de los del backend.
+ */
+export async function replaceProductCatalogKeeping(
+  products: ApiProduct[],
+  survivors: Product[],
+): Promise<void> {
   const db = await getDb();
 
   // Ordenar por sortOrder para que el rowid de inserción marque el orden del grid.
@@ -1129,6 +1591,41 @@ export async function replaceProductCatalog(products: ApiProduct[]): Promise<voi
         );
       }
     }
+
+    // Supervivientes: productos locales que el backend ya no trae pero el usuario
+    // conserva. Su id de modifier ya viene scopeado → se inserta sin re-prefijar.
+    for (const s of survivors) {
+      await txn.runAsync(
+        'INSERT INTO products (id, name, base_price, category, category_order, profile, is_custom, is_active, always_show_modifiers) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [
+          s.id,
+          s.name,
+          s.basePrice,
+          s.category,
+          s.categoryOrder ?? null,
+          s.profile ?? 'burger',
+          s.isCustom ? 1 : 0,
+          s.isActive ? 1 : 0,
+          s.alwaysShowModifiers ? 1 : 0,
+        ],
+      );
+      for (const m of s.modifiers ?? []) {
+        await txn.runAsync(
+          'INSERT INTO modifiers (id, product_id, label, type, price_add, options, no_selection_label, section, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [
+            m.id,
+            s.id,
+            m.label,
+            m.type,
+            m.priceAdd ?? 0,
+            JSON.stringify(m.options ?? []),
+            m.noSelectionLabel ?? null,
+            m.section ?? null,
+            m.order ?? 999,
+          ],
+        );
+      }
+    }
   });
 }
 
@@ -1136,11 +1633,18 @@ export async function replaceProductCatalog(products: ApiProduct[]): Promise<voi
 // TICKETS
 // ---------------------------------------------------------------------------
 
-export async function getNextTicketNumber(sessionId: string): Promise<number> {
+/**
+ * Siguiente nº de comanda de ESTE dispositivo dentro de la sesión.
+ * El correlativo es por (sesión, dispositivo): si dos móviles comparten sesión,
+ * cada uno numera de forma independiente y el prefijo de dispositivo (impresión)
+ * los distingue. Sin `deviceId` usa el de este dispositivo.
+ */
+export async function getNextTicketNumber(sessionId: string, deviceId?: string): Promise<number> {
   const db = await getDb();
+  const dev = deviceId ?? await getDeviceId();
   const row = await db.getFirstAsync<{ max_num: number | null }>(
-    'SELECT MAX(ticket_number) AS max_num FROM tickets WHERE session_id = ?',
-    [sessionId],
+    'SELECT MAX(ticket_number) AS max_num FROM tickets WHERE session_id = ? AND (device_id IS NULL OR device_id = ?)',
+    [sessionId, dev],
   );
   return (row?.max_num ?? 0) + 1;
 }
@@ -1152,6 +1656,7 @@ export async function insertTicket(sessionId: string, ticketNumber: number): Pro
     id: generateId(),
     sessionId,
     ticketNumber,
+    deviceId: await getDeviceId(),
     orders: [],
     printedAt: null,
     syncStatus: 'pending',
@@ -1160,11 +1665,164 @@ export async function insertTicket(sessionId: string, ticketNumber: number): Pro
     editCount: 0,
   };
   await db.runAsync(
-    'INSERT INTO tickets (id, session_id, ticket_number, printed_at, sync_status, created_at, edited_at, edit_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-    [ticket.id, ticket.sessionId, ticket.ticketNumber, null, ticket.syncStatus, ticket.createdAt, null, 0],
+    'INSERT INTO tickets (id, session_id, ticket_number, device_id, printed_at, sync_status, created_at, edited_at, edit_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [ticket.id, ticket.sessionId, ticket.ticketNumber, ticket.deviceId, null, ticket.syncStatus, ticket.createdAt, null, 0],
   );
   console.log(`[DB] insertTicket #${ticketNumber}: ${Date.now()-t0}ms`);
   return ticket;
+}
+
+// ── soporte para el sync de comandas (ver services/ticketsApi.ts) ───────────
+
+/** Comandas con cambios locales sin confirmar por el backend, con orders+items. */
+export async function getUnsyncedTickets(): Promise<Ticket[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<TicketRow>(
+    "SELECT * FROM tickets WHERE sync_status != 'synced' ORDER BY created_at ASC",
+  );
+  const tickets: Ticket[] = [];
+  for (const row of rows) {
+    const orders = await getOrdersByTicketId(row.id);
+    tickets.push(mapTicket(row, orders));
+  }
+  return tickets;
+}
+
+/**
+ * Marca como sincronizadas las comandas confirmadas por el backend, solo si su
+ * `edit_count` no ha cambiado entre medias (si se editó otra vez, sigue pendiente
+ * y se reintenta). Espejo de markSessionsSynced pero con `edit_count` de árbitro.
+ */
+export async function markTicketsSynced(
+  confirmed: Array<{ id: string; editCount: number }>,
+): Promise<void> {
+  if (confirmed.length === 0) return;
+  const db = await getDb();
+  await db.withExclusiveTransactionAsync(async (txn) => {
+    for (const { id, editCount } of confirmed) {
+      await txn.runAsync(
+        "UPDATE tickets SET sync_status = 'synced' WHERE id = ? AND edit_count = ?",
+        [id, editCount],
+      );
+    }
+  });
+}
+
+/** Marca como 'error' las comandas que el backend rechazó (siguen reintentándose). */
+export async function markTicketsSyncError(
+  failed: Array<{ id: string; editCount: number }>,
+): Promise<void> {
+  if (failed.length === 0) return;
+  const db = await getDb();
+  await db.withExclusiveTransactionAsync(async (txn) => {
+    for (const { id, editCount } of failed) {
+      await txn.runAsync(
+        "UPDATE tickets SET sync_status = 'error' WHERE id = ? AND edit_count = ?",
+        [id, editCount],
+      );
+    }
+  });
+}
+
+/**
+ * Fusiona en SQLite las comandas bajadas del backend. **No destruye datos
+ * locales sin sincronizar**:
+ *
+ *  - Comanda cuya sesión no está aún en local → se salta (llegará tras sincronizar
+ *    sesiones; nunca se rompe la FK).
+ *  - Comanda borrada en el backend (`deletedAt`) → se ignora (el borrado de
+ *    comandas no entra en este paso).
+ *  - Comanda con cambios locales pendientes (`sync_status != 'synced'`) → se
+ *    respeta lo local (el push de esta misma pasada ya la ha subido).
+ *  - Resto → gana el `edit_count` mayor. Al ganar el remoto, se reemplazan sus
+ *    orders+items en bloque y queda `synced`.
+ *
+ * Devuelve cuántas comandas se insertaron o actualizaron.
+ */
+export async function upsertTicketsFromBackend(remotes: ApiTicket[]): Promise<number> {
+  if (remotes.length === 0) return 0;
+  const db = await getDb();
+  let applied = 0;
+
+  for (const r of remotes) {
+    if (r.deletedAt) continue;
+
+    // La sesión debe existir en local (FK tickets.session_id → sessions.id).
+    const ses = await db.getFirstAsync<{ id: string }>(
+      'SELECT id FROM sessions WHERE id = ? LIMIT 1',
+      [r.sessionId],
+    );
+    if (!ses) continue;
+
+    const existing = await db.getFirstAsync<TicketRow>(
+      'SELECT * FROM tickets WHERE id = ? LIMIT 1',
+      [r.id],
+    );
+
+    if (existing) {
+      if ((existing.sync_status as SyncStatus) !== 'synced') continue; // hay cambios locales sin subir
+      if (r.editCount <= (existing.edit_count ?? 0)) continue;          // no es más nuevo
+    }
+
+    await db.withTransactionAsync(async () => {
+      if (existing) {
+        // Reemplazo de hijos (items antes que orders por las FK).
+        const localOrders = await db.getAllAsync<{ id: string }>(
+          'SELECT id FROM orders WHERE ticket_id = ?',
+          [r.id],
+        );
+        for (const { id } of localOrders) {
+          await db.runAsync('DELETE FROM order_items WHERE order_id = ?', [id]);
+        }
+        await db.runAsync('DELETE FROM orders WHERE ticket_id = ?', [r.id]);
+        await db.runAsync(
+          `UPDATE tickets
+              SET session_id = ?, ticket_number = ?, device_id = ?, printed_at = ?,
+                  created_at = ?, edited_at = ?, edit_count = ?, sync_status = 'synced'
+            WHERE id = ?`,
+          [
+            r.sessionId, r.ticketNumber, r.deviceId, r.printedAt,
+            r.createdAt ?? new Date().toISOString(), r.editedAt, r.editCount, r.id,
+          ],
+        );
+      } else {
+        await db.runAsync(
+          `INSERT INTO tickets
+             (id, session_id, ticket_number, device_id, printed_at, sync_status, created_at, edited_at, edit_count)
+           VALUES (?, ?, ?, ?, ?, 'synced', ?, ?, ?)`,
+          [
+            r.id, r.sessionId, r.ticketNumber, r.deviceId, r.printedAt,
+            r.createdAt ?? new Date().toISOString(), r.editedAt, r.editCount,
+          ],
+        );
+      }
+
+      for (const o of r.orders) {
+        await db.runAsync(
+          `INSERT INTO orders (id, ticket_id, client_name, price_profile, take_away, amount_paid, change, total, created_at)
+           VALUES (?, ?, ?, ?, 0, NULL, NULL, ?, ?)`,
+          [
+            o.id, r.id, o.clientName ?? '', o.priceProfile ?? 'normal',
+            o.total, o.createdAt ?? r.createdAt ?? new Date().toISOString(),
+          ],
+        );
+        for (const it of o.items) {
+          await db.runAsync(
+            `INSERT INTO order_items (id, order_id, product_id, product_name, qty, unit_price, modifier_price_add, selected_modifiers, custom_label)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              it.id, o.id, it.productId, it.productName, it.qty, it.unitPrice,
+              it.modifierPriceAdd ?? 0, JSON.stringify(it.selectedModifiers ?? []), it.customLabel,
+            ],
+          );
+        }
+      }
+    });
+
+    applied++;
+  }
+
+  return applied;
 }
 
 export async function markTicketPrinted(id: string): Promise<void> {

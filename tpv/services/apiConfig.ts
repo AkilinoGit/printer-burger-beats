@@ -100,8 +100,16 @@ export async function setApiKey(key: string): Promise<void> {
 }
 
 function normalizeBaseUrl(url: string): string {
-  return url.trim().replace(/\/+$/, '');
+  const trimmed = url.trim().replace(/\/+$/, '');
+  if (!trimmed) return '';
+  // Si no trae esquema (típico al teclear solo la IP LAN, "192.168.0.65"),
+  // asumimos http:// — sin esto la petición sería una URL inválida y se colgaría.
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
 }
+
+// Corta una petición que no responde para que falle limpio (NETWORK_ERROR) en
+// vez de quedarse colgada indefinidamente cuando el host es inalcanzable.
+const REQUEST_TIMEOUT_MS = 6000;
 
 // ---------------------------------------------------------------------------
 // Petición con parseo del envoltorio { ok, data|error }
@@ -125,14 +133,22 @@ async function apiRequest<T>(method: 'GET' | 'POST', path: string, body?: unknow
   if (apiKey) headers['X-API-Key'] = apiKey;
 
   let res: Response;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
     res = await fetch(`${baseUrl}${path}`, {
       method,
       headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: controller.signal,
     });
   } catch (e) {
-    throw new ApiError('NETWORK_ERROR', e instanceof Error ? e.message : 'Fallo de red', 0);
+    const msg = controller.signal.aborted
+      ? `Sin respuesta del servidor (timeout ${REQUEST_TIMEOUT_MS / 1000}s). Revisa la IP y que móvil y PC estén en la misma Wi-Fi.`
+      : e instanceof Error ? e.message : 'Fallo de red';
+    throw new ApiError('NETWORK_ERROR', msg, 0);
+  } finally {
+    clearTimeout(timer);
   }
 
   // 401 de API key: cuerpo NO estándar { error: 'invalid_api_key' }.

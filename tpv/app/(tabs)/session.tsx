@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useFocusEffect } from 'expo-router';
 import {
+  Alert,
   FlatList,
   ScrollView,
   StyleSheet,
@@ -26,15 +27,18 @@ import {
   getActiveSession,
   getLocations,
   getNextTicketNumber,
+  getSessionById,
   getSessionSummary,
   getSessions,
   insertLocation,
   insertSession,
 } from '../../services/db';
 import { syncLocations } from '../../services/locationsApi';
+import { fetchJoinableSessions, joinRemoteSession, syncSessions } from '../../services/sessionsApi';
 import { formatPrice } from '../../lib/utils';
-import type { Location, Session } from '../../lib/types';
+import type { ApiSession, Location, Session } from '../../lib/types';
 import StableTextInput from '../../components/StableTextInput';
+import SessionSyncChip from '../../components/SessionSyncChip';
 import { SessionDetailView } from '../session/[id]';
 
 interface PriceRowProps {
@@ -120,6 +124,7 @@ function SessionCard({ session, locationName, onPress, onViewSummary }: SessionC
             {session.sessionCode && (
               <Text style={cardStyles.code}>{session.sessionCode}</Text>
             )}
+            <SessionSyncChip session={session} />
           </View>
           <View style={cardStyles.right}>
             {/* ============================================================
@@ -414,6 +419,12 @@ export default function SessionScreen(): React.JSX.Element {
   const [closeDialogVisible, setCloseDialogVisible] = useState(false);
   const [activeSummary, setActiveSummary]       = useState<{ ticketCount: number; total: number; firstTicketAt: string | null; lastTicketAt: string | null }>({ ticketCount: 0, total: 0, firstTicketAt: null, lastTicketAt: null });
 
+  // Join dialog: sesiones abiertas en otros dispositivos (Fase 5)
+  const [checkingJoin, setCheckingJoin] = useState(false);
+  const [joinCandidates, setJoinCandidates] = useState<ApiSession[]>([]);
+  const [joinDialogVisible, setJoinDialogVisible] = useState(false);
+  const [joiningId, setJoiningId] = useState<string | null>(null);
+
   // Price dialog before opening session
   const [priceDialogVisible, setPriceDialogVisible] = useState(false);
   const [priceDraft, setPriceDraft] = useState<Record<string, string>>({});
@@ -469,8 +480,28 @@ export default function SessionScreen(): React.JSX.Element {
   }, [activeSession?.id])); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── open session ──────────────────────────────────────────────────────────
-  function handleOpenSessionPress(): void {
-    // Build draft from current product prices as defaults
+  // Al pulsar "Abrir sesión" se comprueba EN VIVO si hay jornadas abiertas en
+  // otros dispositivos (cualquier local). Si las hay, se ofrece unirse; si no (o
+  // sin conexión), se abre la propia como siempre.
+  async function handleOpenSessionPress(): Promise<void> {
+    setCheckingJoin(true);
+    try {
+      const res = await fetchJoinableSessions();
+      if (res.ok && res.sessions.length > 0) {
+        setJoinCandidates(res.sessions);
+        setJoinDialogVisible(true);
+        return;
+      }
+    } finally {
+      setCheckingJoin(false);
+    }
+    // Sin candidatas o sin red: abrir la propia.
+    openOwnPriceDialog();
+  }
+
+  /** Abre el diálogo de precios para crear una sesión propia nueva. */
+  function openOwnPriceDialog(): void {
+    setJoinDialogVisible(false);
     const editable = products.filter((p) => p.isActive && !p.isCustom);
     const draft: Record<string, string> = {};
     for (const p of editable) {
@@ -478,6 +509,32 @@ export default function SessionScreen(): React.JSX.Element {
     }
     setPriceDraft(draft);
     setPriceDialogVisible(true);
+  }
+
+  /** "Unirse" a una jornada abierta en otro dispositivo: la adopta como activa. */
+  async function handleJoinSession(candidate: ApiSession): Promise<void> {
+    setJoiningId(candidate.id);
+    try {
+      const res = await joinRemoteSession(candidate);
+      if (!res.ok) {
+        Alert.alert('No se pudo unir', res.error ?? 'Inténtalo de nuevo.');
+        return;
+      }
+      const session = await getSessionById(candidate.id);
+      if (!session) {
+        Alert.alert('No se pudo unir', 'La sesión no está disponible.');
+        return;
+      }
+      const loc = locations.find((l) => l.id === session.locationId) ?? null;
+      const lastNum = await getNextTicketNumber(session.id) - 1;
+      setLastTicketNumber(lastNum);
+      setActiveSession(session);
+      if (loc) setActiveLocation(loc);
+      setJoinDialogVisible(false);
+      setJoinCandidates([]);
+    } finally {
+      setJoiningId(null);
+    }
   }
 
   // ── location picker ─────────────────────────────────────────────────────────
@@ -544,6 +601,10 @@ export default function SessionScreen(): React.JSX.Element {
       setLastTicketNumber(0);
       setActiveSession(session);
       setActiveLocation(loc);
+      // Empuje silencioso al backend: sin esto la jornada solo vive en este
+      // dispositivo hasta el próximo "Sincronizar ahora", y otro TPV no podría
+      // ofrecer "unirse" al abrir (Fase 5). Fire-and-forget, igual que editar/fusionar.
+      void syncSessions().catch(() => {});
     } finally {
       setOpening(false);
     }
@@ -681,9 +742,9 @@ export default function SessionScreen(): React.JSX.Element {
                   <Button
                     mode="contained"
                     icon="play-circle"
-                    onPress={handleOpenSessionPress}
-                    loading={opening}
-                    disabled={opening || !selectedLocationId}
+                    onPress={() => void handleOpenSessionPress()}
+                    loading={opening || checkingJoin}
+                    disabled={opening || checkingJoin || !selectedLocationId}
                     buttonColor="#43A047"
                     style={styles.openBtn}
                     contentStyle={styles.openBtnContent}
@@ -753,6 +814,49 @@ export default function SessionScreen(): React.JSX.Element {
 
       {/* ── Modals ─────────────────────────────────────────────────────────── */}
       <Portal>
+        {/* Join dialog: sesiones abiertas en otros dispositivos (Fase 5) */}
+        <Dialog visible={joinDialogVisible} onDismiss={() => setJoinDialogVisible(false)}>
+          <Dialog.Title>Ya hay una jornada abierta</Dialog.Title>
+          <Dialog.Content>
+            <Text style={styles.joinIntro}>
+              Otro dispositivo tiene una sesión abierta. Puedes unirte para trabajar sobre la
+              misma (los tickets y totales se combinan) o abrir la tuya propia.
+            </Text>
+            {joinCandidates.map((c) => {
+              const locName = locations.find((l) => l.id === c.locationId)?.name ?? 'Ubicación desconocida';
+              const when = c.openedAt ?? c.createdAt;
+              return (
+                <TouchableRipple
+                  key={c.id}
+                  onPress={() => void handleJoinSession(c)}
+                  disabled={joiningId !== null}
+                  rippleColor="rgba(0,0,0,0.06)"
+                  style={styles.joinCandidate}
+                >
+                  <View style={styles.joinCandidateRow}>
+                    <View style={styles.joinCandidateLeft}>
+                      <Text style={styles.joinCandidateTitle}>
+                        {c.sessionCode ?? locName}
+                      </Text>
+                      <Text style={styles.joinCandidateMeta}>
+                        {locName}{when ? ` · ${formatDateTime(when)}` : ''}
+                        {c.deviceId ? ` · Disp. ${c.deviceId.slice(0, 4)}` : ''}
+                      </Text>
+                    </View>
+                    {joiningId === c.id
+                      ? <ActivityIndicator size="small" />
+                      : <Button mode="contained-tonal" compact onPress={() => void handleJoinSession(c)}>Unirse</Button>}
+                  </View>
+                </TouchableRipple>
+              );
+            })}
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button onPress={() => setJoinDialogVisible(false)} disabled={joiningId !== null}>Cancelar</Button>
+            <Button onPress={openOwnPriceDialog} disabled={joiningId !== null}>Abrir la mía</Button>
+          </Dialog.Actions>
+        </Dialog>
+
         {/* Price config dialog */}
         <Dialog visible={priceDialogVisible} onDismiss={() => setPriceDialogVisible(false)}>
           <Dialog.Title>Precios de la sesión</Dialog.Title>
@@ -948,6 +1052,21 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '800',
   },
+
+  // join dialog (sesiones abiertas en otros dispositivos)
+  joinIntro: { fontSize: 14, color: '#444', marginBottom: 12, lineHeight: 20 },
+  joinCandidate: { borderRadius: 10, marginBottom: 8, backgroundColor: '#F7F7F7' },
+  joinCandidateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 10,
+  },
+  joinCandidateLeft: { flex: 1, gap: 2 },
+  joinCandidateTitle: { fontSize: 15, fontWeight: '700', color: '#111' },
+  joinCandidateMeta: { fontSize: 12, color: '#777' },
 
   // history header
   historyHeader: {

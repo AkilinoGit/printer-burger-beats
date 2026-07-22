@@ -29,6 +29,16 @@ export interface Location {
   createdAt: string;
 }
 
+/**
+ * Origen de una sesión en la BD local:
+ *  - 'local'  → la abrió ESTE dispositivo.
+ *  - 'remote' → llegó del backend (la abrió otro TPV).
+ *
+ * Es editable en ambos casos, pero SOLO una sesión 'local' de este dispositivo
+ * puede convertirse en la sesión activa (ver `getActiveSession`).
+ */
+export type SessionOrigin = 'local' | 'remote';
+
 export interface Session {
   id: string;
   locationId: string;
@@ -41,6 +51,11 @@ export interface Session {
   autoCloseAt: string | null;    // ISO datetime — 12:00 del día siguiente
   closedAt: string | null;       // null = sesión abierta
   deviceId: string | null;       // identificador del dispositivo que la abrió
+  notes: string | null;          // comentario libre de la jornada
+  updatedAt: string;             // ISO datetime — árbitro de conflictos (last-write-wins)
+  syncStatus: SyncStatus;        // estado frente al backend
+  deletedAt: string | null;      // soft delete: null = visible
+  origin: SessionOrigin;
 }
 
 export interface ModifierOption {
@@ -103,6 +118,7 @@ export interface Ticket {
   id: string;
   sessionId: string;
   ticketNumber: number;
+  deviceId: string | null;       // dispositivo que creó la comanda (numeración + prefijo)
   orders: Order[];
   printedAt: string | null;
   syncStatus: SyncStatus;
@@ -166,6 +182,71 @@ export interface ProductCatalogResponse {
    * (o es una respuesta antigua), la app deriva los perfiles de los productos.
    */
   profiles?: Profile[];
+}
+
+/**
+ * Sesión tal y como viaja hacia/desde el backend TPV
+ * (`/api/v1/tpv/sessions`). Todas las fechas-hora son ISO-8601 UTC con 'Z';
+ * `date` es YYYY-MM-DD. Ver tpv-sessions-sync-plan.md §3.
+ */
+export interface ApiSession {
+  id: string;
+  locationId: string | null;
+  date: string;
+  status: 'open' | 'closed';
+  priceOverrides: Record<string, number> | null;
+  notes: string | null;
+  sessionCode: string | null;
+  openedAt: string | null;
+  autoCloseAt: string | null;
+  closedAt: string | null;
+  deviceId: string | null;
+  updatedAt: string | null;
+  deletedAt: string | null;
+  createdAt: string;
+}
+
+/** Resultado por sesión del upsert por lotes (`POST /tpv/sessions/batch`). */
+export interface ApiSessionSyncResult {
+  id: string;
+  status: 'created' | 'updated' | 'duplicate' | 'conflict_ignored' | 'deleted' | 'error';
+  reason?: string;
+}
+
+// Comandas tal y como las devuelve el backend TPV (GET /tpv/tickets).
+// Modelo Opción B: ticket → orders → items.
+export interface ApiTicketItem {
+  id: string;
+  productId: string;
+  productName: string;
+  qty: number;
+  unitPrice: number;
+  modifierPriceAdd: number;
+  selectedModifiers: string[];
+  customLabel: string | null;
+}
+
+export interface ApiTicketOrder {
+  id: string;
+  clientName: string | null;
+  priceProfile: PriceProfile;
+  total: number;
+  createdAt: string | null;
+  items: ApiTicketItem[];
+}
+
+export interface ApiTicket {
+  id: string;
+  sessionId: string;
+  ticketNumber: number;
+  deviceId: string | null;
+  printedAt: string | null;
+  createdAt: string | null;
+  editedAt: string | null;
+  editCount: number;
+  updatedAt: string | null;
+  deletedAt: string | null;
+  orders: ApiTicketOrder[];
 }
 
 // Ubicaciones (locales) tal y como las devuelve/acepta el backend TPV.
