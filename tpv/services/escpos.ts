@@ -851,8 +851,12 @@ export function buildPromoBuffer(
     parts.push(CMD_ALIGN_CENTER);
     parts.push(LOGO_RASTER_BYTES);
     rawLine('');
-    const wrapped = _wrapText(sanitizeForPrinter(message), CHARS_PER_LINE);
+    // Message printed at double size (2× width + 2× height). Double-width halves
+    // the chars-per-line, so wrap at 16 instead of 32.
+    parts.push(CMD_SIZE_DOUBLE);
+    const wrapped = _wrapText(sanitizeForPrinter(message), Math.floor(CHARS_PER_LINE / 2));
     for (const line of wrapped) rawLine(line);
+    parts.push(CMD_SIZE_NORMAL);
     rawLine('');
     const validity = _wrapText(`Válido únicamente el día ${date}`, CHARS_PER_LINE);
     for (const line of validity) rawLine(line);
