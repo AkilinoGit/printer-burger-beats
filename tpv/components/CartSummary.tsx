@@ -16,7 +16,7 @@ export default function CartSummary({ items, total, onViewOrder }: Props): React
   const canProceed = hasItems;
 
   return (
-    <Surface style={styles.surface} elevation={8}>
+    <Surface style={styles.surface} elevation={5}>
       <Divider />
       <View style={styles.row}>
         <View style={styles.info}>

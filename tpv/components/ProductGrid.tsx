@@ -148,9 +148,11 @@ const ProductTile = React.memo(function ProductTile({ product, accentColor, onPr
 
 // ---------------------------------------------------------------------------
 
+type MaterialCommunityIconName = React.ComponentProps<typeof MaterialCommunityIcons>['name'];
+
 interface OfertaTileProps {
   label: string;
-  icon: string;
+  icon: MaterialCommunityIconName;
   color: string;
   active: boolean;
   onPress: () => void;

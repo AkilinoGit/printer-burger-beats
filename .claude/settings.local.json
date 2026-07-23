@@ -138,7 +138,8 @@
       "Write",
       "NotebookEdit",
       "Bash",
-      "PowerShell"
+      "PowerShell",
+      "Bash(cd \"C:/laragon/www/burger-beats-backend\" && echo \"=== migrations ===\" && ls migrations | tail -20 && echo \"=== src ===\" && find src -type f -name \"*.php\" | head -60)"
     ],
     "additionalDirectories": [
       "C:\\dev\\TPV by AKI SOFTWARE",
