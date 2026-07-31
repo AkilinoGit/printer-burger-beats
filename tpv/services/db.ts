@@ -9,6 +9,7 @@ import type {
   Product,
   Modifier,
   Ticket,
+  TicketSource,
   Order,
   OrderItem,
   PriceProfile,
@@ -28,7 +29,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 const DB_NAME = 'tpv_v12.db';
-const SCHEMA_VERSION = 29;
+const SCHEMA_VERSION = 31;
 
 let _db: SQLite.SQLiteDatabase | null = null;
 let _initPromise: Promise<void> | null = null;
@@ -157,6 +158,12 @@ export async function initDb(): Promise<void> {
     if (currentVersion < 29) {
       await migrate_v29(db); // create text_presets table + seed (mensajes de ticket + batería de nombres)
     }
+    if (currentVersion < 30) {
+      await migrate_v30(db); // tickets: source ('local'|'web') + web_order_id (pedidos desde la web)
+    }
+    if (currentVersion < 31) {
+      await migrate_v31(db); // orders: notes + discount_amount/label (códigos del pedido web)
+    }
     await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
 
     // Self-heal de las columnas de sync de sesiones: si el ALTER de v26 se tragó
@@ -181,6 +188,42 @@ export async function initDb(): Promise<void> {
     } catch (e) {
       // eslint-disable-next-line no-console
       console.log('[db] tickets.device_id self-heal failed', e);
+    }
+
+    // Self-heal de tickets.source / tickets.web_order_id (v30): mismo patrón que
+    // device_id — si el ALTER se tragó en silencio, el poller de pedidos web
+    // fallaría al materializar la comanda. Idempotente.
+    try {
+      const cols = await db.getAllAsync<{ name: string }>('PRAGMA table_info(tickets)');
+      if (!cols.some((c) => c.name === 'source')) {
+        await db.execAsync(`ALTER TABLE tickets ADD COLUMN source TEXT NOT NULL DEFAULT 'local'`);
+      }
+      if (!cols.some((c) => c.name === 'web_order_id')) {
+        await db.execAsync(`ALTER TABLE tickets ADD COLUMN web_order_id TEXT`);
+        await db.execAsync(
+          `CREATE INDEX IF NOT EXISTS idx_tickets_web_order ON tickets(web_order_id)`,
+        );
+      }
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.log('[db] tickets.source/web_order_id self-heal failed', e);
+    }
+
+    // Self-heal de orders.notes / discount_amount / discount_label (v31).
+    try {
+      const cols = await db.getAllAsync<{ name: string }>('PRAGMA table_info(orders)');
+      if (!cols.some((c) => c.name === 'notes')) {
+        await db.execAsync(`ALTER TABLE orders ADD COLUMN notes TEXT`);
+      }
+      if (!cols.some((c) => c.name === 'discount_amount')) {
+        await db.execAsync(`ALTER TABLE orders ADD COLUMN discount_amount REAL NOT NULL DEFAULT 0`);
+      }
+      if (!cols.some((c) => c.name === 'discount_label')) {
+        await db.execAsync(`ALTER TABLE orders ADD COLUMN discount_label TEXT`);
+      }
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.log('[db] orders.notes/discount self-heal failed', e);
     }
 
     // Self-heal: guarantee products.profile exists even on devices whose
@@ -718,6 +761,50 @@ async function migrate_v29(db: SQLite.SQLiteDatabase): Promise<void> {
   await ensureTextPresetsSeed(db);
 }
 
+async function migrate_v30(db: SQLite.SQLiteDatabase): Promise<void> {
+  // Comandas que nacen de un pedido hecho en la web (ver tpv-web-orders-plan.md).
+  //
+  // `source` distingue la comanda de mostrador de la que entró por la web: la
+  // cabecera ESC/POS cambia y la bandeja de pedidos web filtra por aquí.
+  // `web_order_id` es la referencia al pedido del backend, necesaria para el ACK
+  // y para no reprocesar dos veces el mismo pedido.
+  try {
+    await db.execAsync(`ALTER TABLE tickets ADD COLUMN source TEXT NOT NULL DEFAULT 'local'`);
+  } catch { /* ya existe */ }
+
+  try {
+    await db.execAsync(`ALTER TABLE tickets ADD COLUMN web_order_id TEXT`);
+  } catch { /* ya existe */ }
+
+  // Búsqueda por pedido web: la usa hasTicketForWebOrder antes de materializar.
+  try {
+    await db.execAsync(
+      `CREATE INDEX IF NOT EXISTS idx_tickets_web_order ON tickets(web_order_id)`,
+    );
+  } catch { /* la columna puede no existir en una BD a medias; el self-heal lo cubre */ }
+}
+
+async function migrate_v31(db: SQLite.SQLiteDatabase): Promise<void> {
+  // Comentario para cocina y descuento fijo, ambos llegan del pedido web
+  // (ver tpv-web-orders-plan.md §5.1).
+  //
+  // `discount_amount` existe porque un descuento de importe fijo (BESITOS, -12 €)
+  // NO se puede repartir entre las líneas: los items suman más que el total y hay
+  // que imprimir la resta como línea aparte. El descuento por perfil (FERIANTE)
+  // no necesita nada de esto — cada línea ya sale con su precio rebajado.
+  try {
+    await db.execAsync(`ALTER TABLE orders ADD COLUMN notes TEXT`);
+  } catch { /* ya existe */ }
+
+  try {
+    await db.execAsync(`ALTER TABLE orders ADD COLUMN discount_amount REAL NOT NULL DEFAULT 0`);
+  } catch { /* ya existe */ }
+
+  try {
+    await db.execAsync(`ALTER TABLE orders ADD COLUMN discount_label TEXT`);
+  } catch { /* ya existe */ }
+}
+
 /**
  * Inserta la semilla de presets (INITIAL_TEXT_PRESETS) si aún no existen. Crea la
  * tabla si falta (self-heal). Idempotente: INSERT OR IGNORE por id, así que no
@@ -890,6 +977,8 @@ type TicketRow = {
   created_at: string;
   edited_at: string | null;
   edit_count: number;
+  source: string | null;
+  web_order_id: string | null;
 };
 
 type OrderRow = {
@@ -902,6 +991,9 @@ type OrderRow = {
   change: number | null;
   total: number;
   created_at: string;
+  notes: string | null;
+  discount_amount: number | null;
+  discount_label: string | null;
 };
 
 type OrderItemRow = {
@@ -986,6 +1078,8 @@ function mapTicket(row: TicketRow, orders: Order[]): Ticket {
     createdAt: row.created_at,
     editedAt: row.edited_at ?? null,
     editCount: row.edit_count ?? 0,
+    source: (row.source as TicketSource | null) ?? 'local',
+    webOrderId: row.web_order_id ?? null,
   };
 }
 
@@ -1001,6 +1095,9 @@ function mapOrder(row: OrderRow, items: OrderItem[]): Order {
     change: row.change,
     total: row.total,
     createdAt: row.created_at,
+    notes: row.notes ?? null,
+    discountAmount: row.discount_amount ?? 0,
+    discountLabel: row.discount_label ?? null,
   };
 }
 
@@ -1896,7 +1993,13 @@ export async function getNextTicketNumber(sessionId: string, deviceId?: string):
   return (row?.max_num ?? 0) + 1;
 }
 
-export async function insertTicket(sessionId: string, ticketNumber: number): Promise<Ticket> {
+export async function insertTicket(
+  sessionId: string,
+  ticketNumber: number,
+  // Solo los pedidos que entran por la web pasan estos dos: ver services/webOrders.ts.
+  source: TicketSource = 'local',
+  webOrderId: string | null = null,
+): Promise<Ticket> {
   const t0 = Date.now();
   const db = await getDb();
   const ticket: Ticket = {
@@ -1910,13 +2013,50 @@ export async function insertTicket(sessionId: string, ticketNumber: number): Pro
     createdAt: new Date().toISOString(),
     editedAt: null,
     editCount: 0,
+    source,
+    webOrderId,
   };
   await db.runAsync(
-    'INSERT INTO tickets (id, session_id, ticket_number, device_id, printed_at, sync_status, created_at, edited_at, edit_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    [ticket.id, ticket.sessionId, ticket.ticketNumber, ticket.deviceId, null, ticket.syncStatus, ticket.createdAt, null, 0],
+    'INSERT INTO tickets (id, session_id, ticket_number, device_id, printed_at, sync_status, created_at, edited_at, edit_count, source, web_order_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [ticket.id, ticket.sessionId, ticket.ticketNumber, ticket.deviceId, null, ticket.syncStatus, ticket.createdAt, null, 0, source, webOrderId],
   );
   console.log(`[DB] insertTicket #${ticketNumber}: ${Date.now()-t0}ms`);
   return ticket;
+}
+
+/**
+ * Comanda ya creada para este pedido web, si la hay.
+ *
+ * Última defensa contra la doble impresión: el claim del backend ya impide que
+ * dos dispositivos se lleven el mismo pedido, pero si la app muere justo después
+ * de crear el ticket y antes del ACK, el claim caduca y el pedido vuelve a la
+ * cola. Consultar en local antes de materializar cierra ese hueco — y devolver
+ * el ticket (en vez de un booleano) permite reintentar el ACK que se perdió.
+ */
+export async function getTicketByWebOrderId(webOrderId: string): Promise<Ticket | null> {
+  const db = await getDb();
+  const row = await db.getFirstAsync<TicketRow>(
+    'SELECT * FROM tickets WHERE web_order_id = ? LIMIT 1',
+    [webOrderId],
+  );
+  if (!row) return null;
+  return mapTicket(row, await getOrdersByTicketId(row.id));
+}
+
+/** Comandas de pedidos web que quedaron sin imprimir (bandeja de reimpresión). */
+export async function getUnprintedWebTickets(sessionId: string): Promise<Ticket[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<TicketRow>(
+    `SELECT * FROM tickets
+      WHERE session_id = ? AND source = 'web' AND printed_at IS NULL
+      ORDER BY created_at ASC`,
+    [sessionId],
+  );
+  const tickets: Ticket[] = [];
+  for (const row of rows) {
+    tickets.push(mapTicket(row, await getOrdersByTicketId(row.id)));
+  }
+  return tickets;
 }
 
 // ── soporte para el sync de comandas (ver services/ticketsApi.ts) ───────────
@@ -2198,8 +2338,8 @@ export async function saveOrderWithItems(order: Order): Promise<void> {
   const db = await getDb();
   await db.withTransactionAsync(async () => {
     await db.runAsync(
-      'INSERT INTO orders (id, ticket_id, client_name, price_profile, take_away, amount_paid, change, total, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [order.id, order.ticketId, order.clientName, order.priceProfile, order.takeAway ? 1 : 0, order.amountPaid, order.change, order.total, order.createdAt],
+      'INSERT INTO orders (id, ticket_id, client_name, price_profile, take_away, amount_paid, change, total, created_at, notes, discount_amount, discount_label) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [order.id, order.ticketId, order.clientName, order.priceProfile, order.takeAway ? 1 : 0, order.amountPaid, order.change, order.total, order.createdAt, order.notes ?? null, order.discountAmount ?? 0, order.discountLabel ?? null],
     );
     for (const item of order.items) {
       await db.runAsync(

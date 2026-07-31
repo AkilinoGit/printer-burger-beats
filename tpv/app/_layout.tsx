@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { Stack } from 'expo-router';
 import { ActivityIndicator, MD3LightTheme, PaperProvider } from 'react-native-paper';
 import { initDb } from '../services/db';
+import { startWebOrdersPolling, stopWebOrdersPolling } from '../services/webOrders';
 import { useSessionStore } from '../stores/useSessionStore';
 import { useTextPresetsStore } from '../stores/useTextPresetsStore';
 import { isSessionStale } from '../lib/utils';
@@ -48,6 +49,15 @@ export default function RootLayout(): React.JSX.Element {
         setDbReady(true);
       });
   }, [initSession, closeCurrentSession]);
+
+  // Pedidos web: el poller vive mientras viva la app. Él mismo se calla cuando
+  // no hay jornada abierta o la app está en segundo plano, así que no hace falta
+  // arrancarlo y pararlo con cada cambio de sesión. Ver tpv-web-orders-plan.md §4.
+  useEffect(() => {
+    if (!dbReady) return;
+    startWebOrdersPolling();
+    return () => stopWebOrdersPolling();
+  }, [dbReady]);
 
   // Background check: auto-close expired sessions every 5 minutes
   useEffect(() => {

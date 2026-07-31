@@ -58,6 +58,10 @@ export const useTicketStore = create<TicketState>((set, get) => ({
       createdAt: new Date().toISOString(),
       editedAt: null,
       editCount: 0,
+      // El carrito solo produce comandas de mostrador; las de la web las
+      // materializa services/webOrders.ts sin pasar por este store.
+      source: 'local',
+      webOrderId: null,
     };
     set({ activeTicket: ticket });
     return ticket;

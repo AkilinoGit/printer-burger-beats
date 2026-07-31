@@ -21,32 +21,11 @@ import ModifierSheet from '../../components/ModifierSheet';
 import StableTextInput from '../../components/StableTextInput';
 
 import { collapseVerduraModifiers, formatPrice } from '../../lib/utils';
-import type { Modifier, OrderItem, Product } from '../../lib/types';
+import type { OrderItem, Product } from '../../lib/types';
 
-// ---------------------------------------------------------------------------
-// buildMaps — exported for use in index.tsx
-// ---------------------------------------------------------------------------
-
-export function buildMaps(modifiers: Modifier[]): {
-  labels: Record<string, string>;
-  radioNoSelection: Record<string, string>;
-  radioOptionSets: Record<string, Set<string>>;
-} {
-  const labels: Record<string, string> = {};
-  const radioNoSelection: Record<string, string> = {};
-  const radioOptionSets: Record<string, Set<string>> = {};
-  for (const m of modifiers) {
-    labels[m.id] = m.label;
-    if (m.type === 'radio') {
-      if (m.noSelectionLabel) radioNoSelection[m.id] = m.noSelectionLabel;
-      radioOptionSets[m.id] = new Set((m.options ?? []).map((o) => o.id));
-      for (const opt of m.options ?? []) {
-        labels[opt.id] = opt.label;
-      }
-    }
-  }
-  return { labels, radioNoSelection, radioOptionSets };
-}
+// buildMaps se movió a lib/modifiers.ts (lo necesita también el poller de
+// pedidos web). Se reexporta para no tocar los imports existentes.
+export { buildMaps } from '../../lib/modifiers';
 
 // ---------------------------------------------------------------------------
 // EditableItemRow — inline qty controls

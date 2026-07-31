@@ -8,6 +8,7 @@ import ModifierSheet from '../../components/ModifierSheet';
 import PaymentModal from '../../components/PaymentModal';
 import ProductGrid from '../../components/ProductGrid';
 import StableTextInput from '../../components/StableTextInput';
+import WebOrderBanner from '../../components/WebOrderBanner';
 import NewTicketScreen from '../ticket/NewTicketScreen';
 
 import type { Product } from '../../lib/types';
@@ -304,6 +305,9 @@ export default function HomeScreen(): React.JSX.Element {
           }
         />
       </View>
+
+      {/* Aviso de pedido web recién entrado (ya impreso — ver services/webOrders.ts) */}
+      <WebOrderBanner />
 
       {/* Product grid */}
       <View style={styles.gridWrapper}>

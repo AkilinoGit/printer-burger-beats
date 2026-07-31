@@ -13,8 +13,10 @@ import {
 } from 'react-native-paper';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 
+import WebOrderTray from '../../components/WebOrderTray';
 import { getLocations, getSessions, getTicketsBySession, markTicketPrinted } from '../../services/db';
 import { printTicket } from '../../services/printer';
+import { refreshUnprintedTray } from '../../services/webOrders';
 import { formatPrice } from '../../lib/utils';
 import { useSessionStore } from '../../stores/useSessionStore';
 import type { Location, Modifier, Session, SyncStatus, Ticket } from '../../lib/types';
@@ -287,6 +289,10 @@ export function SessionDetailView({ sessionId }: SessionDetailProps): React.JSX.
         // Most recent ticket first
         setTickets([...tix].sort((a, b) => b.ticketNumber - a.ticketNumber));
         setLocation(locs.find((l) => l.id === found.locationId) ?? null);
+        // Bandeja de pedidos web sin imprimir: el poller la mantiene al día
+        // mientras corre, pero al abrir la pantalla puede llevar tiempo parada
+        // (app en segundo plano) y conviene refrescarla ya.
+        if (found.status === 'open') void refreshUnprintedTray(found.id);
       }
     } finally {
       setLoading(false);
@@ -508,6 +514,9 @@ export function SessionDetailView({ sessionId }: SessionDetailProps): React.JSX.
                 </Button>
               )}
             </Surface>
+
+            {/* Bandeja de pedidos web sin imprimir (solo en la jornada activa) */}
+            {isOpen && <WebOrderTray />}
 
             {/* Tickets section header */}
             {tickets.length > 0 && (

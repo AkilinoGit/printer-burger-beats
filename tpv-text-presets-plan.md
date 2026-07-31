@@ -102,13 +102,19 @@ preset nuevo bajado del servidor entra `enabled=1` (opt-out por defecto).
   junto a Locales).
 - Disparo *fire-and-forget* tras cada alta/edición/borrado (como sesiones).
 
-### Backend (repo `burger-beats-backend`, PENDIENTE en su propio repo)
+### Backend (repo `burger-beats-backend`) — HECHO
 
-- Migración `~033`: tabla `tpv_text_presets` (**sin columna `enabled`** — es
-  concepto de cliente).
-- Endpoints con envoltorio `{ ok, data }`:
-  - `GET  /api/v1/tpv/text-presets?since=…` → `{ presets: ApiTextPreset[], serverTime }`
-  - `POST /api/v1/tpv/text-presets/batch`   → upsert por lotes, LWW por `updatedAt`.
+- Migración `034_tpv_text_presets.sql`: tabla `tpv_text_presets` (**sin columna
+  `enabled`** — es concepto de cliente). `id` VARCHAR(64) para admitir tanto los
+  slugs de la semilla (`msg-catering`) como los UUID v4 del usuario.
+- `src/Repositories/TextPresetRepository.php` — `findAll` (con `since`) + `upsertFromTpv` (LWW).
+- `src/Controllers/Api/Tpv/TextPresetController.php` — `index` + `batch`.
+- Endpoints con envoltorio `{ ok, data }` (registrados en `Bootstrap/Routes.php`):
+  - `GET  /api/v1/tpv/text-presets?since=&kind=&limit=` → `{ presets, serverTime }`
+    (sin `since` oculta los borrados; con `since` los incluye para propagar el borrado)
+  - `POST /api/v1/tpv/text-presets/batch` → `{ results, summary, serverTime }`,
+    LWW por `updatedAt`, un preset inválido no aborta el lote.
+- Documentado en `docs/database-schema.md` y `docs/api-endpoints.md`.
 - El admin web puede curar el **contenido** del pool; el on/off es de cada TPV.
 
 ## 5. Store y consumo
@@ -144,7 +150,8 @@ Nueva ruta `app/settings/mensajes.tsx` (enlazada desde Ajustes). Tres secciones
 5. `escpos.ts` + `printer.ts` (mensajes) — quitar literales.
 6. Nombre aleatorio en el flujo de venta.
 7. Pantalla `settings/mensajes.tsx` + enlace.
-8. Backend (repo aparte) — migración + endpoints.
+8. Backend (repo aparte) — migración + endpoints. **HECHO** (mig. 034 aplicada en
+   local; pendiente aplicarla en producción cuando se despliegue).
 
 ## 8. Notas
 

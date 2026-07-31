@@ -226,6 +226,16 @@ export function buildTicketBuffer(
     parts.push(CMD_BOLD_OFF);
   }
 
+  // ── Origen: pedido hecho desde la web ─────────────────────────────────────
+  // Esta comanda ha salido sola por la impresora, sin que nadie la teclee en
+  // mostrador. En cocina hay que poder distinguirla de un golpe de vista: el
+  // cliente no está delante esperando, viene a recogerla después.
+  if (ticket.source === 'web') {
+    parts.push(CMD_ALIGN_CENTER, CMD_BOLD_ON);
+    rawLine('*** PEDIDO WEB ***');
+    parts.push(CMD_BOLD_OFF, CMD_ALIGN_LEFT);
+  }
+
   // ── Orders ────────────────────────────────────────────────────────────────
   for (let i = 0; i < ticket.orders.length; i++) {
     _appendOrderBytes(parts, ticket.orders[i], modifierLabels, ticket.ticketNumber, i, normalPrices);
@@ -349,17 +359,54 @@ function _appendOrderBytes(
 
   parts.push(CMD_ALIGN_LEFT);
 
+  // ── Comentario del cliente para cocina ────────────────────────────────────
+  // Hoy solo lo traen los pedidos web, y llega ya SIN los códigos de descuento
+  // (los limpia el backend). Va antes de los totales para que se lea junto a los
+  // productos a los que se refiere.
+  const notes = order.notes?.trim();
+  if (notes) {
+    rawLine('');
+    parts.push(CMD_BOLD_ON);
+    rawLine('NOTA:');
+    parts.push(CMD_BOLD_OFF);
+    for (const line of _wrapText(sanitizeForPrinter(notes), CHARS_PER_LINE)) rawLine(line);
+    rawLine('');
+  }
+
   if (profile === 'invitacion') {
     rawLine(_sepLabel('TOTAL', '0.00'));
-  } else if (profile === 'feriante' && totalDiscount > 0.001) {
+    return;
+  }
+
+  if (profile === 'feriante' && totalDiscount > 0.001) {
     rawLine(_sepLabel('TOTAL', originalTotal.toFixed(2)));
     const dtoStr = '-' + totalDiscount.toFixed(2);
     rawLine('DESCUENTO' + '.'.repeat(Math.max(1, CHARS_PER_LINE - 9 - dtoStr.length)) + dtoStr);
-    parts.push(CMD_BOLD_ON);
-    rawLine(_sepLabel('TOTAL CON DTO', ferianteTotal.toFixed(2)));
-    parts.push(CMD_BOLD_OFF);
   } else {
     rawLine(_sepLabel('TOTAL', (profile === 'feriante' ? ferianteTotal : originalTotal).toFixed(2)));
+  }
+
+  const subtotal = profile === 'feriante' ? ferianteTotal : originalTotal;
+
+  // ── Descuento de importe fijo (código BESITOS y similares) ────────────────
+  // No se puede repartir entre las líneas, así que se imprime como resta al pie:
+  // sin esta línea, los productos sumarían más que el total cobrado y el ticket
+  // parecería mal calculado. Ver tpv-web-orders-plan.md §5.1.
+  const fixedDiscount = order.discountAmount ?? 0;
+
+  if (fixedDiscount > 0.001) {
+    const fixedStr = '-' + fixedDiscount.toFixed(2);
+    const label = sanitizeForPrinter(order.discountLabel?.trim() || 'DESCUENTO').toUpperCase();
+    const clipped = label.slice(0, Math.max(1, CHARS_PER_LINE - fixedStr.length - 1));
+    rawLine(clipped + '.'.repeat(Math.max(1, CHARS_PER_LINE - clipped.length - fixedStr.length)) + fixedStr);
+  }
+
+  // Total final en negrita: solo hace falta cuando ha habido alguna resta,
+  // porque si no ya lo imprimió la línea TOTAL de arriba.
+  if (fixedDiscount > 0.001 || (profile === 'feriante' && totalDiscount > 0.001)) {
+    parts.push(CMD_BOLD_ON);
+    rawLine(_sepLabel('TOTAL CON DTO', Math.max(0, subtotal - fixedDiscount).toFixed(2)));
+    parts.push(CMD_BOLD_OFF);
   }
 }
 

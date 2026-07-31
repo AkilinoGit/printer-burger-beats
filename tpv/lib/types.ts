@@ -161,9 +161,23 @@ export interface Order {
   items: OrderItem[];
   amountPaid: number | null;
   change: number | null;
+  /** Ya con el descuento fijo restado: es lo que suma la caja de la sesión. */
   total: number;
   createdAt: string;
+  /** Comentario para cocina (hoy solo lo traen los pedidos web). */
+  notes?: string | null;
+  /**
+   * Descuento de importe fijo aplicado sobre el total (código BESITOS y similares).
+   * Va aparte porque las líneas suman más que `total` y hay que imprimir la resta.
+   * Un descuento por perfil (feriante) NO usa esto: cada línea ya viene rebajada.
+   */
+  discountAmount?: number;
+  /** Qué imprimir junto a la resta, p. ej. "Descuento BESITOS". */
+  discountLabel?: string | null;
 }
+
+/** De dónde nació la comanda: del TPV (mostrador) o de un pedido en la web. */
+export type TicketSource = 'local' | 'web';
 
 export interface Ticket {
   id: string;
@@ -176,6 +190,8 @@ export interface Ticket {
   createdAt: string;
   editedAt: string | null;       // null si nunca se editó
   editCount: number;             // veces que se ha editado
+  source: TicketSource;          // 'web' → cabecera distinta en cocina + bandeja
+  webOrderId: string | null;     // pedido del backend que la originó (para el ACK)
 }
 
 // ---------------------------------------------------------------------------
@@ -288,6 +304,46 @@ export interface ApiTicket {
   updatedAt: string | null;
   deletedAt: string | null;
   orders: ApiTicketOrder[];
+}
+
+// ---------------------------------------------------------------------------
+// Pedidos hechos desde la web pública (GET /api/v1/tpv/web-orders/pending).
+// El TPV los reclama y los materializa como Ticket + Order locales.
+// Ver tpv-web-orders-plan.md.
+// ---------------------------------------------------------------------------
+
+export type WebOrderStatus = 'pending' | 'claimed' | 'printed' | 'cancelled';
+
+export interface ApiWebOrderItem {
+  id: string;
+  productId: string;
+  productName: string;
+  qty: number;
+  unitPrice: number;
+  modifierPriceAdd: number;
+  selectedModifiers: string[];
+  customLabel: string | null;
+}
+
+export interface ApiWebOrder {
+  id: string;
+  sessionId: string | null;
+  status: WebOrderStatus;
+  customerName: string;
+  customerPhone: string | null;
+  /** Comentario para cocina, ya SIN los códigos de descuento. */
+  notes: string | null;
+  /** Total final, con el descuento fijo ya restado. */
+  total: number;
+  /** Perfil con el que el backend cotizó las líneas (código FERIANTE → 'feriante'). */
+  priceProfile: PriceProfile;
+  /** Descuento de importe fijo aplicado sobre el total (código BESITOS). */
+  discountAmount: number;
+  discountLabel: string | null;
+  ticketId: string | null;
+  createdAt: string | null;
+  printedAt: string | null;
+  items: ApiWebOrderItem[];
 }
 
 // Ubicaciones (locales) tal y como las devuelve/acepta el backend TPV.
