@@ -7,6 +7,15 @@ export function formatPrice(amount: number): string {
 }
 
 /**
+ * Aplica el descuento de jornada (0/15/30 %) a un total de sesión,
+ * redondeando a céntimos.
+ */
+export function applySessionDiscount(total: number, pct: number): number {
+  if (!pct) return total;
+  return Math.round(total * (100 - pct)) / 100;
+}
+
+/**
  * Calculates the change to return to a customer.
  * Returns null if amountPaid < total (shouldn't happen in UI, but guard anyway).
  */

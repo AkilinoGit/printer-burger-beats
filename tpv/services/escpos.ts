@@ -7,7 +7,7 @@
 // no longer used for actual printing).
 
 import type { Order, OrderItem, Session, Ticket } from '../lib/types';
-import { collapseVerduraModifiers, currentTime } from '../lib/utils';
+import { applySessionDiscount, collapseVerduraModifiers, currentTime } from '../lib/utils';
 import { LOGO_RASTER_BYTES, IG_LOGO_RASTER_BYTES, EMAIL_LOGO_RASTER_BYTES } from './logo-bytes';
 
 // ---------------------------------------------------------------------------
@@ -847,7 +847,12 @@ export function buildSessionSummaryBuffer(
   // ── Footer ────────────────────────────────────────────────────────────────
   rawLine(SEP);
 
-  const grandTotal = groups.reduce((s, g) => s + g.totalPrice, 0);
+  // El total impreso ya lleva aplicado el ajuste de la jornada; el ticket no
+  // lo desglosa en ninguna línea.
+  const grandTotal = applySessionDiscount(
+    groups.reduce((s, g) => s + g.totalPrice, 0),
+    session.summaryDiscountPct,
+  );
   parts.push(CMD_ALIGN_CENTER, CMD_SIZE_WIDE);
   rawLine(sanitizeForPrinter('TOTAL ' + grandTotal.toFixed(2)));
   parts.push(CMD_SIZE_WIDE_OFF);

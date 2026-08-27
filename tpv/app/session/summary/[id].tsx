@@ -11,7 +11,7 @@ import { useLocalSearchParams } from 'expo-router';
 
 import { getLocations, getSessions, getTicketsBySession } from '../../../services/db';
 import { printSessionSummary } from '../../../services/printer';
-import { formatPrice } from '../../../lib/utils';
+import { applySessionDiscount, formatPrice } from '../../../lib/utils';
 import type { Location, Session, Ticket } from '../../../lib/types';
 
 // ---------------------------------------------------------------------------
@@ -427,10 +427,12 @@ export default function SessionSummaryScreen(): React.JSX.Element {
   }
 
   // ── derived ───────────────────────────────────────────────────────────────
-  const isOpen     = session.status === 'open';
-  const grandTotal = tickets.reduce((sum, t) => sum + ticketTotal(t), 0);
-  const groups     = buildProductGroups(tickets);
-  const sauces     = buildSauceSummary(tickets);
+  const isOpen       = session.status === 'open';
+  const discountPct  = session.summaryDiscountPct;
+  const ticketsTotal = tickets.reduce((sum, t) => sum + ticketTotal(t), 0);
+  const grandTotal   = applySessionDiscount(ticketsTotal, discountPct);
+  const groups       = buildProductGroups(tickets);
+  const sauces       = buildSauceSummary(tickets);
 
   const ticketTimes = tickets
     .map((t) => new Date(t.createdAt).getTime())
@@ -473,10 +475,6 @@ export default function SessionSummaryScreen(): React.JSX.Element {
             </View>
             <View style={styles.metaCol}>
               <Text style={styles.metaLabel}>Total</Text>
-              {/* ============================================================
-                  ===== TEMPORAL: TOTAL MULTIPLICADO POR 0.7 (REVERTIR) =====
-                  ===== Quitar el * 0.7 para volver al total real        =====
-                  ============================================================ */}
               <Text style={[styles.metaValue, styles.totalBlue]}>{formatPrice(grandTotal)}</Text>
             </View>
           </View>
@@ -512,10 +510,6 @@ export default function SessionSummaryScreen(): React.JSX.Element {
 
             <Divider style={styles.divider} />
 
-            {/* ============================================================
-                ===== TEMPORAL: TOTAL MULTIPLICADO POR 0.7 (REVERTIR) =====
-                ===== Quitar el * 0.7 para volver al total real        =====
-                ============================================================ */}
             <View style={styles.grandTotalRow}>
               <Text style={styles.grandTotalLabel}>TOTAL</Text>
               <Text style={styles.grandTotalAmount}>{formatPrice(grandTotal)}</Text>

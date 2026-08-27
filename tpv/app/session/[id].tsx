@@ -17,7 +17,7 @@ import WebOrderTray from '../../components/WebOrderTray';
 import { getLocations, getSessions, getTicketsBySession, markTicketPrinted } from '../../services/db';
 import { printTicket } from '../../services/printer';
 import { refreshUnprintedTray } from '../../services/webOrders';
-import { formatPrice } from '../../lib/utils';
+import { applySessionDiscount, formatPrice } from '../../lib/utils';
 import { useSessionStore } from '../../stores/useSessionStore';
 import type { Location, Modifier, Session, SyncStatus, Ticket } from '../../lib/types';
 
@@ -361,7 +361,10 @@ export function SessionDetailView({ sessionId }: SessionDetailProps): React.JSX.
 
   // ── derived ───────────────────────────────────────────────────────────────
   const isOpen     = session.status === 'open';
-  const grandTotal = tickets.reduce((sum, t) => sum + ticketTotal(t), 0);
+  const grandTotal = applySessionDiscount(
+    tickets.reduce((sum, t) => sum + ticketTotal(t), 0),
+    session.summaryDiscountPct,
+  );
   const orderCount = tickets.reduce((s, t) => s + t.orders.length, 0);
 
   const ticketTimes = tickets
@@ -412,10 +415,6 @@ export function SessionDetailView({ sessionId }: SessionDetailProps): React.JSX.
                 </View>
                 <View style={styles.metaCol}>
                   <Text style={styles.metaLabel}>Total</Text>
-                  {/* ============================================================
-                      ===== TEMPORAL: TOTAL MULTIPLICADO POR 0.7 (REVERTIR) =====
-                      ===== Quitar el * 0.7 para volver al total real        =====
-                      ============================================================ */}
                   <Text style={[styles.metaValue, styles.grandTotal]}>{formatPrice(grandTotal)}</Text>
                 </View>
               </View>

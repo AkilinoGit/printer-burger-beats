@@ -336,6 +336,59 @@ lib/
 
 ---
 
+## Build del APK (Android, local)
+
+La carpeta `tpv/android/` está **generada por prebuild y en `.gitignore`** — cualquier edición manual en ella se pierde con `npx expo prebuild --clean`.
+
+### Entorno
+
+En una terminal normal **no hay que preparar nada**: la máquina ya tiene `JAVA_HOME` apuntando al JDK 17 de Adoptium (User + Machine) y `node` / `platform-tools` en el PATH persistente.
+
+Solo hace falta exportarlo a mano en shells con entorno recortado (p. ej. el de un agente/CI, que no hereda las variables de usuario):
+
+```powershell
+$env:JAVA_HOME    = "C:\Program Files\Eclipse Adoptium\jdk-17.0.20.8-hotspot"
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+$env:Path = "$env:JAVA_HOME\bin;C:\Program Files\nodejs;$env:ANDROID_HOME\platform-tools;$env:Path"
+```
+
+Dos trampas ya sufridas en ese caso, ambas con errores que no dicen la causa real:
+
+| Síntoma | Causa |
+|---|---|
+| `Error resolving plugin [id: 'com.facebook.react.settings'] > 25.0.2` | **JDK 25** (el `jbr` de Android Studio). RN 0.76 / Gradle 8.10.2 necesitan **JDK 17** |
+| `Cannot run program "node" ... CreateProcess error=2` | `node` no está en el PATH; `settings.gradle` lo invoca para el autolinking |
+
+### Compilar
+
+```powershell
+cd c:\DEV\printer-burger-beats\tpv\android
+.\gradlew.bat assembleRelease
+```
+
+APK resultante: `tpv/android/app/build/outputs/apk/release/app-release.apk`
+Instalar: `adb install -r <ruta>`
+
+### Arquitecturas (ABIs)
+
+`reactNativeArchitectures` en `android/gradle.properties` está fijado a **`arm64-v8a`** únicamente: es la ABI del dispositivo de trabajo (Armor Mini 20 Pro, Android 15) y de todo móvil/tablet moderno. Con las 4 ABIs por defecto el APK son ~84 MB y 7 min de build; con solo arm64, ~30 MB y ~2 min.
+
+**Si en el futuro la app no instala en un dispositivo** ("app no compatible"), sospechar de esto primero:
+
+```powershell
+adb shell getprop ro.product.cpu.abi     # ABI del dispositivo
+```
+
+Si es de 32 bits (`armeabi-v7a`, habitual en terminales TPV baratos con impresora integrada), volver a `reactNativeArchitectures=armeabi-v7a,arm64-v8a`. `x86`/`x86_64` solo sirven para el emulador de Android Studio, que no se usa (la app requiere Bluetooth físico).
+
+Para que el ajuste sobreviva a un `prebuild --clean` habría que moverlo a `app.json` con el plugin `expo-build-properties` (no instalado hoy).
+
+### Firma
+
+`android/app/build.gradle` firma el release con el **debug keystore** (valor por defecto de Expo). Sirve para sideload; **no vale para Google Play**. Si algún día se genera un keystore propio, guardarlo **fuera** de `android/` (esa carpeta se regenera) y la app instalada habrá que desinstalarla antes de actualizar (cambia la firma).
+
+---
+
 ## Lo que NO está implementado aún (Fase 2)
 
 - App web de inventario y gráficas

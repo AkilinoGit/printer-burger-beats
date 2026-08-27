@@ -1,10 +1,11 @@
 import * as SQLite from 'expo-sqlite';
 import { INITIAL_PRODUCTS, DEFAULT_LOCATION_NAME, INITIAL_TEXT_PRESETS } from '../lib/constants';
 import { getDeviceId } from '../lib/device';
-import { generateId, todayISO } from '../lib/utils';
+import { applySessionDiscount, generateId, todayISO } from '../lib/utils';
 import type {
   Location,
   Session,
+  SessionDiscountPct,
   SessionOrigin,
   Product,
   Modifier,
@@ -29,7 +30,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 const DB_NAME = 'tpv_v12.db';
-const SCHEMA_VERSION = 31;
+const SCHEMA_VERSION = 32;
 
 let _db: SQLite.SQLiteDatabase | null = null;
 let _initPromise: Promise<void> | null = null;
@@ -164,6 +165,9 @@ export async function initDb(): Promise<void> {
     if (currentVersion < 31) {
       await migrate_v31(db); // orders: notes + discount_amount/label (códigos del pedido web)
     }
+    if (currentVersion < 32) {
+      await migrate_v32(db); // sessions: summary_discount_pct (descuento 15/30% sobre los totales)
+    }
     await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
 
     // Self-heal de las columnas de sync de sesiones: si el ALTER de v26 se tragó
@@ -224,6 +228,17 @@ export async function initDb(): Promise<void> {
     } catch (e) {
       // eslint-disable-next-line no-console
       console.log('[db] orders.notes/discount self-heal failed', e);
+    }
+
+    // Self-heal de sessions.summary_discount_pct (v32).
+    try {
+      const cols = await db.getAllAsync<{ name: string }>('PRAGMA table_info(sessions)');
+      if (!cols.some((c) => c.name === 'summary_discount_pct')) {
+        await db.execAsync(`ALTER TABLE sessions ADD COLUMN summary_discount_pct INTEGER NOT NULL DEFAULT 0`);
+      }
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.log('[db] sessions.summary_discount_pct self-heal failed', e);
     }
 
     // Self-heal: guarantee products.profile exists even on devices whose
@@ -294,12 +309,13 @@ async function migrate_v1(db: SQLite.SQLiteDatabase): Promise<void> {
       );
 
       CREATE TABLE IF NOT EXISTS sessions (
-        id               TEXT PRIMARY KEY,
-        location_id      TEXT NOT NULL REFERENCES locations(id),
-        date             TEXT NOT NULL,
-        status           TEXT NOT NULL DEFAULT 'open',
-        price_overrides  TEXT NOT NULL DEFAULT '{}',
-        created_at       TEXT NOT NULL
+        id                   TEXT PRIMARY KEY,
+        location_id          TEXT NOT NULL REFERENCES locations(id),
+        date                 TEXT NOT NULL,
+        status               TEXT NOT NULL DEFAULT 'open',
+        price_overrides      TEXT NOT NULL DEFAULT '{}',
+        created_at           TEXT NOT NULL,
+        summary_discount_pct INTEGER NOT NULL DEFAULT 0
       );
 
       CREATE TABLE IF NOT EXISTS products (
@@ -805,6 +821,15 @@ async function migrate_v31(db: SQLite.SQLiteDatabase): Promise<void> {
   } catch { /* ya existe */ }
 }
 
+async function migrate_v32(db: SQLite.SQLiteDatabase): Promise<void> {
+  // Descuento de jornada (0/15/30 %) que se resta de todos los totales de la
+  // sesión. Es un dato LOCAL: no viaja al backend (toApiBody no lo envía) y el
+  // merge del pull no toca la columna, así que sobrevive a la sincronización.
+  try {
+    await db.execAsync(`ALTER TABLE sessions ADD COLUMN summary_discount_pct INTEGER NOT NULL DEFAULT 0`);
+  } catch { /* ya existe */ }
+}
+
 /**
  * Inserta la semilla de presets (INITIAL_TEXT_PRESETS) si aún no existen. Crea la
  * tabla si falta (self-heal). Idempotente: INSERT OR IGNORE por id, así que no
@@ -941,6 +966,7 @@ type SessionRow = {
   sync_status: string | null;
   deleted_at: string | null;
   origin: string | null;
+  summary_discount_pct: number | null;
 };
 
 type ProductRow = {
@@ -1035,7 +1061,13 @@ function mapSession(row: SessionRow): Session {
     syncStatus: (row.sync_status as SyncStatus | null) ?? 'pending',
     deletedAt: row.deleted_at ?? null,
     origin: row.origin === 'remote' ? 'remote' : 'local',
+    summaryDiscountPct: normalizeDiscountPct(row.summary_discount_pct),
   };
+}
+
+/** Solo 15 y 30 son válidos; cualquier otro valor (o BD sin migrar) es 0. */
+function normalizeDiscountPct(value: number | null | undefined): SessionDiscountPct {
+  return value === 15 || value === 30 ? value : 0;
 }
 
 function mapProduct(row: ProductRow, modifiers: Modifier[]): Product {
@@ -1214,7 +1246,12 @@ export async function getOpenSession(locationId: string): Promise<Session | null
   return row ? mapSession(row) : null;
 }
 
-export async function insertSession(locationId: string, priceOverrides: Record<string, number> = {}, deviceId?: string): Promise<Session> {
+export async function insertSession(
+  locationId: string,
+  priceOverrides: Record<string, number> = {},
+  deviceId?: string,
+  summaryDiscountPct: SessionDiscountPct = 0,
+): Promise<Session> {
   const db = await getDb();
   const now = new Date();
   const baseCode = generateSessionCode(now);
@@ -1242,19 +1279,21 @@ export async function insertSession(locationId: string, priceOverrides: Record<s
     syncStatus: 'pending',
     deletedAt: null,
     origin: 'local',
+    summaryDiscountPct,
   };
   await db.runAsync(
     `INSERT INTO sessions
        (id, location_id, date, status, price_overrides, created_at,
         session_code, opened_at, auto_close_at, closed_at, device_id,
-        notes, updated_at, sync_status, deleted_at, origin)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        notes, updated_at, sync_status, deleted_at, origin, summary_discount_pct)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       session.id, session.locationId, session.date, session.status,
       JSON.stringify(session.priceOverrides), session.createdAt,
       session.sessionCode, session.openedAt, session.autoCloseAt,
       session.closedAt, session.deviceId,
       session.notes, session.updatedAt, session.syncStatus, session.deletedAt, session.origin,
+      session.summaryDiscountPct,
     ],
   );
   return session;
@@ -1352,6 +1391,15 @@ export async function updateSessionPriceOverrides(id: string, overrides: Record<
     `UPDATE sessions SET price_overrides = ?, ${TOUCH_SYNC} WHERE id = ?`,
     [JSON.stringify(overrides), new Date().toISOString(), id],
   );
+}
+
+/**
+ * Descuento de jornada (0/15/30 %). Dato local: no marca la sesión como
+ * pendiente de sync porque el backend no conoce esta columna.
+ */
+export async function updateSessionDiscount(id: string, pct: SessionDiscountPct): Promise<void> {
+  const db = await getDb();
+  await db.runAsync('UPDATE sessions SET summary_discount_pct = ? WHERE id = ?', [pct, id]);
 }
 
 /** Comentario libre de la jornada. `null` borra la nota. */
@@ -2252,9 +2300,20 @@ export async function getTicketsBySession(sessionId: string): Promise<Ticket[]> 
  * Lightweight summary for a session: ticket count and total revenue.
  * Uses a single aggregated SQL query — no N+1, safe to call frequently.
  */
+/**
+ * `total` ya lleva aplicado el descuento de jornada — es el importe que la UI
+ * debe mostrar en todas partes. `grossTotal` es la suma bruta de los tickets.
+ */
 export async function getSessionSummary(
   sessionId: string,
-): Promise<{ ticketCount: number; total: number; firstTicketAt: string | null; lastTicketAt: string | null }> {
+): Promise<{
+  ticketCount: number;
+  total: number;
+  grossTotal: number;
+  discountPct: SessionDiscountPct;
+  firstTicketAt: string | null;
+  lastTicketAt: string | null;
+}> {
   const db = await getDb();
   const row = await db.getFirstAsync<{ ticket_count: number; total: number; first_at: string | null; last_at: string | null }>(
     `SELECT COUNT(DISTINCT t.id) AS ticket_count,
@@ -2266,9 +2325,17 @@ export async function getSessionSummary(
      WHERE t.session_id = ?`,
     [sessionId],
   );
+  const discountRow = await db.getFirstAsync<{ summary_discount_pct: number | null }>(
+    'SELECT summary_discount_pct FROM sessions WHERE id = ? LIMIT 1',
+    [sessionId],
+  );
+  const discountPct = normalizeDiscountPct(discountRow?.summary_discount_pct);
+  const grossTotal = row?.total ?? 0;
   return {
     ticketCount: row?.ticket_count ?? 0,
-    total: row?.total ?? 0,
+    total: applySessionDiscount(grossTotal, discountPct),
+    grossTotal,
+    discountPct,
     firstTicketAt: row?.first_at ?? null,
     lastTicketAt: row?.last_at ?? null,
   };

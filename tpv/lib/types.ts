@@ -107,7 +107,11 @@ export interface Session {
   syncStatus: SyncStatus;        // estado frente al backend
   deletedAt: string | null;      // soft delete: null = visible
   origin: SessionOrigin;
+  summaryDiscountPct: SessionDiscountPct;
 }
+
+/** Descuento aplicado a los totales de la jornada. 0 = sin descuento. */
+export type SessionDiscountPct = 0 | 15 | 30;
 
 export interface ModifierOption {
   id: string;

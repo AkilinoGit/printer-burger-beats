@@ -27,6 +27,7 @@ import {
   getSessionById,
   getSessionSummary,
   softDeleteSession,
+  updateSessionDiscount,
   updateSessionLocation,
   updateSessionNotes,
   updateSessionPriceOverrides,
@@ -34,7 +35,8 @@ import {
 import { syncSessions } from '../../../services/sessionsApi';
 import { formatPrice } from '../../../lib/utils';
 import { useSessionStore } from '../../../stores/useSessionStore';
-import type { Location, Session } from '../../../lib/types';
+import SessionDiscountToggles from '../../../components/SessionDiscountToggles';
+import type { Location, Session, SessionDiscountPct } from '../../../lib/types';
 
 /** Lanza un sync en segundo plano; los errores se ignoran (se reintenta luego). */
 function fireSync(): void {
@@ -59,6 +61,7 @@ export default function SessionEditScreen(): React.JSX.Element {
   const [locationId, setLocationId] = useState('');
   const [locationMenu, setLocationMenu] = useState(false);
   const [priceDraft, setPriceDraft] = useState<Record<string, string>>({});
+  const [discountPct, setDiscountPct] = useState<SessionDiscountPct>(0);
 
   const [deleteDialog, setDeleteDialog] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -83,6 +86,7 @@ export default function SessionEditScreen(): React.JSX.Element {
           draft[pid] = String(price);
         }
         setPriceDraft(draft);
+        setDiscountPct(found.summaryDiscountPct);
       }
     } finally {
       setLoading(false);
@@ -125,6 +129,10 @@ export default function SessionEditScreen(): React.JSX.Element {
       }
       if (!shallowEqualNumberMap(overrides, session.priceOverrides)) {
         await updateSessionPriceOverrides(session.id, overrides);
+      }
+
+      if (discountPct !== session.summaryDiscountPct) {
+        await updateSessionDiscount(session.id, discountPct);
       }
 
       // Si es la sesión activa en memoria, refrescar el store para que la UI
@@ -253,6 +261,11 @@ export default function SessionEditScreen(): React.JSX.Element {
         ))}
       </Surface>
 
+      {/* Descuento de jornada */}
+      <View style={styles.discountBlock}>
+        <SessionDiscountToggles value={discountPct} onChange={setDiscountPct} disabled={saving} />
+      </View>
+
       {/* Acciones */}
       <Button
         mode="contained"
@@ -364,6 +377,7 @@ const styles = StyleSheet.create({
   priceName: { flex: 1, fontSize: 15, color: '#222' },
   priceInput: { width: 110, backgroundColor: '#fff' },
 
+  discountBlock: { marginTop: 20 },
   saveBtn: { marginTop: 24, borderRadius: 10 },
   saveBtnContent: { height: 48 },
   deleteBtn: { marginTop: 12, borderRadius: 10, borderColor: '#E5A0A0' },

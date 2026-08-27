@@ -37,9 +37,10 @@ import { syncLocations } from '../../services/locationsApi';
 import { fetchJoinableSessions, joinRemoteSession, syncSessions } from '../../services/sessionsApi';
 import { formatPrice } from '../../lib/utils';
 import { orderProductsForSale } from '../../lib/productOrder';
-import type { ApiSession, Location, Session } from '../../lib/types';
+import type { ApiSession, Location, Session, SessionDiscountPct } from '../../lib/types';
 import StableTextInput from '../../components/StableTextInput';
 import SessionSyncChip from '../../components/SessionSyncChip';
+import SessionDiscountToggles from '../../components/SessionDiscountToggles';
 import { SessionDetailView } from '../session/[id]';
 
 interface PriceRowProps {
@@ -108,8 +109,8 @@ interface SessionCardProps {
 }
 
 function SessionCard({ session, locationName, onPress, onViewSummary }: SessionCardProps): React.JSX.Element {
+  // `total` viene de getSessionSummary ya con el ajuste de la jornada aplicado.
   const [summary, setSummary] = useState<{ ticketCount: number; total: number }>({ ticketCount: 0, total: 0 });
-  // getSessionSummary now returns extra fields, but SessionCard only needs ticketCount + total
 
   useEffect(() => {
     getSessionSummary(session.id).then(setSummary).catch(() => {});
@@ -128,10 +129,6 @@ function SessionCard({ session, locationName, onPress, onViewSummary }: SessionC
             <SessionSyncChip session={session} />
           </View>
           <View style={cardStyles.right}>
-            {/* ============================================================
-                ===== TEMPORAL: TOTAL MULTIPLICADO POR 0.7 (REVERTIR) =====
-                ===== Quitar el * 0.7 para volver al total real        =====
-                ============================================================ */}
             <Text style={cardStyles.total}>{formatPrice(summary.total)}</Text>
             <Text style={cardStyles.tickets}>{summary.ticketCount} ticket{summary.ticketCount !== 1 ? 's' : ''}</Text>
           </View>
@@ -235,10 +232,6 @@ function ActiveSessionCard({ session, locationName, summary, firstTicketAt, last
           </View>
           <View style={activeStyles.metaCol}>
             <Text style={activeStyles.metaLabel}>Total</Text>
-            {/* ============================================================
-                ===== TEMPORAL: TOTAL MULTIPLICADO POR 0.7 (REVERTIR) =====
-                ===== Quitar el * 0.7 para volver al total real        =====
-                ============================================================ */}
             <Text style={[activeStyles.metaValue, activeStyles.totalBlue]}>{formatPrice(summary.total)}</Text>
           </View>
         </View>
@@ -429,6 +422,7 @@ export default function SessionScreen(): React.JSX.Element {
   // Price dialog before opening session
   const [priceDialogVisible, setPriceDialogVisible] = useState(false);
   const [priceDraft, setPriceDraft] = useState<Record<string, string>>({});
+  const [discountPct, setDiscountPct] = useState<SessionDiscountPct>(0);
   const setPriceForId = useCallback((id: string, v: string) => {
     setPriceDraft((prev) => ({ ...prev, [id]: v }));
   }, []);
@@ -509,6 +503,7 @@ export default function SessionScreen(): React.JSX.Element {
       draft[p.id] = String(p.basePrice);
     }
     setPriceDraft(draft);
+    setDiscountPct(0);
     setPriceDialogVisible(true);
   }
 
@@ -598,7 +593,7 @@ export default function SessionScreen(): React.JSX.Element {
           overrides[p.id] = val;
         }
       }
-      const session = await insertSession(loc.id, overrides);
+      const session = await insertSession(loc.id, overrides, undefined, discountPct);
       setLastTicketNumber(0);
       setActiveSession(session);
       setActiveLocation(loc);
@@ -878,6 +873,10 @@ export default function SessionScreen(): React.JSX.Element {
                     {idx < arr.length - 1 && <Divider />}
                   </React.Fragment>
                 ))}
+              {/* Al final del scroll a propósito: no se ve sin desplazarse. */}
+              <View style={styles.discountBlock}>
+                <SessionDiscountToggles value={discountPct} onChange={setDiscountPct} disabled={opening} />
+              </View>
             </ScrollView>
           </Dialog.ScrollArea>
           <Dialog.Actions>
@@ -1126,5 +1125,10 @@ const styles = StyleSheet.create({
   priceInput: {
     width: 110,
     backgroundColor: '#fff',
+  },
+  discountBlock: {
+    paddingHorizontal: 4,
+    paddingTop: 18,
+    paddingBottom: 4,
   },
 });
