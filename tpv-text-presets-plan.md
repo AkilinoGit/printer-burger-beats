@@ -159,3 +159,25 @@ Nueva ruta `app/settings/mensajes.tsx` (enlazada desde Ajustes). Tres secciones
   desde la batería si se deja vacío) y añadir `text_presets` a la lista de tablas.
 - La app es funcional en local sin backend: los presets viven en SQLite, la
   edición/impresión/nombre funcionan offline y el sync degrada en silencio.
+
+## 9. Extensión: folleto/cupón (kind `promo`)
+
+Reutiliza toda la maquinaria de `TextPreset` para el **folleto** de Ajustes →
+CUPONES/FOLLETOS (antes texto libre + pie hardcodeado en `escpos.buildPromoBuffer`).
+
+- **Nuevo `kind: 'promo'`** con `slot` propio: `title` (titular grande), `validity`
+  (línea de validez, admite placeholder `{fecha}`) y `farewell` (despedida).
+- **Selección explícita**, no aleatorio/fijo: un folleto se elige a mano. La elegida
+  por slot se guarda LOCAL en AsyncStorage `tpv:promoSelection` (store
+  `promoSelection` / `setPromoSelection` / `resolvePromoLines(dateStr)`).
+- **Sin migración**: la semilla (`promo-title-1/2`, `promo-validity-1`,
+  `promo-farewell-1`) entra por `INITIAL_TEXT_PRESETS` + el self-heal
+  `ensureTextPresetsSeed`. Las columnas `kind`/`slot` ya son genéricas.
+- **Impresión**: `buildPromoBuffer(title, validity|null, farewell|null)` = una copia
+  (logo + titular doble + validez + despedida); `printer.printPromo(title, validity,
+  farewell, copies, …)` la repite con cancelación/progreso.
+- **UI**: pantalla `app/settings/folleto.tsx` (3 secciones con radio + CRUD + fecha +
+  copias), enlazada desde Ajustes; el diálogo viejo de settings.tsx se elimina.
+- **Backend**: en `TextPresetController` se amplían `VALID_KINDS` (+`promo`),
+  `VALID_SLOTS` (+`title`/`validity`/`farewell`) y la coherencia kind↔slot. Sin
+  migración (`slot` VARCHAR(16), `kind` VARCHAR(32) ya caben). Falta desplegar a prod.

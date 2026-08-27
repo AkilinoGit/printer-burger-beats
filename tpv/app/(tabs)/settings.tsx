@@ -7,7 +7,6 @@ import {
   View,
 } from 'react-native';
 import {
-  ActivityIndicator,
   Button,
   Checkbox,
   Dialog,
@@ -45,7 +44,6 @@ import {
   clearPairedPrinter,
   getPairedPrinter,
   isPrinterConnected,
-  printPromo,
   printTest,
   setAlias,
   type PrinterDevice,
@@ -230,71 +228,6 @@ export default function SettingsScreen(): React.JSX.Element {
         },
       ],
     );
-  }
-
-  // Promo print dialog
-  const [promoVisible, setPromoVisible]   = useState(false);
-  const [promoMessage, setPromoMessage]   = useState('');
-  const [promoCountStr, setPromoCountStr] = useState('1');
-  const [promoDate, setPromoDate]         = useState(() => {
-    const d = new Date();
-    const dd = String(d.getDate()).padStart(2, '0');
-    const mm = String(d.getMonth() + 1).padStart(2, '0');
-    return `${dd}/${mm}/${d.getFullYear()}`;
-  });
-  // null = idle; { current, total } = printing in progress
-  const [promoProgress, setPromoProgress] = useState<{ current: number; total: number } | null>(null);
-  const promoCancelledRef = useRef(false);
-
-  function validatePromoInputs(): number | null {
-    if (!promoMessage.trim()) {
-      Alert.alert('Texto vacío', 'Escribe un mensaje para imprimir.');
-      return null;
-    }
-    const count = parseInt(promoCountStr, 10);
-    if (isNaN(count) || count < 1) {
-      Alert.alert('Número inválido', 'Introduce un número mayor que 0.');
-      return null;
-    }
-    return count;
-  }
-
-  async function handlePrintPromo(copies: number): Promise<void> {
-    promoCancelledRef.current = false;
-    setPromoProgress({ current: 0, total: copies });
-    try {
-      const result = await printPromo(
-        promoMessage.trim(),
-        copies,
-        promoDate.trim(),
-        (current, total) => setPromoProgress({ current, total }),
-        () => !promoCancelledRef.current,
-      );
-      if (result.ok) {
-        setPromoVisible(false);
-      } else if (!result.cancelled) {
-        Alert.alert('Error al imprimir', result.error ?? 'Fallo desconocido.');
-      }
-    } finally {
-      setPromoProgress(null);
-    }
-  }
-
-  function handleStartPromo(): void {
-    const count = validatePromoInputs();
-    if (count !== null) void handlePrintPromo(count);
-  }
-
-  function handleTestPromo(): void {
-    if (!promoMessage.trim()) {
-      Alert.alert('Texto vacío', 'Escribe un mensaje para imprimir.');
-      return;
-    }
-    void handlePrintPromo(2);
-  }
-
-  function handleCancelPromo(): void {
-    promoCancelledRef.current = true;
   }
 
   // Base prices dialog
@@ -618,12 +551,12 @@ export default function SettingsScreen(): React.JSX.Element {
       {/* ── CUPONES / FOLLETOS ────────────────────────────────────────────── */}
       <Text variant="labelLarge" style={styles.sectionLabel}>CUPONES / FOLLETOS</Text>
       <Surface style={styles.card} elevation={1}>
-        <TouchableRipple onPress={() => setPromoVisible(true)} borderless style={styles.promoCardTouch}>
+        <TouchableRipple onPress={() => router.push('/settings/folleto')} borderless style={styles.promoCardTouch}>
           <View style={styles.priceActionRow}>
             <View style={styles.priceActionText}>
               <Text style={styles.priceActionTitle}>Imprimir logo con mensaje</Text>
               <Text style={styles.priceActionSubtitle}>
-                Imprime el logo de la empresa con un texto personalizado, tantas veces como quieras.
+                Logo de la empresa con un titular elegible del menú, tantas copias como quieras.
               </Text>
             </View>
             <Icon source="chevron-right" size={22} color="#888" />
@@ -697,84 +630,6 @@ export default function SettingsScreen(): React.JSX.Element {
           <Dialog.Actions>
             <Button onPress={() => setPrinterEditTarget(null)}>Cancelar</Button>
             <Button onPress={() => void savePrinterAlias()}>Guardar</Button>
-          </Dialog.Actions>
-        </Dialog>
-
-        {/* Promo print dialog */}
-        <Dialog visible={promoVisible} onDismiss={() => promoProgress === null && setPromoVisible(false)}>
-          <Dialog.Title>Imprimir logo con mensaje</Dialog.Title>
-          <Dialog.Content style={styles.promoDialogContent}>
-            {promoProgress === null ? (
-              <>
-                <StableTextInput
-                  label="Mensaje a imprimir"
-                  value={promoMessage}
-                  onChangeText={setPromoMessage}
-                  mode="outlined"
-                  multiline
-                  numberOfLines={3}
-                  autoCapitalize="sentences"
-                  style={styles.promoMessageInput}
-                />
-                <StableTextInput
-                  label="Válido el día (dd/mm/aaaa)"
-                  value={promoDate}
-                  onChangeText={setPromoDate}
-                  mode="outlined"
-                  keyboardType="numeric"
-                  style={styles.promoMessageInput}
-                />
-                <StableTextInput
-                  label="Número de copias"
-                  value={promoCountStr}
-                  onChangeText={setPromoCountStr}
-                  mode="outlined"
-                  keyboardType="number-pad"
-                  style={styles.promoCountInput}
-                />
-              </>
-            ) : (
-              <View style={styles.promoProgressBox}>
-                <ActivityIndicator size="large" />
-                <Text style={styles.promoProgressText}>
-                  {promoProgress.current === 0
-                    ? 'Conectando con la impresora...'
-                    : `Imprimiendo copia ${promoProgress.current} de ${promoProgress.total}...`}
-                </Text>
-              </View>
-            )}
-          </Dialog.Content>
-          <Dialog.Actions>
-            {promoProgress === null ? (
-              <>
-                <Button onPress={() => setPromoVisible(false)}>Cancelar</Button>
-                <Button
-                  mode="contained"
-                  buttonColor="#43A047"
-                  icon="printer-check"
-                  onPress={handleTestPromo}
-                >
-                  Prueba
-                </Button>
-                <Button
-                  mode="contained"
-                  buttonColor="#1565C0"
-                  icon="printer"
-                  onPress={handleStartPromo}
-                >
-                  Imprimir
-                </Button>
-              </>
-            ) : (
-              <Button
-                mode="contained"
-                buttonColor="#777"
-                icon="cancel"
-                onPress={handleCancelPromo}
-              >
-                Cancelar impresión
-              </Button>
-            )}
           </Dialog.Actions>
         </Dialog>
 
@@ -1137,21 +992,6 @@ const styles = StyleSheet.create({
 
   // ── promo card ──
   promoCardTouch: { borderRadius: 12 },
-
-  // ── promo dialog ──
-  promoDialogContent: { gap: 12 },
-  promoMessageInput: { backgroundColor: '#fff' },
-  promoCountInput: { backgroundColor: '#fff', width: 180 },
-  promoProgressBox: {
-    alignItems: 'center',
-    paddingVertical: 16,
-    gap: 16,
-  },
-  promoProgressText: {
-    fontSize: 15,
-    color: '#333',
-    textAlign: 'center',
-  },
 
   // ── location dialog ──
   printerAliasInput: { backgroundColor: '#fff' },

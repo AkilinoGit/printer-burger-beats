@@ -44,6 +44,9 @@ export const CMD_ALIGN_CENTER: readonly number[] = [ESC, 0x61, 0x01];
 /** ESC a 0 — Align left */
 export const CMD_ALIGN_LEFT: readonly number[] = [ESC, 0x61, 0x00];
 
+/** ESC a 2 — Right-align following text */
+export const CMD_ALIGN_RIGHT: readonly number[] = [ESC, 0x61, 0x02];
+
 /** GS ! 0x11 — Double width + double height */
 export const CMD_SIZE_DOUBLE: readonly number[] = [GS, 0x21, 0x11];
 
@@ -866,57 +869,81 @@ export function buildSessionSummaryBuffer(
 }
 
 // ---------------------------------------------------------------------------
-// Promotional flyer buffer — logo + custom message, N copies
+// Promotional flyer buffer — logo + selectable messages, one copy
 // ---------------------------------------------------------------------------
 
-/**
- * Builds an ESC/POS buffer that prints N copies of the company logo followed
- * by a centred custom message. Each copy ends with a full cut.
- *
- * @param message  Free-text message to print below the logo (word-wrapped).
- * @param copies   Number of copies (clamped to 1–20).
- */
-/** ESC d 5 — Feed 5 lines (~half of CMD_FEED_TOP), used between promo copies */
+/** ESC d 5 — Feed 5 lines (~half of CMD_FEED_TOP), used before each promo copy */
 const CMD_FEED_PROMO: readonly number[] = [ESC, 0x64, 0x05];
 
-function _todayDDMMYYYY(): string {
-  const d = new Date();
-  const dd   = String(d.getDate()).padStart(2, '0');
-  const mm   = String(d.getMonth() + 1).padStart(2, '0');
-  const yyyy = String(d.getFullYear());
-  return `${dd}/${mm}/${yyyy}`;
-}
-
+/**
+ * Builds the ESC/POS buffer for ONE flyer/coupon copy: company logo, a big
+ * headline (`title`, double size) and two optional footer lines below it
+ * (`validity` and `farewell`, normal size). Ends with a full cut. printer.ts
+ * loops this once per copy so a print run can be cancelled between copies.
+ *
+ * The caller resolves which texts to print (from the promo preset pool) and
+ * substitutes the `{fecha}` placeholder before calling; here every argument is
+ * treated as literal text.
+ *
+ * @param title     Headline printed big under the logo (word-wrapped at 16 cols).
+ * @param validity  Optional validity line (e.g. "Válido … 31/07/2026"); null/empty skips it.
+ * @param farewell  Optional farewell line (e.g. "Gracias por su visita"); null/empty skips it.
+ * @param others    Extra promotional lines (the "Otros" checkbox pool) — ALL non-empty
+ *                  entries are printed, one per entry, between validity and farewell.
+ */
 export function buildPromoBuffer(
-  message: string,
-  copies: number,
-  validityDate?: string,
+  title: string,
+  validity: string | null = null,
+  farewell: string | null = null,
+  others: string[] = [],
+  couponNumber: number | null = null,
 ): Uint8Array {
-  const n    = Math.max(1, Math.floor(copies));
-  const date = validityDate?.trim() || _todayDDMMYYYY();
   const parts: (readonly number[] | Uint8Array)[] = [];
   const rawLine = (text: string) => parts.push(encodeText(text + '\n'));
 
   parts.push(CMD_INIT, CMD_CODEPAGE_CP858);
 
-  for (let i = 0; i < n; i++) {
-    parts.push(CMD_FEED_PROMO);
-    parts.push(CMD_ALIGN_CENTER);
-    parts.push(LOGO_RASTER_BYTES);
+  parts.push(CMD_FEED_PROMO);
+  parts.push(CMD_ALIGN_CENTER);
+  parts.push(LOGO_RASTER_BYTES);
+  rawLine('');
+
+  // Headline at double size (2× width + 2× height). Double-width halves the
+  // chars-per-line, so wrap at 16 instead of 32.
+  parts.push(CMD_SIZE_DOUBLE);
+  for (const line of _wrapText(sanitizeForPrinter(title), Math.floor(CHARS_PER_LINE / 2))) rawLine(line);
+  parts.push(CMD_SIZE_NORMAL);
+
+  // Body: validity → otros → farewell, back-to-back with no blank lines between
+  // them. The single separator kept in the whole flyer is this one, right after
+  // the headline and before the body (only if there's a body to show).
+  const validityText = validity?.trim();
+  const otherLines = others.map((t) => t.trim()).filter((t) => t.length > 0);
+  const farewellText = farewell?.trim();
+  if (validityText || otherLines.length > 0 || farewellText) {
     rawLine('');
-    // Message printed at double size (2× width + 2× height). Double-width halves
-    // the chars-per-line, so wrap at 16 instead of 32.
-    parts.push(CMD_SIZE_DOUBLE);
-    const wrapped = _wrapText(sanitizeForPrinter(message), Math.floor(CHARS_PER_LINE / 2));
-    for (const line of wrapped) rawLine(line);
-    parts.push(CMD_SIZE_NORMAL);
-    rawLine('');
-    const validity = _wrapText(`Válido únicamente el día ${date}`, CHARS_PER_LINE);
-    for (const line of validity) rawLine(line);
-    rawLine('Gracias por su visita');
-    parts.push(CMD_FEED);
-    parts.push(CMD_CUT);
+    if (validityText) {
+      for (const line of _wrapText(sanitizeForPrinter(validityText), CHARS_PER_LINE)) rawLine(line);
+    }
+    for (const text of otherLines) {
+      for (const line of _wrapText(sanitizeForPrinter(text), CHARS_PER_LINE)) rawLine(line);
+    }
+    if (farewellText) {
+      for (const line of _wrapText(sanitizeForPrinter(farewellText), CHARS_PER_LINE)) rawLine(line);
+    }
   }
+
+  // Coupon number at the very bottom, right-aligned (optional). No blank-line
+  // separator before it — it sits directly under the last body line.
+  if (couponNumber !== null) {
+    parts.push(CMD_ALIGN_RIGHT, CMD_BOLD_ON);
+    rawLine(sanitizeForPrinter('N. ' + couponNumber));
+    parts.push(CMD_BOLD_OFF);
+  }
+
+  parts.push(CMD_ALIGN_LEFT);
+  parts.push(CMD_FEED);
+  parts.push(CMD_CUT);
 
   return concatBytes(...parts);
 }

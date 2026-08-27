@@ -1,4 +1,4 @@
-import type { Modifier, Product, TextPresetKind, TicketSlot } from './types';
+import type { Modifier, Product, PresetSlot, TextPresetKind } from './types';
 
 // --- VERDURA (verde) ---
 const SIN_CEBOLLA:      Modifier = { id: 'sin-cebolla',        label: 'Sin cebolla',        type: 'remove', section: 'verdura',     order: 1 };
@@ -164,7 +164,7 @@ export interface SeedTextPreset {
   id: string;
   kind: TextPresetKind;
   text: string;
-  slot: TicketSlot | null;
+  slot: PresetSlot | null;
   sortOrder: number;
 }
 
@@ -189,6 +189,37 @@ export const INITIAL_TEXT_PRESETS: SeedTextPreset[] = [
     slot: 'footer',
     sortOrder: 1,
     text: 'GRACIAS POR VENIR :)',
+  },
+  // ── Folleto / cupón (kind 'promo') ─────────────────────────────────────────
+  // Titular grande (menú elegible), línea de validez y despedida. La validez
+  // admite el placeholder {fecha}, sustituido al imprimir por la fecha elegida.
+  {
+    id: 'promo-title-1',
+    kind: 'promo',
+    slot: 'title',
+    sortOrder: 1,
+    text: '2X1 EN HAMBURGUESAS',
+  },
+  {
+    id: 'promo-title-2',
+    kind: 'promo',
+    slot: 'title',
+    sortOrder: 2,
+    text: '10% DE DESCUENTO',
+  },
+  {
+    id: 'promo-validity-1',
+    kind: 'promo',
+    slot: 'validity',
+    sortOrder: 1,
+    text: 'Válido únicamente el día {fecha}',
+  },
+  {
+    id: 'promo-farewell-1',
+    kind: 'promo',
+    slot: 'farewell',
+    sortOrder: 1,
+    text: 'Gracias por su visita',
   },
   ...[
     'ARYA', 'BRIENNE', 'CERSEI', 'DAENERYS', 'EDDARD', 'GENDRY', 'HODOR',

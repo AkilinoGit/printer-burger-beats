@@ -479,27 +479,40 @@ export async function printSessionSummary(
 }
 
 /**
- * Prints N copies of the company logo followed by a custom message, one copy
- * at a time so printing can be cancelled between copies.
+ * Prints N copies of the flyer/coupon (logo + big headline + optional validity
+ * and farewell lines), one copy at a time so printing can be cancelled between
+ * copies. The caller resolves the texts (from the promo preset pool) and fills
+ * the `{fecha}` placeholder beforehand.
  *
+ * @param title        Headline printed big under the logo.
+ * @param validity     Optional validity line; null/empty skips it.
+ * @param farewell     Optional farewell line; null/empty skips it.
+ * @param others       Extra promotional lines (the "Otros" checkbox pool) — ALL of
+ *                     these are printed, one per entry, in the given order.
+ * @param startNumber  If not null, each copy is numbered under the logo starting
+ *                     at this value (copy 1 → startNumber, copy 2 → +1, …).
  * @param onProgress   Called after each successful copy: (printedSoFar, total).
  * @param shouldContinue  Return false to stop before the next copy.
  */
 export async function printPromo(
-  message: string,
+  title: string,
+  validity: string | null,
+  farewell: string | null,
+  others: string[],
   copies: number,
-  validityDate?: string,
+  startNumber: number | null,
   onProgress?: (current: number, total: number) => void,
   shouldContinue?: () => boolean,
 ): Promise<PrintResult> {
-  log.info('PRINT', `printPromo — ${copies} copia(s)`);
+  log.info('PRINT', `printPromo — ${copies} copia(s)${startNumber !== null ? ` desde Nº ${startNumber}` : ''}`);
   try {
     for (let i = 1; i <= copies; i++) {
       if (shouldContinue && !shouldContinue()) {
         log.info('PRINT', `promo cancelado tras ${i - 1} copia(s)`);
         return { ok: true };
       }
-      const bytes = buildPromoBuffer(message, 1, validityDate);
+      const couponNumber = startNumber !== null ? startNumber + (i - 1) : null;
+      const bytes = buildPromoBuffer(title, validity, farewell, others, couponNumber);
       await writeBytes(bytes);
       log.info('PRINT', `promo copia ${i}/${copies} (${bytes.length}b)`);
       onProgress?.(i, copies);

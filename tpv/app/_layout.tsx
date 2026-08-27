@@ -91,6 +91,7 @@ export default function RootLayout(): React.JSX.Element {
         <Stack.Screen name="sessions-history" options={{ title: 'Historial de sesiones' }} />
         <Stack.Screen name="settings/printer" options={{ title: 'Ajustes de impresora' }} />
         <Stack.Screen name="settings/mensajes" options={{ title: 'Mensajes y nombres' }} />
+        <Stack.Screen name="settings/folleto" options={{ title: 'Folleto / cupón' }} />
       </Stack>
       <PrintOverlay />
     </PaperProvider>
