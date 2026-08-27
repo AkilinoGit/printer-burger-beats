@@ -20,7 +20,7 @@ import type {
   ApiTicket,
   TextPreset,
   TextPresetKind,
-  TicketSlot,
+  PresetSlot,
   ApiTextPreset,
 } from '../lib/types';
 
@@ -1630,7 +1630,7 @@ function mapTextPreset(row: TextPresetRow): TextPreset {
     id: row.id,
     kind: row.kind as TextPresetKind,
     text: row.text,
-    slot: (row.slot ?? null) as TicketSlot | null,
+    slot: (row.slot ?? null) as PresetSlot | null,
     enabled: row.enabled === 1,
     sortOrder: row.sort_order,
     createdAt: row.created_at,
@@ -1655,7 +1655,7 @@ export async function getTextPresets(): Promise<TextPreset[]> {
 export async function insertTextPreset(params: {
   kind: TextPresetKind;
   text: string;
-  slot: TicketSlot | null;
+  slot: PresetSlot | null;
 }): Promise<TextPreset> {
   const db = await getDb();
   const now = new Date().toISOString();

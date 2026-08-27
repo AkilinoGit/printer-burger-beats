@@ -37,11 +37,26 @@ export interface Location {
  * Tipo de preset de texto:
  *  - 'ticket_message' → mensaje impreso en el ticket del cliente (header/footer).
  *  - 'order_name'     → nombre de la batería usado cuando el pedido va sin nombre.
+ *  - 'promo'          → textos del folleto/cupón (titular grande, validez, despedida).
  */
-export type TextPresetKind = 'ticket_message' | 'order_name';
+export type TextPresetKind = 'ticket_message' | 'order_name' | 'promo';
 
 /** Posición del mensaje en el ticket. Solo aplica a `ticket_message`. */
 export type TicketSlot = 'header' | 'footer';
+
+/**
+ * Parte del folleto/cupón a la que pertenece un preset `promo`:
+ *  - 'title'    → titular grande impreso bajo el logo.
+ *  - 'validity' → línea de validez (admite el placeholder `{fecha}`).
+ *  - 'farewell' → línea de despedida.
+ *  - 'other'    → líneas adicionales de selección múltiple: se pueden marcar
+ *    tantas como se quiera y se imprimen TODAS las seleccionadas (a diferencia
+ *    de title/validity/farewell, que son selección única).
+ */
+export type PromoSlot = 'title' | 'validity' | 'farewell' | 'other';
+
+/** Cualquier `slot` posible de un preset (ticket + folleto). */
+export type PresetSlot = TicketSlot | PromoSlot;
 
 /**
  * Preset de texto — modelo LOCAL (SQLite + store).
@@ -54,7 +69,7 @@ export interface TextPreset {
   id: string;
   kind: TextPresetKind;
   text: string;
-  slot: TicketSlot | null;      // header/footer para mensajes; null para nombres
+  slot: PresetSlot | null;      // header/footer para ticket; title/validity/farewell para folleto; null para nombres
   enabled: boolean;             // SOLO local — no cruza la red
   sortOrder: number;
   createdAt: string;
@@ -73,7 +88,7 @@ export interface ApiTextPreset {
   id: string;
   kind: TextPresetKind;
   text: string;
-  slot: TicketSlot | null;
+  slot: PresetSlot | null;
   sortOrder: number;
   createdAt: string;
   updatedAt: string | null;
