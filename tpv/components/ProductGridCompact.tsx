@@ -5,10 +5,20 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { formatPrice } from '../lib/utils';
 import type { PriceProfile, Product } from '../lib/types';
 import { buildColoredCategories } from './productGridCommon';
-import ProductGridCompact from './ProductGridCompact';
 import { useCartStore } from '../stores/useCartStore';
-import { useSessionStore } from '../stores/useSessionStore';
 
+/**
+ * Vista COMPACTA de la carta (la alternativa a la clásica de `ProductGrid`).
+ *
+ * Objetivo: ver el máximo de productos sin scroll. Frente a la clásica (baldosas
+ * cuadradas fijas de 150 px → 2 columnas en un móvil normal) esta calcula el nº
+ * de columnas a partir del ancho real de la pantalla y usa baldosas anchas y
+ * bajas, con el nombre arriba y el precio abajo, sin hueco muerto.
+ *
+ * El área táctil sigue siendo cómoda (~108 x 66 dp, muy por encima de los 48 dp
+ * recomendados) y el comportamiento es idéntico al de la clásica: pulsar añade,
+ * mantener pulsado abre los modifiers.
+ */
 
 interface Props {
   products: Product[];
@@ -16,39 +26,36 @@ interface Props {
   onLongPress: (product: Product) => void;
 }
 
-/**
- * Punto de entrada de la carta. Elige entre las dos vistas según la preferencia
- * local `compactGrid` (Zustand + AsyncStorage, se alterna con el botón de la
- * pantalla de venta):
- *
- *  - clásica (por defecto): dos columnas que ocupan todo el ancho, con la altura
- *    ajustada al texto (nombre + precio) en vez de cuadrados fijos de 150 px.
- *  - compacta: `ProductGridCompact` — baldosas bajas y columnas calculadas por
- *    ancho de pantalla, para ver el máximo de carta de una vez.
- *
- * Al vivir la decisión aquí, los tres sitios que montan la carta (venta,
- * resumen del pedido y edición de ticket) cambian de vista a la vez.
- */
-export default React.memo(function ProductGrid(props: Props): React.JSX.Element {
-  const compactGrid = useSessionStore((s) => s.compactGrid);
-  return compactGrid ? <ProductGridCompact {...props} /> : <ProductGridClassic {...props} />;
-});
+const H_PADDING      = 10;  // padding horizontal del scroll
+const GAP            = 8;   // separación entre baldosas
+const MIN_TILE_WIDTH = 100; // ancho mínimo antes de quitar una columna
+const TILE_HEIGHT    = 66;
 
-// ---------------------------------------------------------------------------
-// Vista clásica
-// ---------------------------------------------------------------------------
+interface GridMetrics {
+  columns: number;
+  tileWidth: number;
+}
 
-const ProductGridClassic = React.memo(function ProductGridClassic({ products, onSelect, onLongPress }: Props): React.JSX.Element {
+/** Nº de columnas y ancho de baldosa para el ancho real de pantalla. */
+function useGridMetrics(): GridMetrics {
+  const { width } = useWindowDimensions();
+  return React.useMemo(() => {
+    const usable = width - H_PADDING * 2;
+    // Mínimo 3 columnas: en el móvil de trabajo entran 3 holgadas donde la vista
+    // clásica solo mostraba 2.
+    const columns   = Math.max(3, Math.floor((usable + GAP) / (MIN_TILE_WIDTH + GAP)));
+    const tileWidth = Math.floor((usable - GAP * (columns - 1)) / columns);
+    return { columns, tileWidth };
+  }, [width]);
+}
+
+export default React.memo(function ProductGridCompact({ products, onSelect, onLongPress }: Props): React.JSX.Element {
   const priceProfile    = useCartStore((s) => s.priceProfile);
   const setPriceProfile = useCartStore((s) => s.setPriceProfile);
   const takeAway        = useCartStore((s) => s.takeAway);
   const toggleTakeAway  = useCartStore((s) => s.toggleTakeAway);
 
-  // Dos columnas que reparten TODO el ancho disponible (antes: cuadrados fijos
-  // de 150 px que dejaban un margen muerto a la derecha).
-  const { width } = useWindowDimensions();
-  const tileWidth = Math.floor((width - H_PADDING * 2 - GAP) / COLUMNS);
-
+  const { tileWidth } = useGridMetrics();
   const categories = buildColoredCategories(products);
 
   function handleOfertaPress(profile: PriceProfile): void {
@@ -59,12 +66,15 @@ const ProductGridClassic = React.memo(function ProductGridClassic({ products, on
     <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
       {categories.map((category) => (
         <View key={category.label} style={styles.section}>
-          <Text style={[styles.categoryLabel, { color: category.color }]}>
-            {category.label}
-          </Text>
+          <View style={styles.categoryHeader}>
+            <View style={[styles.categoryBar, { backgroundColor: category.color }]} />
+            <Text style={[styles.categoryLabel, { color: category.color }]} numberOfLines={1}>
+              {category.label}
+            </Text>
+          </View>
           <View style={styles.grid}>
             {category.products.map((product) => (
-              <ProductTile
+              <CompactTile
                 key={product.id}
                 product={product}
                 accentColor={category.color}
@@ -79,17 +89,20 @@ const ProductGridClassic = React.memo(function ProductGridClassic({ products, on
 
       {/* OFERTAS */}
       <View style={styles.section}>
-        <Text style={[styles.categoryLabel, { color: '#7B1FA2' }]}>OFERTAS</Text>
+        <View style={styles.categoryHeader}>
+          <View style={[styles.categoryBar, { backgroundColor: '#7B1FA2' }]} />
+          <Text style={[styles.categoryLabel, { color: '#7B1FA2' }]}>OFERTAS</Text>
+        </View>
         <View style={styles.grid}>
-          <OfertaTile
-            label="OFERTA FERIANTE"
+          <CompactOfertaTile
+            label="FERIANTE"
             icon="tag-multiple"
             color="#1E88E5"
             width={tileWidth}
             active={priceProfile === 'feriante'}
             onPress={() => handleOfertaPress('feriante')}
           />
-          <OfertaTile
+          <CompactOfertaTile
             label="INVITACIÓN"
             icon="gift"
             color="#43A047"
@@ -97,7 +110,7 @@ const ProductGridClassic = React.memo(function ProductGridClassic({ products, on
             active={priceProfile === 'invitacion'}
             onPress={() => handleOfertaPress('invitacion')}
           />
-          <OfertaTile
+          <CompactOfertaTile
             label="PARA LLEVAR"
             icon="bag-personal"
             color="#F57C00"
@@ -121,27 +134,29 @@ interface TileProps {
   onLongPress: () => void;
 }
 
-const ProductTile = React.memo(function ProductTile({ product, accentColor, width, onPress, onLongPress }: TileProps): React.JSX.Element {
+const CompactTile = React.memo(function CompactTile({
+  product, accentColor, width, onPress, onLongPress,
+}: TileProps): React.JSX.Element {
   return (
-    <Surface style={[styles.tile, { width }]} elevation={2}>
+    <Surface style={[styles.tile, { width, borderLeftColor: accentColor }]} elevation={1}>
       <TouchableRipple
         onPress={onPress}
         onLongPress={onLongPress}
         style={styles.tileRipple}
-        borderless
         rippleColor={accentColor + '33'}
       >
         <View style={styles.tileInner}>
           <Text style={styles.tileName} numberOfLines={2}>
             {product.name}
           </Text>
-          {!product.isCustom && (
-            <Text style={[styles.tilePrice, { color: accentColor }]}>
+          {product.isCustom ? (
+            <Text style={[styles.tilePriceFree, { color: accentColor }]} numberOfLines={1}>
+              precio libre
+            </Text>
+          ) : (
+            <Text style={[styles.tilePrice, { color: accentColor }]} numberOfLines={1}>
               {formatPrice(product.basePrice)}
             </Text>
-          )}
-          {product.isCustom && (
-            <Text style={[styles.tilePriceFree, { color: accentColor }]}>precio libre</Text>
           )}
         </View>
       </TouchableRipple>
@@ -153,7 +168,7 @@ const ProductTile = React.memo(function ProductTile({ product, accentColor, widt
 
 type MaterialCommunityIconName = React.ComponentProps<typeof MaterialCommunityIcons>['name'];
 
-interface OfertaTileProps {
+interface CompactOfertaTileProps {
   label: string;
   icon: MaterialCommunityIconName;
   color: string;
@@ -162,35 +177,26 @@ interface OfertaTileProps {
   onPress: () => void;
 }
 
-function OfertaTile({ label, icon, color, width, active, onPress }: OfertaTileProps): React.JSX.Element {
+function CompactOfertaTile({
+  label, icon, color, width, active, onPress,
+}: CompactOfertaTileProps): React.JSX.Element {
+  const fg = active ? '#fff' : color;
   return (
     <Surface
       style={[
         styles.tile,
         styles.ofertaTile,
-        { width },
-        active && { backgroundColor: color, borderColor: color },
+        { width, borderLeftColor: color },
+        active && { backgroundColor: color },
       ]}
-      elevation={active ? 4 : 2}
+      elevation={active ? 3 : 1}
     >
-      <TouchableRipple
-        onPress={onPress}
-        style={styles.tileRipple}
-        borderless
-        rippleColor={color + '44'}
-      >
+      <TouchableRipple onPress={onPress} style={styles.tileRipple} rippleColor={color + '44'}>
         <View style={[styles.tileInner, styles.ofertaInner]}>
-          <MaterialCommunityIcons
-            name={icon}
-            size={28}
-            color={active ? '#fff' : color}
-          />
-          <Text style={[styles.ofertaLabel, { color: active ? '#fff' : color }]}>
+          <MaterialCommunityIcons name={icon} size={20} color={fg} />
+          <Text style={[styles.ofertaLabel, { color: fg }]} numberOfLines={2}>
             {label}
           </Text>
-          {active && (
-            <Text style={styles.ofertaActiveTag}>ACTIVO</Text>
-          )}
         </View>
       </TouchableRipple>
     </Surface>
@@ -199,85 +205,79 @@ function OfertaTile({ label, icon, color, width, active, onPress }: OfertaTilePr
 
 // ---------------------------------------------------------------------------
 
-const H_PADDING       = 12;  // padding horizontal del scroll
-const GAP             = 10;  // separación entre baldosas
-const COLUMNS         = 2;   // doble columna, siempre
-const TILE_MIN_HEIGHT = 62;  // suelo táctil cómodo para nombres de una línea
-
 const styles = StyleSheet.create({
   scroll: {
     paddingHorizontal: H_PADDING,
-    paddingTop: 12,
-    paddingBottom: 24,
+    paddingTop: 8,
+    paddingBottom: 16,
   },
   section: {
-    marginBottom: 16,
+    marginBottom: 12,
+  },
+  categoryHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 6,
+  },
+  categoryBar: {
+    width: 3,
+    height: 12,
+    borderRadius: 2,
   },
   categoryLabel: {
-    fontSize: 13,
-    fontWeight: '700',
-    letterSpacing: 1.2,
-    marginBottom: 8,
-    marginLeft: 2,
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1,
   },
   grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: GAP,
   },
-  // Sin alto fijo: la baldosa mide lo que mide su texto (una o dos líneas de
-  // nombre + precio). Las de una misma fila se igualan solas al ser `stretch`.
   tile: {
-    minHeight: TILE_MIN_HEIGHT,
-    borderRadius: 12,
+    height: TILE_HEIGHT,
+    borderRadius: 8,
+    borderLeftWidth: 4,
+    backgroundColor: '#fff',
     overflow: 'hidden',
   },
   tileRipple: {
     flex: 1,
-    borderRadius: 12,
   },
   tileInner: {
     flex: 1,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    justifyContent: 'center',
+    paddingHorizontal: 6,
+    paddingVertical: 5,
+    justifyContent: 'space-between',
   },
   tileName: {
-    fontSize: 15,
+    fontSize: 13,
     fontWeight: '700',
     color: '#1a1a1a',
-    marginBottom: 2,
-    lineHeight: 19,
+    lineHeight: 15,
   },
   tilePrice: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 13,
+    fontWeight: '700',
   },
   tilePriceFree: {
-    fontSize: 12,
+    fontSize: 11,
     fontStyle: 'italic',
   },
   ofertaTile: {
-    borderWidth: 2,
-    borderColor: '#e0e0e0',
     backgroundColor: '#fafafa',
   },
   ofertaInner: {
     justifyContent: 'center',
     alignItems: 'center',
-    gap: 6,
+    gap: 3,
   },
   ofertaLabel: {
-    fontSize: 13,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-    textAlign: 'center',
-  },
-  ofertaActiveTag: {
     fontSize: 10,
-    fontWeight: '700',
-    color: '#ffffffcc',
-    letterSpacing: 1,
-    textTransform: 'uppercase',
+    fontWeight: '800',
+    letterSpacing: 0.3,
+    textAlign: 'center',
+    lineHeight: 12,
   },
 });

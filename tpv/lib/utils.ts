@@ -128,3 +128,21 @@ export function collapseVerduraModifiers(
   }
   return { ids, extraLabels: { [SOLO_VERDURA_ID]: label } };
 }
+
+/**
+ * Clave de comparación de nombres de producto: mayúsculas, sin acentos y con
+ * espacios colapsados. Sirve para detectar que "PERRITO" de la semilla local y
+ * el "Perrito" que baja del backend son EL MISMO producto aunque su `id` no
+ * coincida (la semilla usa slugs propios, el backend sus ids de BD).
+ *
+ * Se usa en la migración v35 (fusión de duplicados ya existentes) y en
+ * `syncCatalogTask` (evita que el duplicado vuelva a aparecer al sincronizar).
+ */
+export function productNameKey(name: string): string {
+  return name
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, ' ');
+}

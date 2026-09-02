@@ -277,7 +277,9 @@ app/
     [id].tsx           ← detalle de sesión cerrada + reimpresión
   _layout.tsx
 components/
-  ProductGrid.tsx      ← grid de productos táctil
+  ProductGrid.tsx      ← grid de productos táctil: vista clásica (2 columnas, alto ajustado al texto) + elige compacta según `compactGrid`
+  ProductGridCompact.tsx ← vista compacta: columnas según ancho de pantalla, baldosas bajas
+  productGridCommon.ts ← paleta de categorías + agrupado coloreado común a ambas vistas
   CartSummary.tsx      ← resumen del carrito
   ModifierSheet.tsx    ← bottom sheet para modifiers (remove/add/radio)
   PaymentModal.tsx     ← modal cobro + cambio

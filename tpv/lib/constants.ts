@@ -130,6 +130,17 @@ const MOD_BURGER_NINO: Modifier[] = [
   { id: 'nino-cebolla', label: 'Cebolla', type: 'add', section: 'verdura',     order: 12 },
 ];
 
+/**
+ * Id de PERRITO en el backend. Es un UUID (el producto nacio en el admin web,
+ * no en esta semilla) frente a los slugs del resto de la carta. Se declara
+ * aparte porque lo usan INITIAL_PRODUCTS, DEFAULT_FERIANTE_PRICES y la
+ * migracion v35 (fusion del duplicado local 'perrito').
+ */
+export const PERRITO_ID = '0f8ebf22-5885-4221-8321-f2cf87917f3c';
+
+/** Id que tuvo PERRITO en la semilla v33/v34, antes de alinearlo con el backend. */
+export const LEGACY_PERRITO_ID = 'perrito';
+
 export const INITIAL_PRODUCTS: Product[] = [
   { id: 'fat-furious',     name: 'FAT & FURIOUS',   basePrice: 13.40, category: 'HAMBURGUESAS', categoryOrder: 0, profile: 'burger', modifiers: MOD_FAT_FURIOUS,   isCustom: false, isActive: true },
   { id: 'ben-muerde',      name: 'BEN Y MUERDE',    basePrice: 12.00, category: 'HAMBURGUESAS', categoryOrder: 0, profile: 'burger', modifiers: MOD_BEN_MUERDE,      isCustom: false, isActive: true },
@@ -141,7 +152,10 @@ export const INITIAL_PRODUCTS: Product[] = [
   { id: 'tekenos',         name: 'TEKEÑOS',          basePrice:  8.00, category: 'ACOMPAÑANTES', categoryOrder: 1, profile: 'burger', modifiers: [SALSA_RADIO_TEKENOS], isCustom: false, isActive: true },
   { id: 'gyozas-pollo',    name: 'GYOZAS POLLO',     basePrice:  8.00, category: 'ACOMPAÑANTES', categoryOrder: 1, profile: 'burger', modifiers: [], isCustom: false, isActive: true },
   { id: 'gyozas-verdura',  name: 'GYOZAS VERDURA',   basePrice:  8.00, category: 'ACOMPAÑANTES', categoryOrder: 1, profile: 'burger', modifiers: [], isCustom: false, isActive: true },
-  { id: 'perrito',         name: 'PERRITO',          basePrice:  6.00, category: 'ACOMPAÑANTES', categoryOrder: 1, profile: 'burger', modifiers: [], isCustom: false, isActive: true },
+  // PERRITO se dio de alta en el backend (admin web) y recibio ALLI su id (UUID).
+  // La semilla usa ESE id, no un slug propio, para que semilla y catalogo remoto
+  // sean la MISMA fila: si no, el sync no las empareja y salen dos PERRITO.
+  { id: PERRITO_ID,        name: 'PERRITO',          basePrice:  6.00, category: 'ACOMPAÑANTES', categoryOrder: 1, profile: 'burger', modifiers: [], isCustom: false, isActive: true },
   { id: 'bebida',          name: 'BEBIDA',           basePrice:  2.00, category: 'BEBIDAS',      categoryOrder: 2, profile: 'burger', modifiers: [], isCustom: false, isActive: true },
   { id: 'agua',            name: 'AGUA',             basePrice:  1.00, category: 'BEBIDAS',      categoryOrder: 2, profile: 'burger', modifiers: [], isCustom: false, isActive: true },
   { id: 'cerveza',         name: 'CERVEZA',          basePrice:  2.50, category: 'BEBIDAS',      categoryOrder: 2, profile: 'burger', modifiers: [], isCustom: false, isActive: true },
@@ -161,7 +175,7 @@ export const DEFAULT_FERIANTE_PRICES: Record<string, number> = {
   'gyozas-verdura': 6,
   'patatas': 5,
   'salchipapas': 5,
-  'perrito': 5,
+  [PERRITO_ID]: 5,
 };
 
 // ---------------------------------------------------------------------------

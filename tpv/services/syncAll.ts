@@ -18,8 +18,9 @@ import { clearPendingPush, pushPrices, takePendingPush, mergePendingPush } from 
 import { syncSessions } from './sessionsApi';
 import { syncTextPresets } from './textPresetsApi';
 import { syncTickets } from './ticketsApi';
-import { getAllLocalProducts, replaceProductCatalogKeeping } from './db';
+import { getAllLocalProducts, remapOrderItemsProductId, replaceProductCatalogKeeping } from './db';
 import { useSessionStore } from '../stores/useSessionStore';
+import { productNameKey } from '../lib/utils';
 import type { Product } from '../lib/types';
 
 /**
@@ -87,12 +88,32 @@ async function syncCatalogTask(confirm?: ConfirmCatalogDeletions): Promise<SyncT
   const res = await fetchProductCatalog();
   if (!res.ok) return { label, ok: false, detail: res.error };
 
-  // Candidatos a desaparecer: locales (activos e inactivos) cuyo id no viene en el
-  // catálogo del backend. El reemplazo borra ambos por igual, así que se comparan
-  // todos, no solo los activos.
+  // Los locales (activos e inactivos: el reemplazo borra ambos por igual) cuyo id
+  // no viene en el catálogo del backend se reparten en dos grupos:
+  //
+  //   - DUPLICADOS: el id no coincide pero el NOMBRE sí. Es el mismo producto,
+  //     dado de alta en el admin web, que allí recibió otro id (un UUID en vez
+  //     del slug de la semilla — le pasó a PERRITO, ver migración v35 en db.ts).
+  //     Conservarlo duplicaría el producto en el grid, así que se deja morir en
+  //     el reemplazo y sus líneas de venta se reapuntan al id del backend para no
+  //     perder el histórico.
+  //   - CANDIDATOS a desaparecer de verdad: ni el id ni el nombre están en el
+  //     catálogo remoto. Esos sí pasan por la revisión de `confirm`.
   const incomingIds = new Set(res.catalog.products.map((p) => p.id));
   const local = await getAllLocalProducts();
-  const candidates = local.filter((p) => !incomingIds.has(p.id));
+  const incomingByName = new Map(res.catalog.products.map((p) => [productNameKey(p.name), p.id]));
+  const duplicates: { from: string; to: string }[] = [];
+  const missing: Product[] = [];
+  for (const p of local) {
+    if (incomingIds.has(p.id)) continue;
+    const twin = incomingByName.get(productNameKey(p.name));
+    if (twin) duplicates.push({ from: p.id, to: twin });
+    else missing.push(p);
+  }
+  for (const d of duplicates) {
+    await remapOrderItemsProductId(d.from, d.to);
+  }
+  const candidates = missing;
 
   // Por defecto (sin revisión) se conservan TODOS los candidatos.
   let deleteIds = new Set<string>();

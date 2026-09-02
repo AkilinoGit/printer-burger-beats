@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, KeyboardAvoidingView, Modal, Platform, StyleSheet, View } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { ActivityIndicator, Banner, Button, Dialog, Portal, Text, TextInput } from 'react-native-paper';
+import { ActivityIndicator, Banner, Button, Dialog, IconButton, Portal, Text, TextInput } from 'react-native-paper';
 
 import CartSummary from '../../components/CartSummary';
 import ModifierSheet from '../../components/ModifierSheet';
@@ -49,6 +49,8 @@ export default function HomeScreen(): React.JSX.Element {
   const togglePrintCopies   = useSessionStore((s) => s.togglePrintCopies);
   const resetPrintMode      = useSessionStore((s) => s.resetPrintMode);
   const closeCurrentSession = useSessionStore((s) => s.closeCurrentSession);
+  const compactGrid         = useSessionStore((s) => s.compactGrid);
+  const toggleGridDensity   = useSessionStore((s) => s.toggleGridDensity);
 
   const clientName    = useCartStore((s) => s.clientName);
   const items         = useCartStore((s) => s.items);
@@ -304,6 +306,17 @@ export default function HomeScreen(): React.JSX.Element {
               : undefined
           }
         />
+        {/* Alterna la vista de la carta: compacta (más productos por pantalla)
+            o clásica (baldosas grandes). Preferencia local del dispositivo. */}
+        <IconButton
+          icon={compactGrid ? 'view-comfy' : 'view-grid'}
+          size={24}
+          mode="contained-tonal"
+          iconColor="#1E88E5"
+          onPress={() => void toggleGridDensity()}
+          accessibilityLabel={compactGrid ? 'Vista clásica' : 'Vista compacta'}
+          style={styles.densityBtn}
+        />
       </View>
 
       {/* Aviso de pedido web recién entrado (ya impreso — ver services/webOrders.ts) */}
@@ -473,14 +486,22 @@ const styles = StyleSheet.create({
   invitacionBanner: { backgroundColor: '#43A047' },
   invitacionBannerText: { color: '#fff', fontWeight: '800', fontSize: 14, letterSpacing: 0.4 },
   nameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
     paddingHorizontal: 12,
     paddingTop: 12,
     paddingBottom: 8,
     backgroundColor: '#fff',
   },
   nameInput: {
+    flex: 1,
     fontSize: 17,
     backgroundColor: '#fff',
+  },
+  densityBtn: {
+    margin: 0,
+    borderRadius: 8,
   },
   gridWrapper: { flex: 1 },
   gridCenter: {

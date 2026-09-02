@@ -9,6 +9,7 @@ const FERIANTE_PRICES_KEY = 'tpv:feriantePrices';
 const PRINT_MODE_KEY = 'tpv:printMode';
 const ACTIVE_PRODUCT_PROFILE_KEY = 'tpv:activeProductProfile';
 const CATALOG_PROFILES_KEY = 'tpv:catalogProfiles';
+const GRID_DENSITY_KEY = 'tpv:compactGrid';
 
 export type PrintCopies = 'x1' | 'x2';
 
@@ -33,6 +34,13 @@ interface SessionState {
    * productos. Persistido en AsyncStorage tras cada sync de catálogo.
    */
   catalogProfiles: Profile[];
+  /**
+   * Vista de la carta en la pantalla de venta: `false` = clásica (doble columna
+   * ajustada al texto, la de por defecto), `true` = compacta (3+ columnas).
+   * Preferencia LOCAL del dispositivo — se persiste en AsyncStorage y no se
+   * sincroniza con el backend.
+   */
+  compactGrid: boolean;
 
   // --- setters ---
   setActiveLocation: (location: Location) => void;
@@ -85,6 +93,12 @@ interface SessionState {
   /** Load persisted backend profiles list from AsyncStorage. Call once on app start. */
   loadCatalogProfiles: () => Promise<void>;
 
+  // --- densidad de la carta (vista compacta / clásica) ---
+  /** Load the persisted grid density from AsyncStorage. Call once on app start. */
+  loadGridDensity: () => Promise<void>;
+  /** Alterna entre la vista compacta y la clásica y persiste la elección. */
+  toggleGridDensity: () => Promise<void>;
+
   /** Load persisted print mode (red/blue toggles) from AsyncStorage. Call once on app start. */
   loadPrintMode: () => Promise<void>;
   /** Activate the red "no print" toggle (deactivates the blue copies toggle). */
@@ -113,6 +127,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   lastTicketNumber: 0,
   activeProductProfile: 'burger',
   catalogProfiles: [],
+  compactGrid: false,
 
   setActiveLocation: (location) => set({ activeLocation: location }),
 
@@ -159,6 +174,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       void get().loadActiveProductProfile();
       // Restore persisted backend profiles list — fire-and-forget, defaults to []
       void get().loadCatalogProfiles();
+      // Restore persisted grid density — fire-and-forget, defaults to clásica
+      void get().loadGridDensity();
       const [session, products] = await Promise.all([getActiveSession(), getProducts()]);
       if (session) {
         const lastNum = await getNextTicketNumber(session.id) - 1;
@@ -252,6 +269,27 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       }
     } catch {
       // silently ignore — defaults to [] (perfiles derivados de productos)
+    }
+  },
+
+  loadGridDensity: async () => {
+    try {
+      const stored = await AsyncStorage.getItem(GRID_DENSITY_KEY);
+      // Solo un 'true' explícito activa la compacta: por defecto (y si la
+      // lectura falla) se muestra la clásica de doble columna.
+      if (stored !== null) set({ compactGrid: stored === 'true' });
+    } catch {
+      // silently ignore — defaults to false (vista clásica)
+    }
+  },
+
+  toggleGridDensity: async () => {
+    const next = !get().compactGrid;
+    set({ compactGrid: next });
+    try {
+      await AsyncStorage.setItem(GRID_DENSITY_KEY, next ? 'true' : 'false');
+    } catch {
+      // silently ignore — el cambio vale para esta ejecución
     }
   },
 

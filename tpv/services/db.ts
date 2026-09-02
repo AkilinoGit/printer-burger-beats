@@ -1,6 +1,12 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SQLite from 'expo-sqlite';
-import { INITIAL_PRODUCTS, DEFAULT_LOCATION_NAME, INITIAL_TEXT_PRESETS } from '../lib/constants';
+import {
+  INITIAL_PRODUCTS,
+  DEFAULT_LOCATION_NAME,
+  INITIAL_TEXT_PRESETS,
+  PERRITO_ID,
+  LEGACY_PERRITO_ID,
+} from '../lib/constants';
 import { getDeviceId } from '../lib/device';
 import { applySessionDiscount, generateId, todayISO } from '../lib/utils';
 import type {
@@ -31,7 +37,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 const DB_NAME = 'tpv_v12.db';
-const SCHEMA_VERSION = 34;
+const SCHEMA_VERSION = 35;
 
 let _db: SQLite.SQLiteDatabase | null = null;
 let _initPromise: Promise<void> | null = null;
@@ -174,6 +180,9 @@ export async function initDb(): Promise<void> {
     }
     if (currentVersion < 34) {
       await migrate_v34(db); // semilla ADITIVA: añade productos/modifiers nuevos también en dispositivos ya sincronizados
+    }
+    if (currentVersion < 35) {
+      await migrate_v35(db); // PERRITO: fusiona la fila local 'perrito' (semilla v34) en la del backend
     }
     await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
 
@@ -926,6 +935,121 @@ async function migrate_v33(db: SQLite.SQLiteDatabase): Promise<void> {
       }
     }
   });
+}
+
+/**
+ * v35 - PERRITO: una sola fila, la del backend.
+ *
+ * PERRITO no nacio en esta semilla sino en el admin web, asi que el backend le
+ * dio un UUID (`PERRITO_ID`) en vez del slug `'perrito'` que uso la semilla de
+ * v33/v34. Resultado: `syncCatalogTask` compara por id, no encontraba el slug en
+ * el catalogo remoto, lo conservaba como "superviviente" y en el grid salian DOS
+ * PERRITO (uno del backend, otro de la semilla).
+ *
+ * La semilla ya usa `PERRITO_ID` (ver constants.ts), asi que a partir de este
+ * build no se vuelve a crear el duplicado. Esta migracion arregla los
+ * dispositivos que ya lo tienen:
+ *
+ *   - Si existe la fila del backend -> la de la semilla sobra: se reapuntan sus
+ *     lineas de venta al UUID (`order_items.product_id` tiene FK a products.id;
+ *     mismo patron que el remapeo de 'gyozas' de v9) y se borra.
+ *   - Si NO existe (dispositivo que nunca sincronizo) -> la fila de la semilla se
+ *     RENOMBRA al UUID. Es el mismo producto con su id definitivo, y asi el
+ *     proximo sync la empareja con la del backend en vez de duplicarla.
+ *
+ * El precio feriante vive en AsyncStorage (`tpv:feriantePrices`) y los precios de
+ * jornada en `sessions.price_overrides`, ambos indexados por id de producto: se
+ * remapea la clave en los dos sitios para no perder el precio ya configurado.
+ *
+ * Idempotente: si no hay fila `'perrito'` no hace nada.
+ */
+async function migrate_v35(db: SQLite.SQLiteDatabase): Promise<void> {
+  const legacy = await db.getFirstAsync<{ id: string }>(
+    'SELECT id FROM products WHERE id = ?',
+    [LEGACY_PERRITO_ID],
+  );
+  if (!legacy) return;
+
+  const canonical = await db.getFirstAsync<{ id: string }>(
+    'SELECT id FROM products WHERE id = ?',
+    [PERRITO_ID],
+  );
+
+  // El UPDATE de products.id de la rama "renombrar" rompe momentaneamente la FK
+  // de order_items; el PRAGMA debe ir FUERA de la transaccion (dentro es no-op).
+  await db.execAsync('PRAGMA foreign_keys = OFF');
+  try {
+    await db.withExclusiveTransactionAsync(async (txn) => {
+      await txn.runAsync(
+        'UPDATE order_items SET product_id = ? WHERE product_id = ?',
+        [PERRITO_ID, LEGACY_PERRITO_ID],
+      );
+      if (canonical) {
+        await txn.runAsync('DELETE FROM modifiers WHERE product_id = ?', [LEGACY_PERRITO_ID]);
+        await txn.runAsync('DELETE FROM products WHERE id = ?', [LEGACY_PERRITO_ID]);
+      } else {
+        // Re-prefijar el id de los modifiers: se guardan como `${productId}-${modifierId}`.
+        await txn.runAsync(
+          'UPDATE modifiers SET id = ? || substr(id, length(?) + 1), product_id = ? WHERE product_id = ?',
+          [PERRITO_ID, LEGACY_PERRITO_ID, PERRITO_ID, LEGACY_PERRITO_ID],
+        );
+        await txn.runAsync('UPDATE products SET id = ? WHERE id = ?', [PERRITO_ID, LEGACY_PERRITO_ID]);
+      }
+    });
+  } finally {
+    await db.execAsync('PRAGMA foreign_keys = ON');
+  }
+
+  await remapProductIdInPrices(db, LEGACY_PERRITO_ID, PERRITO_ID);
+
+  const action = canonical ? 'duplicado fusionado' : 'id renombrado';
+  // eslint-disable-next-line no-console
+  console.log(`[db] v35: PERRITO - ${action} a ${PERRITO_ID}`);
+  await insertLog('info', 'db', `v35 PERRITO: ${action}`);
+}
+
+/**
+ * Mueve la clave `from` -> `to` en los dos mapas de precios indexados por id de
+ * producto: el feriante (AsyncStorage, global) y el override de cada jornada
+ * (`sessions.price_overrides`, JSON). No pisa un valor ya existente en `to` -
+ * si el backend ya trajo precio para el id nuevo, ese manda.
+ *
+ * Best-effort: un fallo aqui no debe abortar la migracion (solo se perderia un
+ * precio configurado, recuperable desde Ajustes).
+ */
+async function remapProductIdInPrices(
+  db: SQLite.SQLiteDatabase,
+  from: string,
+  to: string,
+): Promise<void> {
+  try {
+    const raw = await AsyncStorage.getItem('tpv:feriantePrices');
+    if (raw) {
+      const map = JSON.parse(raw) as Record<string, number>;
+      if (map[from] !== undefined) {
+        if (map[to] === undefined) map[to] = map[from];
+        delete map[from];
+        await AsyncStorage.setItem('tpv:feriantePrices', JSON.stringify(map));
+      }
+    }
+  } catch { /* precio feriante reconfigurable desde Ajustes */ }
+
+  try {
+    const rows = await db.getAllAsync<{ id: string; price_overrides: string }>(
+      "SELECT id, price_overrides FROM sessions WHERE price_overrides LIKE ?",
+      [`%"${from}"%`],
+    );
+    for (const row of rows) {
+      const map = JSON.parse(row.price_overrides) as Record<string, number>;
+      if (map[from] === undefined) continue;
+      if (map[to] === undefined) map[to] = map[from];
+      delete map[from];
+      await db.runAsync('UPDATE sessions SET price_overrides = ? WHERE id = ?', [
+        JSON.stringify(map),
+        row.id,
+      ]);
+    }
+  } catch { /* override de jornada reconfigurable al abrir la sesion */ }
 }
 
 async function migrate_v32(db: SQLite.SQLiteDatabase): Promise<void> {
@@ -2020,6 +2144,22 @@ export async function updateProductBasePrice(id: string, basePrice: number): Pro
  * - Si la transacción falla, SQLite hace rollback → el catálogo anterior queda
  *   intacto. La función relanza el error para que el llamador muestre feedback.
  */
+/**
+ * Reapunta las lineas de venta de `from` a `to`. Se usa cuando un producto local
+ * y uno del backend resultan ser EL MISMO con distinto id (ver la deteccion de
+ * duplicados por nombre en `syncCatalogTask` y la migracion v35): el reemplazo
+ * del catalogo borra la fila local, y sin este remapeo sus `order_items`
+ * quedarian apuntando a un producto inexistente.
+ *
+ * `order_items.product_id` tiene FK a `products(id)`, asi que hay que llamarla
+ * ANTES de borrar la fila de origen.
+ */
+export async function remapOrderItemsProductId(from: string, to: string): Promise<void> {
+  if (from === to) return;
+  const db = await getDb();
+  await db.runAsync('UPDATE order_items SET product_id = ? WHERE product_id = ?', [to, from]);
+}
+
 export async function replaceProductCatalog(products: ApiProduct[]): Promise<void> {
   return replaceProductCatalogKeeping(products, []);
 }

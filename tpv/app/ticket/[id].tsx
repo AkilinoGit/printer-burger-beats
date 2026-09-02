@@ -331,7 +331,11 @@ export default function TicketScreen(): React.JSX.Element {
         for (const p of products) {
           normalPrices[p.id] = activeSession?.priceOverrides[p.id] ?? p.basePrice;
         }
-        const result = await printTicket(refreshed, false, MODIFIER_LABELS, RADIO_NO_SELECTION, RADIO_OPTION_SETS, false, normalPrices);
+        // Al reimprimir tras una edicion siempre salen las dos copias (cocina +
+        // cliente), independientemente del ajuste "Imprimir siempre 2 copias":
+        // la comanda antigua ya esta en cocina y el cliente tiene el resguardo
+        // viejo, asi que ambos necesitan la version corregida.
+        const result = await printTicket(refreshed, false, MODIFIER_LABELS, RADIO_NO_SELECTION, RADIO_OPTION_SETS, true, normalPrices);
         if (result.ok) {
           await markTicketPrinted(refreshed.id);
         } else if (!result.cancelled) {
