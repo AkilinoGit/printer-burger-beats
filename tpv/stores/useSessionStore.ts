@@ -196,7 +196,15 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     try {
       const stored = await AsyncStorage.getItem(FERIANTE_PRICES_KEY);
       if (stored) {
-        set({ feriantePrices: JSON.parse(stored) as Record<string, number> });
+        // Los defaults van DEBAJO de lo guardado: un dispositivo que actualiza
+        // conserva sus precios editados y además estrena los de los productos
+        // nuevos de la carta (que no están en el mapa persistido).
+        set({
+          feriantePrices: {
+            ...DEFAULT_FERIANTE_PRICES,
+            ...(JSON.parse(stored) as Record<string, number>),
+          },
+        });
       }
     } catch {
       // silently ignore — defaults to DEFAULT_FERIANTE_PRICES

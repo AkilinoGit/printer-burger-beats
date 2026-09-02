@@ -31,7 +31,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 const DB_NAME = 'tpv_v12.db';
-const SCHEMA_VERSION = 33;
+const SCHEMA_VERSION = 34;
 
 let _db: SQLite.SQLiteDatabase | null = null;
 let _initPromise: Promise<void> | null = null;
@@ -171,6 +171,9 @@ export async function initDb(): Promise<void> {
     }
     if (currentVersion < 33) {
       await migrate_v33(db); // catálogo: BURGER NIÑO a HAMBURGUESAS, SALCHIPAPAS/PERRITO/CERVEZA, extras de patatas
+    }
+    if (currentVersion < 34) {
+      await migrate_v34(db); // semilla ADITIVA: añade productos/modifiers nuevos también en dispositivos ya sincronizados
     }
     await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
 
@@ -823,6 +826,63 @@ async function migrate_v31(db: SQLite.SQLiteDatabase): Promise<void> {
   try {
     await db.execAsync(`ALTER TABLE orders ADD COLUMN discount_label TEXT`);
   } catch { /* ya existe */ }
+}
+
+/**
+ * v34 — semilla ADITIVA del catálogo (complementa a v33).
+ *
+ * `migrate_v33` solo resiembra dispositivos que NUNCA han sincronizado: si existe
+ * `tpv:catalogUpdatedAt` se salta entera, así que un dispositivo que ya había
+ * bajado el catálogo del backend se quedaba sin los productos nuevos del build
+ * (BURGER NIÑO en HAMBURGUESAS, SALCHIPAPAS, PERRITO, CERVEZA, extras "Con Queso"
+ * / "Con Bacon" de patatas…) hasta que alguien los diera de alta en el backend.
+ *
+ * Esta migración los añade en TODOS los dispositivos, sincronizados o no, pero
+ * de forma **aditiva e idempotente**:
+ *   - inserta los productos de INITIAL_PRODUCTS cuyo id no existe en local
+ *   - inserta los modifiers cuyo id (`${productId}-${modifierId}`) no existe
+ *   - NO borra nada y NO pisa nombre/precio/categoría de lo que ya existe
+ *     (puede venir del backend o de una edición local de precios)
+ *
+ * Es el patrón que debe seguir cualquier migración futura de catálogo: ALTER /
+ * INSERT OR IGNORE / UPDATE acotado, nunca DELETE + reseed (riesgo R5 de
+ * `tpv-catalogo-riesgos-produccion.md`).
+ *
+ * Los productos nuevos se insertan al final de la tabla, así que aparecen al
+ * final de su categoría en el grid (que ordena por `category_order` + rowid).
+ */
+async function migrate_v34(db: SQLite.SQLiteDatabase): Promise<void> {
+  let addedProducts = 0;
+  let addedModifiers = 0;
+
+  await db.withExclusiveTransactionAsync(async (txn) => {
+    for (const p of INITIAL_PRODUCTS) {
+      const res = await txn.runAsync(
+        'INSERT OR IGNORE INTO products (id, name, base_price, category, category_order, profile, is_custom, is_active, always_show_modifiers) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [p.id, p.name, p.basePrice, p.category, p.categoryOrder ?? null, p.profile ?? 'burger', p.isCustom ? 1 : 0, p.isActive ? 1 : 0, p.alwaysShowModifiers ? 1 : 0],
+      );
+      addedProducts += res.changes;
+
+      for (const m of p.modifiers) {
+        const resM = await txn.runAsync(
+          'INSERT OR IGNORE INTO modifiers (id, product_id, label, type, price_add, options, no_selection_label, section, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [`${p.id}-${m.id}`, p.id, m.label, m.type, m.priceAdd ?? 0, JSON.stringify(m.options ?? []), m.noSelectionLabel ?? null, m.section ?? null, m.order ?? 999],
+        );
+        addedModifiers += resM.changes;
+      }
+    }
+
+    // BURGER NIÑO pasó de OTROS a HAMBURGUESAS en esta carta. Se recoloca solo si
+    // el dispositivo sigue con la categoría vieja de la semilla — si el usuario o
+    // el backend lo movieron a otra parte, se respeta.
+    await txn.runAsync(
+      "UPDATE products SET category = 'HAMBURGUESAS', category_order = 0 WHERE id = 'burger-nino' AND category = 'OTROS'",
+    );
+  });
+
+  // eslint-disable-next-line no-console
+  console.log(`[db] v34: semilla aditiva — +${addedProducts} productos, +${addedModifiers} modifiers`);
+  await insertLog('info', 'db', `v34 semilla aditiva: +${addedProducts} productos, +${addedModifiers} modifiers`);
 }
 
 /**
