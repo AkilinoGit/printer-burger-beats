@@ -1,3 +1,4 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SQLite from 'expo-sqlite';
 import { INITIAL_PRODUCTS, DEFAULT_LOCATION_NAME, INITIAL_TEXT_PRESETS } from '../lib/constants';
 import { getDeviceId } from '../lib/device';
@@ -30,7 +31,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 const DB_NAME = 'tpv_v12.db';
-const SCHEMA_VERSION = 32;
+const SCHEMA_VERSION = 33;
 
 let _db: SQLite.SQLiteDatabase | null = null;
 let _initPromise: Promise<void> | null = null;
@@ -167,6 +168,9 @@ export async function initDb(): Promise<void> {
     }
     if (currentVersion < 32) {
       await migrate_v32(db); // sessions: summary_discount_pct (descuento 15/30% sobre los totales)
+    }
+    if (currentVersion < 33) {
+      await migrate_v33(db); // catálogo: BURGER NIÑO a HAMBURGUESAS, SALCHIPAPAS/PERRITO/CERVEZA, extras de patatas
     }
     await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
 
@@ -819,6 +823,49 @@ async function migrate_v31(db: SQLite.SQLiteDatabase): Promise<void> {
   try {
     await db.execAsync(`ALTER TABLE orders ADD COLUMN discount_label TEXT`);
   } catch { /* ya existe */ }
+}
+
+/**
+ * Resiembra `products` + `modifiers` desde INITIAL_PRODUCTS para que los cambios
+ * de carta de esta versión lleguen a dispositivos ya instalados:
+ * BURGER NIÑO pasa a HAMBURGUESAS, entran SALCHIPAPAS, PERRITO y CERVEZA, y
+ * PATATAS / SALCHIPAPAS ganan los extras "Con Queso" / "Con Bacon" (+1 EUR).
+ *
+ * GUARDA IMPORTANTE: si el dispositivo ya descargó el catálogo del backend
+ * (`tpv:catalogUpdatedAt` en AsyncStorage), NO se resiembra — el catálogo remoto
+ * manda y un DELETE lo revertiría a la semilla del APK (riesgo R1 de
+ * `tpv-catalogo-riesgos-produccion.md`). En esos dispositivos los cambios deben
+ * hacerse en el backend y bajar por Ajustes → Sincronizar.
+ */
+async function migrate_v33(db: SQLite.SQLiteDatabase): Promise<void> {
+  try {
+    const syncedAt = await AsyncStorage.getItem('tpv:catalogUpdatedAt');
+    if (syncedAt) {
+      // eslint-disable-next-line no-console
+      console.log('[db] v33: catálogo sincronizado del backend — no se resiembra');
+      return;
+    }
+  } catch { /* sin AsyncStorage legible: se resiembra igualmente */ }
+
+  await db.execAsync('PRAGMA foreign_keys = OFF');
+  await db.runAsync('DELETE FROM modifiers');
+  await db.runAsync('DELETE FROM products');
+  await db.execAsync('PRAGMA foreign_keys = ON');
+
+  await db.withExclusiveTransactionAsync(async (txn) => {
+    for (const p of INITIAL_PRODUCTS) {
+      await txn.runAsync(
+        'INSERT INTO products (id, name, base_price, category, category_order, profile, is_custom, is_active, always_show_modifiers) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [p.id, p.name, p.basePrice, p.category, p.categoryOrder ?? null, p.profile ?? 'burger', p.isCustom ? 1 : 0, p.isActive ? 1 : 0, p.alwaysShowModifiers ? 1 : 0],
+      );
+      for (const m of p.modifiers) {
+        await txn.runAsync(
+          'INSERT INTO modifiers (id, product_id, label, type, price_add, options, no_selection_label, section, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [`${p.id}-${m.id}`, p.id, m.label, m.type, m.priceAdd ?? 0, JSON.stringify(m.options ?? []), m.noSelectionLabel ?? null, m.section ?? null, m.order ?? 999],
+        );
+      }
+    }
+  });
 }
 
 async function migrate_v32(db: SQLite.SQLiteDatabase): Promise<void> {
